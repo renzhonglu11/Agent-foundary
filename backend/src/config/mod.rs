@@ -43,7 +43,10 @@ impl Settings {
         let database_url = env_or("DATABASE_URL", "sqlite://data/agent_foundry.db");
         let csv_path = csv_path_from_env();
         let pdf_path = PathBuf::from(env_or("PDF_PATH", "data/Vermögensübersicht.pdf"));
-        let pdf_text_path = optional_path("PDF_TEXT_PATH");
+        let pdf_text_path = Some(PathBuf::from(env_or(
+            "PDF_TEXT_PATH",
+            "data/asset_overview_extracted.txt",
+        )));
         let log_format = match env_or("LOG_FORMAT", "pretty").as_str() {
             "pretty" => LogFormat::Pretty,
             "json" => LogFormat::Json,
@@ -65,13 +68,6 @@ impl Settings {
 
 fn env_or(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_owned())
-}
-
-fn optional_path(key: &str) -> Option<PathBuf> {
-    std::env::var(key)
-        .ok()
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
 }
 
 fn csv_path_from_env() -> PathBuf {

@@ -10,6 +10,7 @@ pnpm-debug.log*
 
 # Python
 /web/.venv/
+/backend/.venv/
 .venv/
 __pycache__/
 *.pyc

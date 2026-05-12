@@ -1,6 +1,10 @@
-import pymupdf
 from pathlib import Path
 import sys
+
+try:
+    import pymupdf
+except ModuleNotFoundError:
+    import fitz as pymupdf
 
 ROOT = Path(__file__).resolve().parents[2]
 PDF = ROOT / 'data' / 'Vermögensübersicht.pdf'

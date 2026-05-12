@@ -52,7 +52,7 @@ pub async fn upload_data(
         {
             rejected.push(RejectedUpload {
                 filename,
-                reason: "Only .csv and .pdf files are allowed",
+                reason: "Only .csv and .pdf files are allowed".to_owned(),
             });
             continue;
         }
@@ -63,10 +63,12 @@ pub async fn upload_data(
         let imported_rows = if extension.as_deref() == Some("csv") {
             match import_uploaded_csv(&service, &filename, &content).await {
                 Ok(rows) => Some(rows),
-                Err(_) => {
+                Err(error) => {
                     rejected.push(RejectedUpload {
                         filename,
-                        reason: "CSV columns or rows do not match the expected transaction format",
+                        reason: format!(
+                            "CSV columns or rows do not match the expected transaction format: {error}"
+                        ),
                     });
                     continue;
                 }
@@ -78,10 +80,10 @@ pub async fn upload_data(
         let extracted_pdf_text = if extension.as_deref() == Some("pdf") {
             match extract_uploaded_pdf(&service, &targets[0], &filename, &content).await {
                 Ok(chars) => Some(chars),
-                Err(_) => {
+                Err(error) => {
                     rejected.push(RejectedUpload {
                         filename,
-                        reason: "PDF text extraction failed or PDF_TEXT_PATH is not configured",
+                        reason: format!("PDF text extraction failed: {error}"),
                     });
                     continue;
                 }
@@ -245,10 +247,6 @@ fn pdf_text_extractor_script() -> anyhow::Result<PathBuf> {
         if path.exists() {
             return Ok(path);
         }
-        anyhow::bail!(
-            "PDF_TEXT_EXTRACTOR_SCRIPT does not exist: {}",
-            path.display()
-        );
     }
 
     for candidate in [
@@ -303,5 +301,5 @@ struct SavedUpload {
 #[derive(Debug, Serialize)]
 struct RejectedUpload {
     filename: String,
-    reason: &'static str,
+    reason: String,
 }
