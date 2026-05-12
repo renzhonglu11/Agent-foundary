@@ -1,47 +1,107 @@
 # Agent-Foundry
 
-React + MUI dashboard for observing the portfolio data under `data/`.
+Monorepo for a React dashboard and a Rust backend.
 
-## What it shows
-
-- Portfolio summary cards: estimated market value, unrealized P/L, realized P/L + income, fees + taxes.
-- Allocation chart by asset class.
-- Monthly cashflow and buy/sell activity.
-- Top positions table with weight and P/L.
-- Recent transactions list.
-
-## Data flow
+## Layout
 
 ```text
-data/Transaktionsexport(2).csv
-  -> scripts/generatePortfolioData.js
-  -> public/data/portfolio-summary.json
-  -> React dashboard
+backend/      Rust Axum API, SQLx SQLite migrations, portfolio domain logic
+web/          React + Vite frontend
+data/         Local input files and SQLite database, ignored by git
+deploy/       systemd unit templates
 ```
 
-The dashboard intentionally uses a generated JSON file so the UI remains simple and maintainable. When the CSV changes, run:
+The old `scripts/generatePortfolioData.js` flow has been migrated into the Rust backend. The frontend still requests `/data/portfolio-summary.json`; in local development Vite proxies that path to `http://127.0.0.1:8080`.
+
+## Backend
+
+Configuration is loaded from environment variables. Start from:
 
 ```bash
-npm run generate:data
+cp .env.example .env
 ```
 
-## Run locally
+Important values:
+
+```text
+DATABASE_URL=sqlite://data/agent_foundry.db
+CSV_PATH=data/Transaktionsexport.csv
+PDF_PATH=data/Vermögensübersicht.pdf
+PDF_TEXT_PATH=data/asset_overview_extracted.txt
+HOST=127.0.0.1
+PORT=8080
+```
+
+Run locally:
 
 ```bash
+cargo run -p agent-foundry-backend
+```
+
+Checks:
+
+```bash
+cargo fmt --all
+cargo clippy --all-targets -- -D warnings
+cargo test
+```
+
+Production binary:
+
+```bash
+cargo build --release
+```
+
+The binary is written to:
+
+```text
+target/release/agent-foundry-backend
+```
+
+## Frontend
+
+```bash
+cd web
 npm install
-npm run generate:data
 npm run dev
 ```
 
-Production build:
+Build:
 
 ```bash
+cd web
 npm run build
-npm run preview
 ```
 
-## Notes
+## VPS Deployment
 
-- Market value is estimated from the latest transaction price in the CSV, not from live market quotes.
-- Cost basis and P/L are transaction-based approximations using average cost logic.
-- The PDF file remains in `data/` as a source document, but this dashboard currently derives structured data from the CSV export.
+Local:
+
+```bash
+cargo build --release
+```
+
+Upload the binary and runtime files:
+
+```bash
+ssh user@vps 'sudo mkdir -p /opt/agent-foundry/bin /opt/agent-foundry/data'
+scp target/release/agent-foundry-backend user@vps:/tmp/agent-foundry-backend
+scp .env.example user@vps:/tmp/agent-foundry.env
+scp deploy/agent-foundry-backend.service user@vps:/tmp/agent-foundry-backend.service
+scp data/Transaktionsexport.csv user@vps:/tmp/Transaktionsexport.csv
+```
+
+On the VPS, install:
+
+```bash
+sudo useradd --system --home /opt/agent-foundry --shell /usr/sbin/nologin agentfoundry || true
+sudo mv /tmp/agent-foundry-backend /opt/agent-foundry/bin/agent-foundry-backend
+sudo mv /tmp/agent-foundry.env /opt/agent-foundry/.env
+sudo mv /tmp/Transaktionsexport.csv /opt/agent-foundry/data/Transaktionsexport.csv
+sudo mv /tmp/agent-foundry-backend.service /etc/systemd/system/agent-foundry-backend.service
+sudo chown -R agentfoundry:agentfoundry /opt/agent-foundry
+sudo chmod +x /opt/agent-foundry/bin/agent-foundry-backend
+sudo systemctl daemon-reload
+sudo systemctl enable --now agent-foundry-backend
+sudo systemctl status agent-foundry-backend
+```

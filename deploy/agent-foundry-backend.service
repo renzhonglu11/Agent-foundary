@@ -1,0 +1,22 @@
+[Unit]
+Description=Agent Foundry Rust backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=agentfoundry
+Group=agentfoundry
+WorkingDirectory=/opt/agent-foundry
+EnvironmentFile=/opt/agent-foundry/.env
+ExecStart=/opt/agent-foundry/bin/agent-foundry-backend
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/agent-foundry/data
+
+[Install]
+WantedBy=multi-user.target
