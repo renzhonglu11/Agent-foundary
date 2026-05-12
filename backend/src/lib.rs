@@ -9,7 +9,7 @@ use std::net::SocketAddr;
 
 use anyhow::Context;
 use tokio::net::TcpListener;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::{
     api::router,
@@ -32,10 +32,21 @@ impl App {
         run_migrations(&pool).await?;
 
         let repository = SqliteTransactionRepository::new(pool);
-        TransactionImporter::new(repository.clone())
-            .import_csv(&settings.csv_path)
-            .await
-            .with_context(|| format!("failed to import {}", settings.csv_path.display()))?;
+        if settings.csv_path.exists() {
+            TransactionImporter::new(repository.clone())
+                .import_csv(&settings.csv_path)
+                .await
+                .with_context(|| format!("failed to import {}", settings.csv_path.display()))?;
+        } else {
+            warn!(
+                path = %settings.csv_path.display(),
+                "CSV file not found; starting with empty portfolio data"
+            );
+            repository
+                .replace_all(&[])
+                .await
+                .context("failed to clear transactions for missing CSV data")?;
+        }
 
         let portfolio_service = PortfolioService::new(
             repository,
@@ -43,6 +54,10 @@ impl App {
             settings.pdf_path.clone(),
             settings.pdf_text_path.clone(),
         );
+        portfolio_service
+            .refresh_summary_cache()
+            .await
+            .context("failed to warm portfolio summary cache")?;
         let router = router::build(portfolio_service);
 
         Ok(Self { settings, router })

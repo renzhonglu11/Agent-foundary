@@ -43,7 +43,7 @@ scp "${SERVICE_FILE}" "${SSH_HOST}:${TMP_DIR}/agent-foundry-backend.service"
 scp "${CSV_FILE}" "${SSH_HOST}:${TMP_DIR}/Transaktionsexport.csv"
 
 echo "Installing on VPS..."
-ssh "${SSH_HOST}" "
+ssh -tt "${SSH_HOST}" "
   set -euo pipefail
   sudo mkdir -p '${REMOTE_ROOT}/bin' '${REMOTE_ROOT}/data'
   sudo useradd --system --home '${REMOTE_ROOT}' --shell /usr/sbin/nologin '${REMOTE_USER}' 2>/dev/null || true

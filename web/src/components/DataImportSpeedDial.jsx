@@ -111,7 +111,7 @@ export default function DataImportSpeedDial() {
         <DialogContent dividers>
           <Stack spacing={2}>
             <Typography color="text.secondary">
-              支持同时上传多个 dashboard 数据文件（CSV / PDF）。同名文件会覆盖 `public/data` 中的旧文件；如果已有 `dist/data`，也会同步覆盖一份，方便 preview/部署态读取。
+              支持同时上传多个 dashboard 数据文件（CSV / PDF）。同名文件会覆盖后端 `data` 目录中的旧文件。
             </Typography>
 
             <Box
@@ -185,7 +185,7 @@ export default function DataImportSpeedDial() {
 
             <Divider />
             <Typography variant="caption" color="text.secondary">
-              注意：这个上传入口依赖本项目的 Vite dev/preview server 提供 `/api/upload-data`。如果以后改成纯静态 nginx 托管，需要把同样的 API 放到后端或反向代理服务里。
+              注意：这个上传入口由后端 `/api/upload-data` 提供；本地开发时 Vite 会把 `/api` 请求代理到后端。
             </Typography>
           </Stack>
         </DialogContent>

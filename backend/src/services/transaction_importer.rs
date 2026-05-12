@@ -12,6 +12,23 @@ use crate::{
     },
 };
 
+const REQUIRED_HEADERS: &[&str] = &[
+    "transaction_id",
+    "date",
+    "type",
+    "category",
+    "asset_class",
+    "name",
+    "symbol",
+    "description",
+    "amount",
+    "fee",
+    "tax",
+    "shares",
+    "price",
+    "currency",
+];
+
 #[derive(Debug, Clone)]
 pub struct TransactionImporter {
     repository: SqliteTransactionRepository,
@@ -31,6 +48,7 @@ impl TransactionImporter {
             .flexible(true)
             .from_path(path)
             .with_context(|| format!("failed to open CSV {}", path.display()))?;
+        validate_headers(reader.headers()?, path)?;
 
         let mut transactions = Vec::new();
         for (index, row) in reader.deserialize::<RawTransaction>().enumerate() {
@@ -45,6 +63,24 @@ impl TransactionImporter {
 
         info!(rows = transactions.len(), path = %path.display(), "imported transaction CSV");
         Ok(transactions.len())
+    }
+}
+
+fn validate_headers(headers: &csv::StringRecord, path: &Path) -> anyhow::Result<()> {
+    let missing = REQUIRED_HEADERS
+        .iter()
+        .filter(|required| !headers.iter().any(|header| header == **required))
+        .copied()
+        .collect::<Vec<_>>();
+
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        bail!(
+            "CSV {} is missing required columns: {}",
+            path.display(),
+            missing.join(", ")
+        );
     }
 }
 
