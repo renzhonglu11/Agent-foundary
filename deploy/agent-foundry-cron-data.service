@@ -1,0 +1,14 @@
+[Unit]
+Description=Refresh Agent-Foundry Hermes cron status data
+Documentation=file:/home/rz/Agent-Foundry/scripts/generateHermesCronData.js
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=rz
+Group=rz
+WorkingDirectory=/home/rz/Agent-Foundry
+Environment="HOME=/home/rz"
+Environment="PATH=/home/rz/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ExecStart=/home/rz/.local/bin/npm run generate:cron
