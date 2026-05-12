@@ -47,6 +47,15 @@ export default function DataImportSpeedDial() {
   const validFiles = useMemo(() => files.filter(isAllowedFile), [files]);
   const invalidFiles = useMemo(() => files.filter((file) => !isAllowedFile(file)), [files]);
 
+  const closeDialog = () => {
+    if (uploading) return;
+
+    setOpen(false);
+    if (result?.saved?.length) {
+      window.location.reload();
+    }
+  };
+
   const addFiles = (fileList) => {
     const incoming = Array.from(fileList || []);
     if (!incoming.length) return;
@@ -80,7 +89,10 @@ export default function DataImportSpeedDial() {
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok || !payload?.ok) {
-        throw new Error(payload?.error || '上传失败');
+        const rejectedReason = payload?.rejected
+          ?.map((item) => `${item.filename}: ${item.reason}`)
+          .join('；');
+        throw new Error(payload?.error || rejectedReason || '上传失败');
       }
       setResult(payload);
       setFiles([]);
@@ -106,7 +118,7 @@ export default function DataImportSpeedDial() {
         />
       </SpeedDial>
 
-      <Dialog open={open} onClose={() => !uploading && setOpen(false)} fullWidth maxWidth="sm">
+      <Dialog open={open} onClose={closeDialog} fullWidth maxWidth="sm">
         <DialogTitle>Import 数据文件</DialogTitle>
         <DialogContent dividers>
           <Stack spacing={2}>
@@ -191,7 +203,7 @@ export default function DataImportSpeedDial() {
         </DialogContent>
         <DialogActions>
           <Button disabled={uploading} onClick={() => setFiles([])}>清空</Button>
-          <Button disabled={uploading} onClick={() => setOpen(false)}>关闭</Button>
+          <Button disabled={uploading} onClick={closeDialog}>关闭</Button>
           <Button variant="contained" disabled={uploading || !validFiles.length} onClick={handleUpload}>
             上传
           </Button>
