@@ -1,0 +1,45 @@
+# Node.js
+node_modules/
+dist/
+dist-ssr/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Local env files
+.env
+.env.local
+.env.*.local
+
+# Sensitive Data and Logs
+data/
+logs/
+*.bak
+*.log
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+
