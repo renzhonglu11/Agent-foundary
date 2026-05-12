@@ -19,6 +19,10 @@ pub fn build(portfolio_service: PortfolioService) -> Router {
             "/data/portfolio-summary.json",
             get(handlers::portfolio_summary),
         )
+        .route(
+            "/data/hermes-cron-status.json",
+            get(handlers::hermes_cron_status),
+        )
         .with_state(portfolio_service)
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())

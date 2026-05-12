@@ -12,27 +12,15 @@ export function useHermesCronData({ refreshMs = 60000 } = {}) {
       controller = new AbortController();
 
       const timestamp = Date.now();
-      const urls = [
-        `data/hermes-cron-status.json?t=${timestamp}`,
-        `/data/hermes-cron-status.json?t=${timestamp}`,
-      ];
+      const url = `/data/hermes-cron-status.json?t=${timestamp}`;
 
       const fetchJson = async () => {
-        let lastError = null;
-        for (const url of urls) {
-          try {
-            const response = await fetch(url, {
-              cache: 'no-store',
-              signal: controller.signal,
-            });
-            if (!response.ok) throw new Error(`Data request failed: ${response.status} (${url})`);
-            return response.json();
-          } catch (error) {
-            if (error.name === 'AbortError') throw error;
-            lastError = error;
-          }
-        }
-        throw lastError || new Error('Data request failed');
+        const response = await fetch(url, {
+          cache: 'no-store',
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error(`Data request failed: ${response.status} (${url})`);
+        return response.json();
       };
 
       fetchJson()
