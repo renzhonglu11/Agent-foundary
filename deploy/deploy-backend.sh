@@ -15,6 +15,7 @@ ENV_SOURCE="${REPO_ROOT}/.env"
 ENV_FALLBACK="${REPO_ROOT}/.env.example"
 SERVICE_FILE="${REPO_ROOT}/deploy/agent-foundry-backend.service"
 CSV_FILE="${REPO_ROOT}/data/Transaktionsexport.csv"
+PDF_EXTRACT_SCRIPT="${REPO_ROOT}/backend/scripts/extractPdfText.py"
 
 if [[ ! -f "${CSV_FILE}" ]]; then
   echo "Missing CSV file: ${CSV_FILE}" >&2
@@ -41,15 +42,17 @@ scp "${BINARY}" "${SSH_HOST}:${TMP_DIR}/agent-foundry-backend"
 scp "${ENV_FILE}" "${SSH_HOST}:${TMP_DIR}/agent-foundry.env"
 scp "${SERVICE_FILE}" "${SSH_HOST}:${TMP_DIR}/agent-foundry-backend.service"
 scp "${CSV_FILE}" "${SSH_HOST}:${TMP_DIR}/Transaktionsexport.csv"
+scp "${PDF_EXTRACT_SCRIPT}" "${SSH_HOST}:${TMP_DIR}/extractPdfText.py"
 
 echo "Installing on VPS..."
 ssh -tt "${SSH_HOST}" "
   set -euo pipefail
-  sudo mkdir -p '${REMOTE_ROOT}/bin' '${REMOTE_ROOT}/data'
+  sudo mkdir -p '${REMOTE_ROOT}/bin' '${REMOTE_ROOT}/data' '${REMOTE_ROOT}/scripts'
   sudo useradd --system --home '${REMOTE_ROOT}' --shell /usr/sbin/nologin '${REMOTE_USER}' 2>/dev/null || true
   sudo mv '${TMP_DIR}/agent-foundry-backend' '${REMOTE_ROOT}/bin/agent-foundry-backend'
   sudo mv '${TMP_DIR}/agent-foundry.env' '${REMOTE_ROOT}/.env'
   sudo mv '${TMP_DIR}/Transaktionsexport.csv' '${REMOTE_ROOT}/data/Transaktionsexport.csv'
+  sudo mv '${TMP_DIR}/extractPdfText.py' '${REMOTE_ROOT}/scripts/extractPdfText.py'
   sudo mv '${TMP_DIR}/agent-foundry-backend.service' '/etc/systemd/system/${SERVICE_NAME}.service'
   sudo chown -R '${REMOTE_USER}:${REMOTE_GROUP}' '${REMOTE_ROOT}'
   sudo chmod +x '${REMOTE_ROOT}/bin/agent-foundry-backend'
@@ -60,6 +63,18 @@ ssh -tt "${SSH_HOST}" "
 "
 
 echo "Verifying backend health..."
-ssh "${SSH_HOST}" "curl -fsS http://127.0.0.1:8080/health"
+ssh "${SSH_HOST}" "
+  set -euo pipefail
+  for attempt in \$(seq 1 30); do
+    if curl -fsS http://127.0.0.1:8080/health; then
+      exit 0
+    fi
+    sleep 1
+  done
+
+  sudo systemctl --no-pager --full status '${SERVICE_NAME}' || true
+  sudo journalctl -u '${SERVICE_NAME}' -n 80 --no-pager || true
+  exit 1
+"
 echo
 echo "Deployment complete."

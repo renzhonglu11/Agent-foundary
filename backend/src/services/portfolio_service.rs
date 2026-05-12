@@ -19,7 +19,7 @@ use crate::{
 pub struct PortfolioService {
     repository: SqliteTransactionRepository,
     csv_path: PathBuf,
-    pdf_path: PathBuf,
+    pdf_path: Arc<RwLock<PathBuf>>,
     pdf_text_path: Option<PathBuf>,
     summary_cache: Arc<RwLock<Option<PortfolioSummaryResponse>>>,
 }
@@ -34,7 +34,7 @@ impl PortfolioService {
         Self {
             repository,
             csv_path,
-            pdf_path,
+            pdf_path: Arc::new(RwLock::new(pdf_path)),
             pdf_text_path,
             summary_cache: Arc::new(RwLock::new(None)),
         }
@@ -72,6 +72,25 @@ impl PortfolioService {
         Ok(rows)
     }
 
+    pub fn pdf_text_path(&self) -> Option<PathBuf> {
+        self.pdf_text_path.clone()
+    }
+
+    pub async fn refresh_after_pdf_update(&self, pdf_path: PathBuf) -> anyhow::Result<()> {
+        {
+            let mut current_pdf_path = self
+                .pdf_path
+                .write()
+                .map_err(|_| anyhow!("portfolio PDF path lock poisoned"))?;
+            *current_pdf_path = pdf_path;
+        }
+
+        self.clear_summary_cache()?;
+        self.refresh_summary_cache().await?;
+
+        Ok(())
+    }
+
     fn cached_summary(&self) -> anyhow::Result<Option<PortfolioSummaryResponse>> {
         let cache = self
             .summary_cache
@@ -99,12 +118,17 @@ impl PortfolioService {
             .context("failed to load transactions")?;
         let isin_names = build_isin_name_map(self.pdf_text_path.as_deref())
             .context("failed to parse extracted PDF text")?;
+        let pdf_path = self
+            .pdf_path
+            .read()
+            .map_err(|_| anyhow!("portfolio PDF path lock poisoned"))?
+            .clone();
 
         Ok(calculate_portfolio(
             &transactions,
             CalculatorInput {
                 csv_source: self.csv_path.display().to_string(),
-                pdf_source: self.pdf_path.display().to_string(),
+                pdf_source: pdf_path.display().to_string(),
                 pdf_text_source: self
                     .pdf_text_path
                     .as_ref()
