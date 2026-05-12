@@ -117,4 +117,10 @@ const dataUploadPlugin = () => ({
 
 export default defineConfig({
   plugins: [react(), dataUploadPlugin()],
+  server: {
+    proxy: {
+      '/data/portfolio-summary.json': 'http://127.0.0.1:8080',
+      '/api': 'http://127.0.0.1:8080',
+    },
+  },
 });

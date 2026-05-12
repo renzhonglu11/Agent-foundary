@@ -1,7 +1,7 @@
 import pymupdf
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 PDF = ROOT / 'data' / 'Vermögensübersicht.pdf'
 OUT = ROOT / 'data' / 'asset_overview_extracted.txt'
 
