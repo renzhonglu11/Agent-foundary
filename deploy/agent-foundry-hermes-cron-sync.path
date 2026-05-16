@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch Hermes cron jobs snapshot and sync it for Agent Foundry
+
+[Path]
+PathChanged=/home/rz/.hermes/cron/jobs.json
+Unit=agent-foundry-hermes-cron-sync.service
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,17 @@
+[Unit]
+Description=Sync Hermes cron jobs snapshot for Agent Foundry backend
+Documentation=file:/opt/agent-foundry/bin/sync-hermes-cron-jobs.sh
+After=local-fs.target
+
+[Service]
+Type=oneshot
+User=rz
+Group=rz
+Environment="HERMES_SOURCE_CRON_JOBS_PATH=/home/rz/.hermes/cron/jobs.json"
+Environment="AGENT_FOUNDRY_CRON_JOBS_PATH=/opt/agent-foundry/data/hermes-cron/jobs.json"
+ExecStart=/opt/agent-foundry/bin/sync-hermes-cron-jobs.sh
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/agent-foundry/data/hermes-cron
