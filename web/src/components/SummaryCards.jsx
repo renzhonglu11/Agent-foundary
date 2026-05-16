@@ -166,7 +166,7 @@ function HalfMoonProfitChart({ summary, totalPnl }) {
             <Box
                 sx={{
                     position: 'relative',
-                    minHeight: 204,
+                    minHeight: 210,
                     pt: 0,
                 }}
                 onMouseMove={updateTooltipPosition}
@@ -209,7 +209,7 @@ function HalfMoonProfitChart({ summary, totalPnl }) {
                         flexDirection: 'column',
                         alignItems: 'center',
                         pointerEvents: 'none',
-                        mb: -2.25,
+                        mb: 0.75,
                     }}
                 >
                     <Typography variant="caption" color="text.secondary" fontWeight={800}>
@@ -228,7 +228,7 @@ function HalfMoonProfitChart({ summary, totalPnl }) {
                     viewBox="0 24 320 172"
                     role="img"
                     aria-label="盈亏和股息半圆仪表盘"
-                    sx={{ width: '100%', height: 146, display: 'block', overflow: 'visible' }}
+                    sx={{ width: '100%', height: 132, display: 'block', overflow: 'visible' }}
                 >
                     <path
                         d={describeArc(160, 170, 118, 180, 360)}
@@ -266,7 +266,7 @@ function HalfMoonProfitChart({ summary, totalPnl }) {
             <Stack
                 direction="row"
                 spacing={{ xs: 0.75, sm: 2 }}
-                sx={{ mt: -2, justifyContent: 'center', flexWrap: 'wrap', rowGap: 0.5 }}
+                sx={{ mt: -1.25, justifyContent: 'center', flexWrap: 'wrap', rowGap: 0.5 }}
             >
                 {rawSegments.map((segment) => {
                     const isActive = hoveredKey === segment.id
