@@ -112,8 +112,12 @@ export default function DataImportSpeedDial() {
       >
         <SpeedDialAction
           icon={<CloudUploadRoundedIcon />}
-          tooltipTitle="Import 数据文件"
-          tooltipOpen
+          slotProps={{
+            tooltip: {
+              title: 'Import 数据文件',
+              open: true,
+            },
+          }}
           onClick={() => setOpen(true)}
         />
       </SpeedDial>
