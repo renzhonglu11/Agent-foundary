@@ -34,7 +34,7 @@ export default function App() {
     overview: <OverviewTab data={data} />,
     positions: <PositionsTab data={data} />,
     dividend: <DividendTab dividend={data.dividend} />,
-    stockAnalysis: <StockAnalysisTab />,
+    stockAnalysis: <StockAnalysisTab data={data} />,
     hermesCron: <HermesCronTab />,
   };
 
