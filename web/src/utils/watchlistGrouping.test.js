@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { buildWatchlistGroups } from './watchlistGrouping.js'
+import { buildWatchlistGroups, collectTier1AlpacaSymbols } from './watchlistGrouping.js'
 
 const portfolio = {
   summary: { totalMarketValue: 10000 },
@@ -51,7 +51,7 @@ test('non-derivative rows without enrichment fall back to tier3 json/portfolio d
   assert.equal(groups.tier3.every((group) => group.derivatives.length === 0), true)
 })
 
-test('only tier1 derivatives are marked as realtime data', () => {
+test('only derivatives with realtime provider data are marked as realtime data', () => {
   const groups = buildWatchlistGroups(portfolio, [
     ...enrichment,
     {
@@ -72,6 +72,27 @@ test('only tier1 derivatives are marked as realtime data', () => {
   assert.equal(groups.tier2.length, 1)
   assert.equal(groups.tier2[0].derivatives[0].liveEnrichmentEnabled, false)
   assert.equal(groups.tier2[0].derivatives[0].quoteSource, 'rust_portfolio_summary')
+})
+
+test('tier1 fallback rows are not marked as realtime data', () => {
+  const groups = buildWatchlistGroups({ summary: { totalMarketValue: 1000 }, positions: [] }, [
+    {
+      isin: 'DE000FALLBACK1',
+      display_name: 'Call 18.06.26 NVIDIA 131',
+      instrument: 'Call 18.06.26 NVIDIA 131',
+      asset_class: 'DERIVATIVE',
+      product_type: 'optionsschein',
+      enrichment_tier: 'tier1',
+      live_enrichment_enabled: true,
+      quote_source: 'rust_portfolio_summary',
+      market_value: 100,
+    },
+  ])
+
+  assert.equal(groups.tier1.length, 1)
+  assert.equal(groups.tier1[0].liveDerivativeCount, 0)
+  assert.equal(groups.tier1[0].derivatives[0].liveEnrichmentEnabled, false)
+  assert.equal(groups.tier1[0].apiStatus, 'portfolio')
 })
 
 test('groups multiple derivative products by inferred underlying when live metadata is missing', () => {
@@ -104,6 +125,7 @@ test('groups stock legal names with derivative underlying names', () => {
   assert.equal(groups.tier1[0].groupName, 'Intel')
   assert.equal(groups.tier1[0].stocks.length, 1)
   assert.equal(groups.tier1[0].derivatives.length, 1)
+  assert.equal(groups.tier1[0].stocks[0].alpacaSymbol, 'INTC')
 })
 
 test('groups broker shorthand underlyings with stock legal names', () => {
@@ -126,6 +148,169 @@ test('groups broker shorthand underlyings with stock legal names', () => {
   assert.equal(groups.tier1.find((group) => group.groupName === 'TaiwanSM')?.stocks.length, 1)
   assert.equal(groups.tier1.find((group) => group.groupName === 'Alphab.C')?.stocks.length, 1)
   assert.equal(groups.tier2.find((group) => group.groupName === 'Microso.')?.stocks.length, 1)
+})
+
+test('applies Alpaca quotes only to tier1 stock rows', () => {
+  const groups = buildWatchlistGroups(
+    {
+      summary: { totalMarketValue: 10000 },
+      positions: [
+        { symbol: 'US67066G1040', displayName: 'NVIDIA Corp.', assetClass: 'STOCK', quantity: 2, marketValue: 1000, costBasis: 800, lastPrice: 100 },
+        { symbol: 'ETF001', displayName: 'World ETF', assetClass: 'FUND', quantity: 1, marketValue: 100, costBasis: 80, lastPrice: 100 },
+      ],
+    },
+    [
+      { isin: 'D-NVDA', display_name: 'Call NVIDIA', instrument: 'Call NVIDIA', asset_class: 'DERIVATIVE', product_type: 'optionsschein', underlying: 'NVIDIA', enrichment_tier: 'tier1', live_enrichment_enabled: false },
+    ],
+    [
+      { symbol: 'NVDA', price: 142.5, bidPrice: 142, askPrice: 143, priceSource: 'alpaca_iex', priceAsOf: '2026-05-21T14:00:00Z' },
+    ],
+  )
+
+  const nvidia = groups.tier1[0]
+  assert.equal(nvidia.liveStockQuoteCount, 1)
+  assert.equal(nvidia.apiStatus, 'alpaca_iex')
+  assert.equal(nvidia.stocks[0].price, 142.5)
+  assert.equal(nvidia.stocks[0].quoteSource, 'alpaca_iex')
+  assert.equal(groups.tier3[0].liveStockQuoteCount, 0)
+})
+
+test('calculates derivative monitoring metrics from group spot, delta, ratio and omega', () => {
+  const groups = buildWatchlistGroups(
+    {
+      summary: { totalMarketValue: 10000 },
+      positions: [
+        { symbol: 'US67066G1040', displayName: 'NVIDIA Corp.', assetClass: 'STOCK', quantity: 2, marketValue: 1000, costBasis: 800, lastPrice: 100 },
+        { symbol: 'D-NVDA', displayName: 'Call NVIDIA', assetClass: 'DERIVATIVE', quantity: 10, marketValue: 50, costBasis: 40, lastPrice: 5 },
+      ],
+    },
+    [
+      { isin: 'D-NVDA', display_name: 'Call NVIDIA', instrument: 'Call NVIDIA', asset_class: 'DERIVATIVE', product_type: 'optionsschein', underlying: 'NVIDIA', enrichment_tier: 'tier1', live_enrichment_enabled: true, quote_source: 'boerse_frankfurt', quantity: 10, quote_price: 5, market_value: 50, delta: 0.5, omega: 2.5, ratio: 0.1, strike_price: 110, break_even: 160 },
+    ],
+    [
+      { symbol: 'NVDA', price: 180, bidPrice: 179, askPrice: 181, priceSource: 'alpaca_iex', priceAsOf: '2026-05-21T14:00:00Z' },
+    ],
+  )
+
+  const derivative = groups.tier1[0].derivatives[0]
+  assert.equal(derivative.underlyingSpot, 180)
+  assert.equal(derivative.deltaExposureEur, 90)
+  assert.equal(derivative.deltaExposureEstimated, false)
+  assert.equal(derivative.effectiveLeverage, 2.5)
+  assert.equal(derivative.breakEvenDistanceAbs, 20)
+  assert.equal(derivative.calculatedBreakEven, 160)
+  assert.equal(derivative.breakEvenStatus, 'above')
+  assert.equal(Math.round(derivative.breakEvenDistancePct * 100) / 100, 12.5)
+})
+
+test('falls back to omega exposure but does not guess break-even when provider value is missing', () => {
+  const groups = buildWatchlistGroups(
+    {
+      summary: { totalMarketValue: 10000 },
+      positions: [
+        { symbol: 'US4581401001', displayName: 'Intel Corp.', assetClass: 'STOCK', quantity: 2, marketValue: 1000, costBasis: 800, lastPrice: 118.53 },
+        { symbol: 'D-INTC', displayName: 'Call Intel', assetClass: 'DERIVATIVE', quantity: 267, marketValue: 1409.76, costBasis: 228.22, lastPrice: 6.13 },
+      ],
+    },
+    [
+      { isin: 'D-INTC', display_name: 'Call Intel', instrument: 'Call 15.01.27 Intel 50', asset_class: 'DERIVATIVE', product_type: 'optionsschein', underlying: 'Intel', enrichment_tier: 'tier1', live_enrichment_enabled: true, quote_source: 'boerse_frankfurt', quantity: 267, quote_price: 6.13, market_value: 1409.76, delta: 1, omega: 1.73, strike_price: 50 },
+    ],
+  )
+
+  const derivative = groups.tier1[0].derivatives[0]
+  assert.equal(Math.round(derivative.deltaExposureEur * 100) / 100, 2438.88)
+  assert.equal(derivative.deltaExposureEstimated, true)
+  assert.equal(derivative.calculatedBreakEven, null)
+  assert.equal(derivative.breakEvenDistancePct, null)
+})
+
+test('collects unique tier1 Alpaca symbols from stock rows', () => {
+  const groups = buildWatchlistGroups(
+    {
+      summary: { totalMarketValue: 10000 },
+      positions: [
+        { symbol: 'US67066G1040', displayName: 'NVIDIA Corp.', assetClass: 'STOCK', quantity: 2, marketValue: 1000, costBasis: 800, lastPrice: 100 },
+        { symbol: 'US5949181045', displayName: 'Microsoft Corp.', assetClass: 'STOCK', quantity: 1, marketValue: 500, costBasis: 400, lastPrice: 500 },
+      ],
+    },
+    [
+      { isin: 'D-NVDA', display_name: 'Call NVIDIA', instrument: 'Call NVIDIA', asset_class: 'DERIVATIVE', product_type: 'optionsschein', underlying: 'NVIDIA', enrichment_tier: 'tier1', live_enrichment_enabled: false },
+      { isin: 'D-MSFT', display_name: 'Call Microso.', instrument: 'Call Microso.', asset_class: 'DERIVATIVE', product_type: 'optionsschein', underlying: 'Microso.', enrichment_tier: 'tier2', live_enrichment_enabled: false },
+    ],
+  )
+
+  assert.deepEqual(collectTier1AlpacaSymbols(groups), ['NVDA'])
+})
+
+test('collects one Alpaca spot per tier1 derivative-only group and shares it with instruments', () => {
+  const groupsWithoutQuotes = buildWatchlistGroups(
+    { summary: { totalMarketValue: 10000 }, positions: [] },
+    [
+      { isin: 'D-INTC-1', display_name: 'Call Intel', instrument: 'Call 15.01.27 Intel 30', asset_class: 'DERIVATIVE', product_type: 'optionsschein', underlying: 'Intel', enrichment_tier: 'tier1', live_enrichment_enabled: true, quote_source: 'boerse_frankfurt', quantity: 10, market_value: 100, delta: 1, omega: 2 },
+      { isin: 'D-INTC-2', display_name: 'Call Intel', instrument: 'Call 15.01.27 Intel 50', asset_class: 'DERIVATIVE', product_type: 'optionsschein', underlying: 'Intel', enrichment_tier: 'tier1', live_enrichment_enabled: true, quote_source: 'boerse_frankfurt', quantity: 5, market_value: 50, delta: 1, omega: 1.5 },
+    ],
+  )
+
+  assert.deepEqual(collectTier1AlpacaSymbols(groupsWithoutQuotes), ['INTC'])
+
+  const groups = buildWatchlistGroups(
+    { summary: { totalMarketValue: 10000 }, positions: [] },
+    [
+      { isin: 'D-INTC-1', display_name: 'Call Intel', instrument: 'Call 15.01.27 Intel 30', asset_class: 'DERIVATIVE', product_type: 'optionsschein', underlying: 'Intel', enrichment_tier: 'tier1', live_enrichment_enabled: true, quote_source: 'boerse_frankfurt', quantity: 10, market_value: 100, delta: 1, omega: 2 },
+      { isin: 'D-INTC-2', display_name: 'Call Intel', instrument: 'Call 15.01.27 Intel 50', asset_class: 'DERIVATIVE', product_type: 'optionsschein', underlying: 'Intel', enrichment_tier: 'tier1', live_enrichment_enabled: true, quote_source: 'boerse_frankfurt', quantity: 5, market_value: 50, delta: 1, omega: 1.5 },
+    ],
+    [
+      { symbol: 'INTC', price: 109.05, currency: 'EUR', rawPrice: 118.53, rawCurrency: 'USD', usdEurRate: 0.92, priceSource: 'alpaca_iex', priceAsOf: '2026-05-22T14:00:00Z' },
+    ],
+  )
+
+  assert.equal(groups.tier1[0].alpacaSymbol, 'INTC')
+  assert.equal(groups.tier1[0].spotQuote.price, 109.05)
+  assert.equal(groups.tier1[0].derivatives[0].underlyingSpot, 109.05)
+  assert.equal(groups.tier1[0].derivatives[1].underlyingSpot, 109.05)
+})
+
+test('maps broker underlying shorthands to Alpaca tickers before requesting quotes', () => {
+  const groups = buildWatchlistGroups(
+    { summary: { totalMarketValue: 10000 }, positions: [] },
+    [
+      { isin: 'D-ORCL', display_name: 'Call Oracle', instrument: 'Call 18.06.26 ORACLE 100', asset_class: 'DERIVATIVE', product_type: 'optionsschein', underlying: 'ORACLE', enrichment_tier: 'tier1', live_enrichment_enabled: true },
+      { isin: 'D-TXN', display_name: 'Call Texas Instruments', instrument: 'Call 18.06.26 TEXASIN. 180', asset_class: 'DERIVATIVE', product_type: 'optionsschein', underlying: 'TEXASIN.', enrichment_tier: 'tier1', live_enrichment_enabled: true },
+      { isin: 'D-MRVL', display_name: 'Call Marvell', instrument: 'Call 18.06.26 MARVELL 70', asset_class: 'DERIVATIVE', product_type: 'optionsschein', underlying: 'MARVELL', enrichment_tier: 'tier1', live_enrichment_enabled: true },
+      { isin: 'D-DELL', display_name: 'Call Dell Technologies', instrument: 'Call 18.06.26 DELLTECH 120', asset_class: 'DERIVATIVE', product_type: 'optionsschein', underlying: 'DELLTECH', enrichment_tier: 'tier1', live_enrichment_enabled: true },
+      { isin: 'D-GFS', display_name: 'Call GlobalFoundries', instrument: 'Call 18.06.26 GLOBALF. 40', asset_class: 'DERIVATIVE', product_type: 'optionsschein', underlying: 'GLOBALF.', enrichment_tier: 'tier1', live_enrichment_enabled: true },
+      { isin: 'D-ACN', display_name: 'Call Accenture', instrument: 'Call 18.06.26 ACCENT. 300', asset_class: 'DERIVATIVE', product_type: 'optionsschein', underlying: 'ACCENT.', enrichment_tier: 'tier1', live_enrichment_enabled: true },
+      { isin: 'D-TER', display_name: 'Call Teradyne', instrument: 'Call 18.06.26 TERADYNE 100', asset_class: 'DERIVATIVE', product_type: 'optionsschein', underlying: 'TERADYNE', enrichment_tier: 'tier1', live_enrichment_enabled: true },
+      { isin: 'D-QCOM', display_name: 'Call Qualcomm', instrument: 'Call 18.06.26 QUALCOMM 160', asset_class: 'DERIVATIVE', product_type: 'optionsschein', underlying: 'QUALCOMM', enrichment_tier: 'tier1', live_enrichment_enabled: true },
+      { isin: 'D-CCL', display_name: 'Call Carnival', instrument: 'Call 18.06.26 CARNIVAL 30', asset_class: 'DERIVATIVE', product_type: 'optionsschein', underlying: 'CARNIVAL', enrichment_tier: 'tier1', live_enrichment_enabled: true },
+    ],
+  )
+
+  assert.deepEqual(collectTier1AlpacaSymbols(groups), ['ORCL', 'TXN', 'MRVL', 'DELL', 'GFS', 'ACN', 'TER', 'QCOM', 'CCL'])
+})
+
+test('maps energy broker underlyings to Alpaca tickers before requesting quotes', () => {
+  const groups = buildWatchlistGroups(
+    { summary: { totalMarketValue: 10000 }, positions: [] },
+    [
+      { isin: 'D-ENPH', display_name: 'Call Enphase Energy', instrument: 'Call 18.06.26 ENPHASEE 50', asset_class: 'DERIVATIVE', product_type: 'optionsschein', underlying: 'ENPHASEE', enrichment_tier: 'tier1', live_enrichment_enabled: true },
+      { isin: 'D-NEE', display_name: 'Call NextEra Energy', instrument: 'Call 18.06.26 NEXTERA 75', asset_class: 'DERIVATIVE', product_type: 'optionsschein', underlying: 'NEXTERA', enrichment_tier: 'tier1', live_enrichment_enabled: true },
+    ],
+  )
+
+  assert.deepEqual(collectTier1AlpacaSymbols(groups), ['ENPH', 'NEE'])
+})
+
+test('maps semiconductor broker underlyings to Alpaca tickers before requesting quotes', () => {
+  const groups = buildWatchlistGroups(
+    { summary: { totalMarketValue: 10000 }, positions: [] },
+    [
+      { isin: 'D-STM', display_name: 'Call 18.09.26 STMicro. 25', instrument: 'Call 18.09.26 STMicro. 25', asset_class: 'DERIVATIVE', product_type: 'optionsschein', underlying: '', enrichment_tier: 'tier1', live_enrichment_enabled: true },
+      { isin: 'D-AVGO', display_name: 'Call 17.06.27 Broadcom 440', instrument: 'Call 17.06.27 Broadcom 440', asset_class: 'DERIVATIVE', product_type: 'optionsschein', underlying: '', enrichment_tier: 'tier1', live_enrichment_enabled: true },
+    ],
+  )
+
+  assert.deepEqual(collectTier1AlpacaSymbols(groups), ['STM', 'AVGO'])
 })
 
 test('group latest trade uses the newest instrument date across nested categories', () => {
