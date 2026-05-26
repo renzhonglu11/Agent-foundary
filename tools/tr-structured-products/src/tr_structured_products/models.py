@@ -50,6 +50,7 @@ class InstrumentMetadata(BaseModel):
     leverage: Optional[float] = None
     strike_price: Optional[float] = None
     knockout_price: Optional[float] = None
+    break_even: Optional[float] = None
     ratio: Optional[float] = None
     expiry: Optional[str] = None
     last_updated: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

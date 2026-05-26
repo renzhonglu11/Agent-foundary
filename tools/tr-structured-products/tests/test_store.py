@@ -20,6 +20,7 @@ def test_store_upserts_positions_metadata_and_quotes(tmp_path):
             leverage=1.55,
             strike_price=256.757,
             knockout_price=256.757,
+            break_even=270.0,
             ratio=0.01,
         )
     )
@@ -28,11 +29,11 @@ def test_store_upserts_positions_metadata_and_quotes(tmp_path):
 
     with sqlite3.connect(db_path) as conn:
         position = conn.execute("SELECT quantity, avg_cost, source FROM positions WHERE isin = ?", ("DE000HM0T297",)).fetchone()
-        metadata = conn.execute("SELECT wkn, issuer, product_type, leverage FROM instrument_metadata WHERE isin = ?", ("DE000HM0T297",)).fetchone()
+        metadata = conn.execute("SELECT wkn, issuer, product_type, leverage, break_even FROM instrument_metadata WHERE isin = ?", ("DE000HM0T297",)).fetchone()
         quote = conn.execute("SELECT price, currency FROM quotes WHERE isin = ?", ("DE000HM0T297",)).fetchone()
         greek = conn.execute("SELECT delta, omega, theta, iv FROM greeks WHERE isin = ?", ("DE000HM0T297",)).fetchone()
 
     assert position == (12.0, 3.9, "trade_republic")
-    assert metadata == ("HM0T29", "HSBC", "open_end_turbo", 1.55)
+    assert metadata == ("HM0T29", "HSBC", "open_end_turbo", 1.55, 270.0)
     assert quote == (4.24, "EUR")
     assert greek == (0.92, 1.6, -0.01, 0.42)

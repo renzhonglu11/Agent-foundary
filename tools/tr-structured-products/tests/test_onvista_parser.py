@@ -18,6 +18,7 @@ ONVISTA_HTML = """
         <dt>Hebel</dt><dd>1,55</dd>
         <dt>Basispreis</dt><dd>256,757 USD</dd>
         <dt>Knock-Out</dt><dd>256,757 USD</dd>
+        <dt>Break-even</dt><dd>1389,496 USD</dd>
         <dt>Bezugsverhältnis</dt><dd>0,01</dd>
         <dt>Fälligkeit</dt><dd>Open End</dd>
       </dl>
@@ -38,6 +39,7 @@ def test_parse_onvista_metadata_from_server_rendered_definition_list():
     assert metadata.leverage == 1.55
     assert metadata.strike_price == 256.757
     assert metadata.knockout_price == 256.757
+    assert metadata.break_even == 1389.496
     assert metadata.ratio == 0.01
     assert metadata.expiry is None
 

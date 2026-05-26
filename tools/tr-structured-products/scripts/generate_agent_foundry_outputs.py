@@ -50,6 +50,7 @@ async def generate_outputs(args: argparse.Namespace) -> list[dict]:
                 product_providers=product_providers,
                 request_delay_seconds=args.request_delay,
                 live_enrichment_tier=args.live_enrichment_tier,
+                progress_callback=emit_progress if args.emit_progress else None,
             )
         finally:
             await quote_provider.aclose()
@@ -57,6 +58,10 @@ async def generate_outputs(args: argparse.Namespace) -> list[dict]:
 
     write_structured_product_rows_outputs(rows, csv_path=args.csv, json_path=args.json, db_path=args.db)
     return rows
+
+
+def emit_progress(event: dict) -> None:
+    print(json.dumps(event, ensure_ascii=False), flush=True)
 
 
 def main() -> int:
@@ -67,17 +72,18 @@ def main() -> int:
     parser.add_argument("--json", type=Path, default=Path("../../web/public/data/structured-products-enrichment.json"), help="Output JSON path for frontend.")
     parser.add_argument("--db", type=Path, default=Path("../../data/structured-products-enrichment.sqlite3"), help="Output SQLite path.")
     parser.add_argument("--provider-timeout", type=float, default=10.0, help="Per-request provider timeout in seconds.")
-    parser.add_argument("--tier1-limit", type=int, default=20, help="Maximum number of structured products eligible for live quote/Greeks enrichment.")
+    parser.add_argument("--tier1-limit", type=int, default=20, help="Maximum number of underlying groups eligible for live quote/Greeks enrichment.")
     parser.add_argument("--live-enrichment-tier", default="tier1", help="Only rows in this enrichment tier call live providers. Use empty string to enrich all tiers.")
     parser.add_argument("--limit", type=int, help="Only process the first N structured products; useful for low-frequency smoke runs.")
     parser.add_argument("--request-delay", type=float, default=2.0, help="Delay between product enrichment requests in seconds.")
     parser.add_argument("--no-live-enrichment", action="store_true", help="Only write Rust summary rows; skip Onvista/Börse Frankfurt enrichment.")
+    parser.add_argument("--emit-progress", action="store_true", help="Print JSON lines with live enrichment progress.")
     args = parser.parse_args()
     if args.live_enrichment_tier == "":
         args.live_enrichment_tier = None
 
     rows = asyncio.run(generate_outputs(args))
-    print(json.dumps({"count": len(rows), "csv": str(args.csv), "json": str(args.json), "db": str(args.db)}, ensure_ascii=False, indent=2))
+    print(json.dumps({"count": len(rows), "csv": str(args.csv), "json": str(args.json), "db": str(args.db)}, ensure_ascii=False))
     return 0
 
 

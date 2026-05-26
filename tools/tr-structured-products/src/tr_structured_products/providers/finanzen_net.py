@@ -32,6 +32,12 @@ LABEL_ALIASES = {
     "knock out": "knockout_price",
     "knockout": "knockout_price",
     "ko-schwelle": "knockout_price",
+    "break-even": "break_even",
+    "break even": "break_even",
+    "break-even-punkt": "break_even",
+    "break even punkt": "break_even",
+    "break-even point": "break_even",
+    "gewinnschwelle": "break_even",
     "bezugsverhältnis": "ratio",
     "bezugsverhaeltnis": "ratio",
     "ratio": "ratio",
@@ -184,7 +190,7 @@ def _normalize_label(label: str) -> str:
 
 def _normalize_metadata_value(key: str, value: str) -> Any:
     cleaned = " ".join(value.split())
-    if key in {"leverage", "strike_price", "knockout_price", "ratio"}:
+    if key in {"leverage", "strike_price", "knockout_price", "break_even", "ratio"}:
         return _parse_decimal(cleaned)
     if key == "product_type":
         return _detect_product_type(cleaned)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Callable, Protocol
 
 from tr_structured_products.models import Greek, InstrumentMetadata, Quote
 
@@ -42,6 +42,7 @@ async def enrich_structured_product_rows(
     product_providers: list[ProductDataProvider] | None = None,
     request_delay_seconds: float = 0.0,
     live_enrichment_tier: str | None = None,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> list[dict]:
     """Enrich rows with live quotes, metadata, and greeks.
 
@@ -50,6 +51,8 @@ async def enrich_structured_product_rows(
     return None so the pipeline can continue with Rust summary data.
     """
     enriched_rows: list[dict] = []
+    live_total = sum(1 for row in rows if _should_live_enrich(row, live_enrichment_tier))
+    live_completed = 0
     for row in rows:
         enriched = dict(row)
         isin = str(enriched.get("isin") or "")
@@ -57,14 +60,25 @@ async def enrich_structured_product_rows(
             enriched_rows.append(enriched)
             continue
 
-        should_live_enrich = live_enrichment_tier is None or enriched.get("enrichment_tier") == live_enrichment_tier
+        should_live_enrich = _should_live_enrich(enriched, live_enrichment_tier)
 
         for field in ("delta", "omega", "theta", "iv"):
             enriched.setdefault(field, None)
 
         if not should_live_enrich:
+            enriched["live_enrichment_enabled"] = False
             enriched_rows.append(enriched)
             continue
+
+        if progress_callback is not None:
+            progress_callback({
+                "event": "structured_products_progress",
+                "phase": "fetching",
+                "current": live_completed,
+                "total": live_total,
+                "isin": isin,
+                "label": f"Fetching {isin}",
+            })
 
         if quote_provider is not None:
             quote = await quote_provider.get_quote(isin)
@@ -89,10 +103,29 @@ async def enrich_structured_product_rows(
                 enriched["metadata_url"] = product.url
             break
 
+        enriched["live_enrichment_enabled"] = _has_live_enrichment(enriched)
         enriched_rows.append(enriched)
+        live_completed += 1
+        if progress_callback is not None:
+            progress_callback({
+                "event": "structured_products_progress",
+                "phase": "fetched",
+                "current": live_completed,
+                "total": live_total,
+                "isin": isin,
+                "label": f"Fetched {isin}",
+            })
         if request_delay_seconds > 0:
             await asyncio.sleep(request_delay_seconds)
     return enriched_rows
+
+
+def _should_live_enrich(row: dict, live_enrichment_tier: str | None) -> bool:
+    return live_enrichment_tier is None or row.get("enrichment_tier") == live_enrichment_tier
+
+
+def _has_live_enrichment(row: dict) -> bool:
+    return row.get("quote_source") == "boerse_frankfurt" or row.get("metadata_source") not in (None, "")
 
 
 
@@ -105,6 +138,7 @@ def _merge_metadata(row: dict, metadata: InstrumentMetadata) -> None:
         "leverage",
         "strike_price",
         "knockout_price",
+        "break_even",
         "ratio",
         "expiry",
     ):

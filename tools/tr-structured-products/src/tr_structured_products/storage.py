@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS instrument_metadata (
     leverage REAL,
     strike_price REAL,
     knockout_price REAL,
+    break_even REAL,
     ratio REAL,
     expiry TEXT,
     last_updated TIMESTAMP
@@ -87,9 +88,9 @@ class StructuredProductStore:
                 """
                 INSERT INTO instrument_metadata (
                     isin, wkn, issuer, underlying, product_type, leverage,
-                    strike_price, knockout_price, ratio, expiry, last_updated
+                    strike_price, knockout_price, break_even, ratio, expiry, last_updated
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(isin) DO UPDATE SET
                     wkn = excluded.wkn,
                     issuer = excluded.issuer,
@@ -98,6 +99,7 @@ class StructuredProductStore:
                     leverage = excluded.leverage,
                     strike_price = excluded.strike_price,
                     knockout_price = excluded.knockout_price,
+                    break_even = excluded.break_even,
                     ratio = excluded.ratio,
                     expiry = excluded.expiry,
                     last_updated = excluded.last_updated
@@ -111,6 +113,7 @@ class StructuredProductStore:
                     metadata.leverage,
                     metadata.strike_price,
                     metadata.knockout_price,
+                    metadata.break_even,
                     metadata.ratio,
                     metadata.expiry,
                     metadata.last_updated.isoformat(),

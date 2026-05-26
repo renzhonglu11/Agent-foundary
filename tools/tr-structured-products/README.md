@@ -13,7 +13,7 @@ Current implementation covers the first usable slice:
 - Onvista public search resolver + SSR HTML metadata/greeks parser.
 - finanzen.net SSR provider remains available in code/tests, but is not part of the default pipeline because the current VPS receives Akamai `403 Forbidden` from finanzen.net live search.
 - Live enrichment orchestrator: Onvista metadata/greeks first, then Börse Frankfurt quote refresh by ISIN.
-- Tiered enrichment policy: at most 20 Tier 1 structured products call live providers; remaining structured products are Tier 2, while ETF/bond/non-derivative rows are Tier 3 and do not trigger live derivative scraping.
+- Tiered enrichment policy: at most 20 Tier 1 underlying groups call live providers; all structured products inside a Tier 1 group inherit Tier 1, while remaining structured products are Tier 2 and ETF/bond/non-derivative rows are Tier 3.
 - Normalized Pydantic models.
 - SQLite repository helpers for storing normalized positions, metadata, and quotes.
 - Simple delta exposure calculation: `quantity × delta × underlying_price`.
@@ -34,7 +34,7 @@ uv run --with httpx --with beautifulsoup4 --with lxml --with pydantic \
 
 Default behavior uses tiered live enrichment:
 
-1. Assign Tier 1 to at most 20 live-eligible structured products.
+1. Assign Tier 1 to at most 20 live-eligible underlying groups ranked by total structured-product market value.
 2. Only Tier 1 rows call Onvista public search (`/suche?searchValue=ISIN`) to resolve product pages and parse metadata/greeks from SSR HTML.
 3. Only Tier 1 rows call Börse Frankfurt quote refresh by ISIN.
 4. Tier 2/3 rows keep Rust summary price/metadata as fallback and do not call live derivative providers by default.
