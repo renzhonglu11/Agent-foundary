@@ -1,11 +1,13 @@
 pub mod api;
+pub mod app_state;
+pub mod application;
 pub mod config;
-pub mod db;
 pub mod domain;
+pub mod infrastructure;
 pub mod services;
 pub mod telemetry;
 
-use std::net::SocketAddr;
+use std::{net::SocketAddr, sync::Arc};
 
 use anyhow::Context;
 use tokio::net::TcpListener;
@@ -13,12 +15,23 @@ use tracing::{info, warn};
 
 use crate::{
     api::router,
-    config::Settings,
-    db::{
-        connection::connect, migrations::run_migrations,
-        transaction_repository::SqliteTransactionRepository,
+    app_state::AppState,
+    application::{
+        ports::{fx_rate_cache::FxRateCache, transaction_repository::TransactionRepository},
+        services::{
+            fx_rate_service::FxRateService, portfolio_service::PortfolioService,
+            transaction_importer::TransactionImporter,
+        },
     },
-    services::{portfolio_service::PortfolioService, transaction_importer::TransactionImporter},
+    config::Settings,
+    infrastructure::db::{
+        connection::connect, migrations::run_migrations, sqlite_fx_rate_cache::SqliteFxRateCache,
+        sqlite_transaction_repository::SqliteTransactionRepository,
+    },
+    services::{
+        alpaca_market_data::AlpacaMarketDataService,
+        structured_products_service::StructuredProductsService,
+    },
 };
 
 pub struct App {
@@ -31,7 +44,8 @@ impl App {
         let pool = connect(&settings.database_url).await?;
         run_migrations(&pool).await?;
 
-        let repository = SqliteTransactionRepository::new(pool);
+        let repository: Arc<dyn TransactionRepository> =
+            Arc::new(SqliteTransactionRepository::new(pool.clone()));
         if settings.csv_path.exists() {
             TransactionImporter::new(repository.clone())
                 .import_csv(&settings.csv_path)
@@ -53,12 +67,31 @@ impl App {
             settings.csv_path.clone(),
             settings.pdf_path.clone(),
             settings.pdf_text_path.clone(),
+            Some(settings.structured_products.output_json_path.clone()),
         );
         portfolio_service
             .refresh_summary_cache()
             .await
             .context("failed to warm portfolio summary cache")?;
-        let router = router::build(portfolio_service);
+        let summary = portfolio_service
+            .summary()
+            .await
+            .context("failed to load warmed portfolio summary")?;
+        let structured_products_service =
+            StructuredProductsService::new(settings.structured_products.clone())
+                .context("failed to configure structured products enrichment")?;
+        structured_products_service.refresh_if_missing(summary);
+        let fx_rate_cache: Arc<dyn FxRateCache> = Arc::new(SqliteFxRateCache::new(pool.clone()));
+        let fx_rate_service = FxRateService::new(fx_rate_cache, settings.fx_rates.clone());
+        let alpaca_market_data_service =
+            AlpacaMarketDataService::new(settings.alpaca.clone(), fx_rate_service);
+
+        let state = Arc::new(AppState::new(
+            portfolio_service,
+            structured_products_service,
+            alpaca_market_data_service,
+        ));
+        let router = router::build(state);
 
         Ok(Self { settings, router })
     }

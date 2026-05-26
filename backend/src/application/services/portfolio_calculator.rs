@@ -21,6 +21,7 @@ pub struct CalculatorInput {
     pub pdf_source: String,
     pub pdf_text_source: Option<String>,
     pub isin_names: HashMap<String, PdfSecurityInfo>,
+    pub price_overrides: HashMap<String, PriceOverride>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -29,6 +30,15 @@ pub struct PdfSecurityInfo {
     pub pdf_name: String,
     pub issuer: String,
     pub instrument: String,
+    pub quantity: Option<f64>,
+    pub quote_price: Option<f64>,
+    pub market_value: Option<f64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PriceOverride {
+    pub price: f64,
+    pub source: String,
 }
 
 pub fn calculate_portfolio(
@@ -184,7 +194,11 @@ pub fn calculate_portfolio(
         .into_values()
         .filter(|position| position.quantity.abs() > 1e-6)
         .map(|mut position| {
-            position.market_value = position.quantity * position.last_price;
+            if let Some(price) = price_for_position(&position, &input) {
+                position.last_price = price;
+            }
+            position.market_value = market_value_for_position(&position, &input)
+                .unwrap_or(position.quantity * position.last_price);
             position.unrealized_pnl = position.market_value - position.cost_basis;
             position.unrealized_pct = if position.cost_basis > 0.0 {
                 (position.unrealized_pnl / position.cost_basis) * 100.0
@@ -311,6 +325,7 @@ fn parse_isin_name_map(content: &str) -> HashMap<String, PdfSecurityInfo> {
         Regex::new(r"\b[A-Z]{2}[A-Z0-9]{9}[0-9]\b").unwrap_or_else(|_| unreachable!());
     let quantity_pattern =
         Regex::new(r"^\d+(?:[,.]\d+)?\s+Stk\.$").unwrap_or_else(|_| unreachable!());
+    let date_pattern = Regex::new(r"^\d{2}\.\d{2}\.\d{4}$").unwrap_or_else(|_| unreachable!());
     let amount_pattern = Regex::new(
         r"(?i)^\d{1,3}(?:\.\d{3})*,\d{2,6}(?:\s+(?:EUR|USD))?$|^\d+[,]\d+(?:\s+(?:EUR|USD))?$",
     )
@@ -362,6 +377,13 @@ fn parse_isin_name_map(content: &str) -> HashMap<String, PdfSecurityInfo> {
         } else {
             name_lines.join(" · ")
         };
+        let quantity = lines[..index]
+            .iter()
+            .rev()
+            .take(8)
+            .find_map(|candidate| parse_quantity(candidate, &quantity_pattern));
+        let (quote_price, market_value) =
+            parse_pdf_quote_after_isin(&lines, index, &isin_pattern, &date_pattern);
 
         map.insert(
             isin,
@@ -374,6 +396,9 @@ fn parse_isin_name_map(content: &str) -> HashMap<String, PdfSecurityInfo> {
                 } else {
                     name_lines.first().cloned().unwrap_or_default()
                 },
+                quantity,
+                quote_price,
+                market_value,
             },
         );
     }
@@ -593,6 +618,81 @@ fn non_zero(value: f64, fallback: f64) -> f64 {
     if value == 0.0 { fallback } else { value }
 }
 
+fn price_for_position(position: &Position, input: &CalculatorInput) -> Option<f64> {
+    if let Some(override_) = input.price_overrides.get(&position.symbol) {
+        if override_.price > 0.0 {
+            return Some(override_.price);
+        }
+    }
+
+    input
+        .isin_names
+        .get(&position.symbol)?
+        .quote_price
+        .filter(|value| *value > 0.0)
+}
+
+fn market_value_for_position(position: &Position, input: &CalculatorInput) -> Option<f64> {
+    if position.asset_class != "BOND" {
+        return None;
+    }
+
+    input
+        .isin_names
+        .get(&position.symbol)?
+        .market_value
+        .filter(|value| *value > 0.0)
+}
+
+fn parse_quantity(value: &str, quantity_pattern: &Regex) -> Option<f64> {
+    if !quantity_pattern.is_match(value) {
+        return None;
+    }
+
+    parse_german_decimal(value.trim_end_matches(" Stk."))
+}
+
+fn parse_pdf_quote_after_isin(
+    lines: &[&str],
+    isin_index: usize,
+    isin_pattern: &Regex,
+    date_pattern: &Regex,
+) -> (Option<f64>, Option<f64>) {
+    let mut quote_price = None;
+    let mut saw_quote_date = false;
+
+    for candidate in lines.iter().skip(isin_index + 1).take(12) {
+        if isin_pattern.is_match(candidate) {
+            break;
+        }
+        if date_pattern.is_match(candidate) {
+            saw_quote_date = quote_price.is_some();
+            continue;
+        }
+
+        let Some(value) = parse_german_decimal(candidate) else {
+            continue;
+        };
+        if quote_price.is_none() {
+            quote_price = Some(value);
+        } else if saw_quote_date {
+            return (quote_price, Some(value));
+        }
+    }
+
+    (quote_price, None)
+}
+
+fn parse_german_decimal(value: &str) -> Option<f64> {
+    let normalized = value
+        .trim()
+        .trim_end_matches(" EUR")
+        .trim_end_matches(" USD")
+        .replace('.', "")
+        .replace(',', ".");
+    normalized.parse::<f64>().ok()
+}
+
 fn first_non_empty<const N: usize>(values: [&str; N]) -> String {
     values
         .into_iter()
@@ -653,6 +753,128 @@ mod tests {
         assert_eq!(output.dividend.summary.net_amount, 8.0);
     }
 
+    #[test]
+    fn uses_live_price_override_before_transaction_price() {
+        let transactions = vec![
+            TestTx::new("1", "BUY")
+                .amount(-100.0)
+                .shares(10.0)
+                .price(10.0)
+                .build(),
+        ];
+        let mut price_overrides = HashMap::new();
+        price_overrides.insert(
+            "US0000000001".to_owned(),
+            PriceOverride {
+                price: 12.0,
+                source: "boerse_frankfurt".to_owned(),
+            },
+        );
+
+        let output = calculate_portfolio(
+            &transactions,
+            CalculatorInput {
+                price_overrides,
+                ..CalculatorInput::default()
+            },
+        );
+
+        assert_eq!(output.positions[0].last_price, 12.0);
+        assert_eq!(output.positions[0].market_value, 120.0);
+        assert_eq!(output.summary.unrealized_pnl, 20.0);
+    }
+
+    #[test]
+    fn uses_pdf_quote_price_as_fallback_price() {
+        let transactions = vec![
+            TestTx::new("1", "BUY")
+                .symbol("US0000000001")
+                .amount(-100.0)
+                .shares(10.0)
+                .price(10.0)
+                .build(),
+        ];
+        let mut isin_names = HashMap::new();
+        isin_names.insert(
+            "US0000000001".to_owned(),
+            PdfSecurityInfo {
+                quantity: Some(8.0),
+                market_value: Some(160.0),
+                quote_price: Some(19.99),
+                ..PdfSecurityInfo::default()
+            },
+        );
+
+        let output = calculate_portfolio(
+            &transactions,
+            CalculatorInput {
+                isin_names,
+                ..CalculatorInput::default()
+            },
+        );
+
+        assert_eq!(output.positions[0].last_price, 19.99);
+        assert_eq!(output.positions[0].market_value, 199.89999999999998);
+        assert_eq!(output.summary.unrealized_pnl, 99.89999999999998);
+    }
+
+    #[test]
+    fn uses_pdf_market_value_for_bonds() {
+        let transactions = vec![
+            TestTx::new("1", "BUY")
+                .symbol("US731011AV42")
+                .asset_class("BOND")
+                .amount(-2000.0)
+                .shares(2000.0)
+                .price(1.0)
+                .build(),
+        ];
+        let mut isin_names = HashMap::new();
+        isin_names.insert(
+            "US731011AV42".to_owned(),
+            PdfSecurityInfo {
+                market_value: Some(1800.0),
+                quote_price: Some(0.95),
+                ..PdfSecurityInfo::default()
+            },
+        );
+
+        let output = calculate_portfolio(
+            &transactions,
+            CalculatorInput {
+                isin_names,
+                ..CalculatorInput::default()
+            },
+        );
+
+        assert_eq!(output.positions[0].last_price, 0.95);
+        assert_eq!(output.positions[0].market_value, 1800.0);
+        assert_eq!(output.summary.unrealized_pnl, -200.0);
+    }
+
+    #[test]
+    fn parses_pdf_position_values_by_isin() -> anyhow::Result<()> {
+        let map = parse_isin_name_map(
+            r#"
+10 Stk.
+NVIDIA Corp.
+Registered Shares DL-,001
+ISIN: US67066G1040
+183,94
+26.05.2026
+1.839,40
+"#,
+        );
+
+        let info = map
+            .get("US67066G1040")
+            .ok_or_else(|| anyhow::anyhow!("PDF ISIN should parse"))?;
+        assert_eq!(info.quantity, Some(10.0));
+        assert_eq!(info.quote_price, Some(183.94));
+        assert_eq!(info.market_value, Some(1839.40));
+        Ok(())
+    }
+
     struct TestTx {
         transaction: Transaction,
     }
@@ -696,6 +918,16 @@ mod tests {
 
         fn shares(mut self, shares: f64) -> Self {
             self.transaction.shares = shares;
+            self
+        }
+
+        fn symbol(mut self, symbol: &str) -> Self {
+            self.transaction.symbol = Symbol(symbol.to_owned());
+            self
+        }
+
+        fn asset_class(mut self, asset_class: &str) -> Self {
+            self.transaction.asset_class = AssetClass(asset_class.to_owned());
             self
         }
 

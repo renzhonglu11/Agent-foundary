@@ -1,11 +1,11 @@
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
 use anyhow::{Context, bail};
 use serde::Deserialize;
 use tracing::info;
 
 use crate::{
-    db::transaction_repository::SqliteTransactionRepository,
+    application::ports::transaction_repository::TransactionRepository,
     domain::{
         money::Money,
         transaction::{AssetClass, Symbol, Transaction},
@@ -29,32 +29,18 @@ const REQUIRED_HEADERS: &[&str] = &[
     "currency",
 ];
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct TransactionImporter {
-    repository: SqliteTransactionRepository,
+    repository: Arc<dyn TransactionRepository>,
 }
 
 impl TransactionImporter {
-    pub fn new(repository: SqliteTransactionRepository) -> Self {
+    pub fn new(repository: Arc<dyn TransactionRepository>) -> Self {
         Self { repository }
     }
 
     pub async fn import_csv(&self, path: &Path) -> anyhow::Result<usize> {
-        if !path.exists() {
-            bail!("CSV file does not exist: {}", path.display());
-        }
-
-        let mut reader = csv::ReaderBuilder::new()
-            .flexible(true)
-            .from_path(path)
-            .with_context(|| format!("failed to open CSV {}", path.display()))?;
-        validate_headers(reader.headers()?, path)?;
-
-        let mut transactions = Vec::new();
-        for (index, row) in reader.deserialize::<RawTransaction>().enumerate() {
-            let raw = row.with_context(|| format!("failed to parse CSV row {}", index + 2))?;
-            transactions.push(raw.into_transaction(index));
-        }
+        let transactions = read_transactions(path)?;
 
         self.repository
             .replace_all(&transactions)
@@ -64,6 +50,30 @@ impl TransactionImporter {
         info!(rows = transactions.len(), path = %path.display(), "imported transaction CSV");
         Ok(transactions.len())
     }
+}
+
+pub fn validate_csv(path: &Path) -> anyhow::Result<usize> {
+    Ok(read_transactions(path)?.len())
+}
+
+fn read_transactions(path: &Path) -> anyhow::Result<Vec<Transaction>> {
+    if !path.exists() {
+        bail!("CSV file does not exist: {}", path.display());
+    }
+
+    let mut reader = csv::ReaderBuilder::new()
+        .flexible(true)
+        .from_path(path)
+        .with_context(|| format!("failed to open CSV {}", path.display()))?;
+    validate_headers(reader.headers()?, path)?;
+
+    let mut transactions = Vec::new();
+    for (index, row) in reader.deserialize::<RawTransaction>().enumerate() {
+        let raw = row.with_context(|| format!("failed to parse CSV row {}", index + 2))?;
+        transactions.push(raw.into_transaction(index));
+    }
+
+    Ok(transactions)
 }
 
 fn validate_headers(headers: &csv::StringRecord, path: &Path) -> anyhow::Result<()> {

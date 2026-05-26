@@ -1,8 +1,11 @@
 use sqlx::{Row, SqlitePool};
 
-use crate::domain::{
-    money::Money,
-    transaction::{AssetClass, Symbol, Transaction},
+use crate::{
+    application::ports::transaction_repository::TransactionRepository,
+    domain::{
+        money::Money,
+        transaction::{AssetClass, Symbol, Transaction},
+    },
 };
 
 #[derive(Debug, Clone)]
@@ -14,8 +17,11 @@ impl SqliteTransactionRepository {
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
     }
+}
 
-    pub async fn replace_all(&self, transactions: &[Transaction]) -> Result<(), sqlx::Error> {
+#[async_trait::async_trait]
+impl TransactionRepository for SqliteTransactionRepository {
+    async fn replace_all(&self, transactions: &[Transaction]) -> anyhow::Result<()> {
         let mut tx = self.pool.begin().await?;
         sqlx::query("DELETE FROM transactions")
             .execute(&mut *tx)
@@ -49,10 +55,11 @@ impl SqliteTransactionRepository {
             .await?;
         }
 
-        tx.commit().await
+        tx.commit().await?;
+        Ok(())
     }
 
-    pub async fn list_all(&self) -> Result<Vec<Transaction>, sqlx::Error> {
+    async fn list_all(&self) -> anyhow::Result<Vec<Transaction>> {
         let rows = sqlx::query(
             r#"
             SELECT transaction_id, date, type, category, asset_class, name, symbol, description,
@@ -64,7 +71,8 @@ impl SqliteTransactionRepository {
         .fetch_all(&self.pool)
         .await?;
 
-        rows.into_iter()
+        let transactions = rows
+            .into_iter()
             .map(|row| {
                 Ok(Transaction {
                     transaction_id: row.try_get("transaction_id")?,
@@ -83,6 +91,8 @@ impl SqliteTransactionRepository {
                     currency: row.try_get("currency")?,
                 })
             })
-            .collect()
+            .collect::<Result<Vec<_>, sqlx::Error>>()?;
+
+        Ok(transactions)
     }
 }

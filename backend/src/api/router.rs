@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use axum::{
     Router,
     extract::DefaultBodyLimit,
@@ -5,9 +7,9 @@ use axum::{
 };
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
-use crate::{api::handlers, services::portfolio_service::PortfolioService};
+use crate::{api::handlers, app_state::AppState};
 
-pub fn build(portfolio_service: PortfolioService) -> Router {
+pub fn build(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/health", get(handlers::health))
         .route("/api/portfolio/summary", get(handlers::portfolio_summary))
@@ -23,7 +25,23 @@ pub fn build(portfolio_service: PortfolioService) -> Router {
             "/data/hermes-cron-status.json",
             get(handlers::hermes_cron_status),
         )
-        .with_state(portfolio_service)
+        .route(
+            "/data/structured-products-enrichment.json",
+            get(handlers::structured_products_enrichment),
+        )
+        .route(
+            "/api/structured-products-enrichment/refresh",
+            post(handlers::refresh_structured_products_enrichment),
+        )
+        .route(
+            "/api/structured-products-enrichment/status",
+            get(handlers::structured_products_enrichment_status),
+        )
+        .route(
+            "/api/stock-analysis/alpaca-quotes",
+            get(handlers::stock_analysis_alpaca_quotes),
+        )
+        .with_state(state)
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
 }

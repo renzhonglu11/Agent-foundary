@@ -3,25 +3,40 @@ use std::{
     env, fs,
     path::{Path, PathBuf},
     process::Command,
+    sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use axum::{
     Json,
-    extract::{Multipart, State},
+    extract::{Multipart, Query, State},
     http::StatusCode,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{api::error::ApiError, services::portfolio_service::PortfolioService};
+use crate::{
+    api::error::ApiError,
+    app_state::AppState,
+    application::services::{
+        portfolio_service::PortfolioService, transaction_importer::validate_csv,
+    },
+    services::{
+        alpaca_market_data::AlpacaQuotesResponse, structured_products_service::RefreshMode,
+    },
+};
 
 const ALLOWED_EXTENSIONS: &[&str] = &["csv", "pdf"];
 
+#[derive(Debug, Deserialize)]
+pub struct AlpacaQuotesQuery {
+    pub symbols: Option<String>,
+}
+
 pub async fn portfolio_summary(
-    State(service): State<PortfolioService>,
+    State(state): State<Arc<AppState>>,
 ) -> Result<Json<crate::domain::portfolio::PortfolioSummaryResponse>, ApiError> {
-    Ok(Json(service.summary().await?))
+    Ok(Json(state.portfolio_service.summary().await?))
 }
 
 pub async fn health() -> Json<serde_json::Value> {
@@ -32,13 +47,56 @@ pub async fn hermes_cron_status() -> Json<HermesCronStatusResponse> {
     Json(build_hermes_cron_status())
 }
 
+pub async fn structured_products_enrichment(State(state): State<Arc<AppState>>) -> Json<Value> {
+    Json(state.structured_products_service.read_payload().await)
+}
+
+pub async fn structured_products_enrichment_status(
+    State(state): State<Arc<AppState>>,
+) -> Json<Value> {
+    Json(state.structured_products_service.status_payload())
+}
+
+pub async fn stock_analysis_alpaca_quotes(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<AlpacaQuotesQuery>,
+) -> Json<AlpacaQuotesResponse> {
+    Json(
+        state
+            .alpaca_market_data_service
+            .latest_quotes(query.symbols.as_deref().unwrap_or(""))
+            .await,
+    )
+}
+
+pub async fn refresh_structured_products_enrichment(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Value>, ApiError> {
+    let summary = state.portfolio_service.summary().await?;
+    state.structured_products_service.spawn_refresh(
+        summary,
+        "user_requested_live_enrichment",
+        RefreshMode::Live,
+    );
+
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "status": "started",
+        "mode": "live"
+    })))
+}
+
 pub async fn upload_data(
-    State(service): State<PortfolioService>,
+    State(state): State<Arc<AppState>>,
     mut multipart: Multipart,
 ) -> Result<(StatusCode, Json<UploadDataResponse>), ApiError> {
-    let mut saved = Vec::new();
+    let service = &state.portfolio_service;
+    let structured_products_service = &state.structured_products_service;
+    let mut prepared = Vec::new();
     let mut rejected = Vec::new();
     let mut saw_file = false;
+    let mut saw_csv = false;
+    let mut saw_pdf = false;
 
     while let Some(field) = multipart.next_field().await? {
         let Some(original_filename) = field.file_name().map(str::to_owned) else {
@@ -63,12 +121,30 @@ pub async fn upload_data(
             continue;
         }
 
-        let content = field.bytes().await?;
+        if extension.as_deref() == Some("csv") && saw_csv {
+            rejected.push(RejectedUpload {
+                filename,
+                reason: "Only one CSV file can be uploaded per atomic data update".to_owned(),
+            });
+            continue;
+        }
+        if extension.as_deref() == Some("pdf") && saw_pdf {
+            rejected.push(RejectedUpload {
+                filename,
+                reason: "Only one PDF file can be uploaded per atomic data update".to_owned(),
+            });
+            continue;
+        }
+
+        let content = field.bytes().await?.to_vec();
         let targets = upload_targets(&filename);
 
-        let imported_rows = if extension.as_deref() == Some("csv") {
-            match import_uploaded_csv(&service, &filename, &content).await {
-                Ok(rows) => Some(rows),
+        let kind = if extension.as_deref() == Some("csv") {
+            match prepare_uploaded_csv(&filename, &content) {
+                Ok(prepared_csv) => {
+                    saw_csv = true;
+                    PreparedUploadKind::Csv(prepared_csv)
+                }
                 Err(error) => {
                     rejected.push(RejectedUpload {
                         filename,
@@ -80,12 +156,11 @@ pub async fn upload_data(
                 }
             }
         } else {
-            None
-        };
-
-        let extracted_pdf_text = if extension.as_deref() == Some("pdf") {
-            match extract_uploaded_pdf(&service, &targets[0], &filename, &content).await {
-                Ok(chars) => Some(chars),
+            match prepare_uploaded_pdf(service, &filename, &content) {
+                Ok(prepared_pdf) => {
+                    saw_pdf = true;
+                    PreparedUploadKind::Pdf(prepared_pdf)
+                }
                 Err(error) => {
                     rejected.push(RejectedUpload {
                         filename,
@@ -94,26 +169,13 @@ pub async fn upload_data(
                     continue;
                 }
             }
-        } else {
-            None
         };
 
-        for target in &targets {
-            if let Some(parent) = target.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            std::fs::write(target, &content)?;
-        }
-
-        saved.push(SavedUpload {
+        prepared.push(PreparedUpload {
             filename,
-            size: content.len(),
-            paths: targets
-                .iter()
-                .map(|target| target.to_string_lossy().into_owned())
-                .collect(),
-            imported_rows,
-            extracted_pdf_text,
+            content,
+            targets,
+            kind,
         });
     }
 
@@ -122,23 +184,72 @@ pub async fn upload_data(
             StatusCode::BAD_REQUEST,
             Json(UploadDataResponse {
                 ok: false,
-                saved,
+                saved: Vec::new(),
                 rejected,
                 error: Some("No files uploaded"),
             }),
         ));
     }
 
-    let status = if saved.is_empty() {
-        StatusCode::BAD_REQUEST
-    } else {
-        StatusCode::OK
-    };
+    if !rejected.is_empty() {
+        cleanup_prepared_uploads(&prepared);
+        return Ok((
+            StatusCode::BAD_REQUEST,
+            Json(UploadDataResponse {
+                ok: false,
+                saved: Vec::new(),
+                rejected,
+                error: Some("No data was updated because one or more files failed validation"),
+            }),
+        ));
+    }
+
+    let mut csv_path = None;
+    let mut pdf_path = None;
+    let mut saved = Vec::new();
+
+    for item in &prepared {
+        for target in &item.targets {
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(target, &item.content)?;
+        }
+
+        match &item.kind {
+            PreparedUploadKind::Csv(csv) => {
+                csv_path = Some(csv.temp_path.clone());
+                saved.push(item.saved_upload(Some(csv.imported_rows), None));
+            }
+            PreparedUploadKind::Pdf(pdf) => {
+                let Some(pdf_text_path) = service.pdf_text_path() else {
+                    return Err(anyhow::anyhow!("PDF_TEXT_PATH is not configured").into());
+                };
+                if let Some(parent) = pdf_text_path.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::write(&pdf_text_path, &pdf.extracted_text)?;
+                pdf_path = item.targets.first().cloned();
+                saved.push(item.saved_upload(None, Some(pdf.extracted_text.len())));
+            }
+        }
+    }
+
+    let update_result = service
+        .apply_data_update(csv_path.as_deref(), pdf_path)
+        .await;
+    cleanup_prepared_uploads(&prepared);
+    let (_, summary) = update_result?;
+    structured_products_service.spawn_refresh(
+        summary,
+        "upload_data_success",
+        RefreshMode::FallbackOnly,
+    );
 
     Ok((
-        status,
+        StatusCode::OK,
         Json(UploadDataResponse {
-            ok: !saved.is_empty(),
+            ok: true,
             saved,
             rejected,
             error: None,
@@ -171,29 +282,31 @@ fn upload_targets(filename: &str) -> Vec<PathBuf> {
     vec![PathBuf::from("data").join(filename)]
 }
 
-async fn import_uploaded_csv(
-    service: &PortfolioService,
-    filename: &str,
-    content: &[u8],
-) -> anyhow::Result<usize> {
+fn prepare_uploaded_csv(filename: &str, content: &[u8]) -> anyhow::Result<PreparedCsvUpload> {
     let temp_path = temporary_csv_path(filename);
     if let Some(parent) = temp_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
     std::fs::write(&temp_path, content)?;
 
-    let result = service.import_csv(&temp_path).await;
-    let _ = std::fs::remove_file(&temp_path);
-    result
+    match validate_csv(&temp_path) {
+        Ok(imported_rows) => Ok(PreparedCsvUpload {
+            temp_path,
+            imported_rows,
+        }),
+        Err(error) => {
+            let _ = std::fs::remove_file(&temp_path);
+            Err(error)
+        }
+    }
 }
 
-async fn extract_uploaded_pdf(
+fn prepare_uploaded_pdf(
     service: &PortfolioService,
-    target_pdf_path: &Path,
     filename: &str,
     content: &[u8],
-) -> anyhow::Result<usize> {
-    let Some(pdf_text_path) = service.pdf_text_path() else {
+) -> anyhow::Result<PreparedPdfUpload> {
+    if service.pdf_text_path().is_none() {
         anyhow::bail!("PDF_TEXT_PATH is not configured");
     };
 
@@ -210,22 +323,15 @@ async fn extract_uploaded_pdf(
             anyhow::bail!("PDF text extraction produced empty output");
         }
 
-        if let Some(parent) = pdf_text_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(&pdf_text_path, &text)?;
-        Ok(text.len())
+        Ok(PreparedPdfUpload {
+            extracted_text: text,
+        })
     });
 
     let _ = std::fs::remove_file(&temp_pdf_path);
     let _ = std::fs::remove_file(&temp_text_path);
 
-    let chars = result?;
-    service
-        .refresh_after_pdf_update(target_pdf_path.to_path_buf())
-        .await?;
-
-    Ok(chars)
+    result
 }
 
 fn run_pdf_text_extractor(pdf_path: &Path, text_path: &Path) -> anyhow::Result<()> {
@@ -282,6 +388,55 @@ fn temporary_upload_path(filename: &str, extension: &str) -> PathBuf {
         std::process::id(),
         timestamp
     ))
+}
+
+struct PreparedUpload {
+    filename: String,
+    content: Vec<u8>,
+    targets: Vec<PathBuf>,
+    kind: PreparedUploadKind,
+}
+
+enum PreparedUploadKind {
+    Csv(PreparedCsvUpload),
+    Pdf(PreparedPdfUpload),
+}
+
+struct PreparedCsvUpload {
+    temp_path: PathBuf,
+    imported_rows: usize,
+}
+
+struct PreparedPdfUpload {
+    extracted_text: String,
+}
+
+impl PreparedUpload {
+    fn saved_upload(
+        &self,
+        imported_rows: Option<usize>,
+        extracted_pdf_text: Option<usize>,
+    ) -> SavedUpload {
+        SavedUpload {
+            filename: self.filename.clone(),
+            size: self.content.len(),
+            paths: self
+                .targets
+                .iter()
+                .map(|target| target.to_string_lossy().into_owned())
+                .collect(),
+            imported_rows,
+            extracted_pdf_text,
+        }
+    }
+}
+
+fn cleanup_prepared_uploads(prepared: &[PreparedUpload]) {
+    for item in prepared {
+        if let PreparedUploadKind::Csv(csv) = &item.kind {
+            let _ = std::fs::remove_file(&csv.temp_path);
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]

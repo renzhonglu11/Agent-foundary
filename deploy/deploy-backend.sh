@@ -21,6 +21,7 @@ SYNC_SERVICE_FILE="${REPO_ROOT}/deploy/agent-foundry-hermes-cron-sync.service"
 SYNC_PATH_FILE="${REPO_ROOT}/deploy/agent-foundry-hermes-cron-sync.path"
 PDF_EXTRACT_SCRIPT="${REPO_ROOT}/backend/scripts/extractPdfText.py"
 PDF_EXTRACT_REQUIREMENTS="${REPO_ROOT}/backend/scripts/requirements.txt"
+STRUCTURED_PRODUCTS_TOOL_DIR="${REPO_ROOT}/tools/tr-structured-products"
 
 if [[ -f "${ENV_SOURCE}" ]]; then
   ENV_FILE="${ENV_SOURCE}"
@@ -46,17 +47,19 @@ scp "${SYNC_SERVICE_FILE}" "${SSH_HOST}:${TMP_DIR}/agent-foundry-hermes-cron-syn
 scp "${SYNC_PATH_FILE}" "${SSH_HOST}:${TMP_DIR}/agent-foundry-hermes-cron-sync.path"
 scp "${PDF_EXTRACT_SCRIPT}" "${SSH_HOST}:${TMP_DIR}/extractPdfText.py"
 scp "${PDF_EXTRACT_REQUIREMENTS}" "${SSH_HOST}:${TMP_DIR}/requirements.txt"
+scp -r "${STRUCTURED_PRODUCTS_TOOL_DIR}" "${SSH_HOST}:${TMP_DIR}/tr-structured-products"
 
 echo "Installing on VPS..."
 ssh -tt "${SSH_HOST}" "
   set -euo pipefail
-  sudo mkdir -p '${REMOTE_ROOT}/bin' '${REMOTE_ROOT}/data' '${REMOTE_ROOT}/scripts'
+  sudo mkdir -p '${REMOTE_ROOT}/bin' '${REMOTE_ROOT}/data' '${REMOTE_ROOT}/scripts' '${REMOTE_ROOT}/tools'
   sudo useradd --system --home '${REMOTE_ROOT}' --shell /usr/sbin/nologin '${REMOTE_USER}' 2>/dev/null || true
   sudo mv '${TMP_DIR}/agent-foundry-backend' '${REMOTE_ROOT}/bin/agent-foundry-backend'
   sudo mv '${TMP_DIR}/agent-foundry.env' '${REMOTE_ROOT}/.env'
-  sudo rm -f '${REMOTE_ROOT}/data/Transaktionsexport.csv'
   sudo mv '${TMP_DIR}/extractPdfText.py' '${REMOTE_ROOT}/scripts/extractPdfText.py'
   sudo mv '${TMP_DIR}/requirements.txt' '${REMOTE_ROOT}/scripts/requirements.txt'
+  sudo rm -rf '${REMOTE_ROOT}/tools/tr-structured-products'
+  sudo mv '${TMP_DIR}/tr-structured-products' '${REMOTE_ROOT}/tools/tr-structured-products'
   sudo mv '${TMP_DIR}/sync-hermes-cron-jobs.sh' '${REMOTE_ROOT}/bin/sync-hermes-cron-jobs.sh'
   sudo mv '${TMP_DIR}/agent-foundry-backend.service' '/etc/systemd/system/${SERVICE_NAME}.service'
   sudo mv '${TMP_DIR}/agent-foundry-hermes-cron-sync.service' '/etc/systemd/system/${SYNC_SERVICE_NAME}.service'
@@ -72,6 +75,21 @@ ssh -tt "${SSH_HOST}" "
   sudo grep -q '^HERMES_CRON_JOBS_PATH=' '${REMOTE_ROOT}/.env' \
     && sudo sed -i 's#^HERMES_CRON_JOBS_PATH=.*#HERMES_CRON_JOBS_PATH=data/hermes-cron/jobs.json#' '${REMOTE_ROOT}/.env' \
     || echo 'HERMES_CRON_JOBS_PATH=data/hermes-cron/jobs.json' | sudo tee -a '${REMOTE_ROOT}/.env' >/dev/null
+  sudo grep -q '^STRUCTURED_PRODUCTS_ENRICHMENT_COMMAND=' '${REMOTE_ROOT}/.env' \
+    && sudo sed -i 's#^STRUCTURED_PRODUCTS_ENRICHMENT_COMMAND=.*#STRUCTURED_PRODUCTS_ENRICHMENT_COMMAND=${REMOTE_ROOT}/.venv/bin/python#' '${REMOTE_ROOT}/.env' \
+    || echo 'STRUCTURED_PRODUCTS_ENRICHMENT_COMMAND=${REMOTE_ROOT}/.venv/bin/python' | sudo tee -a '${REMOTE_ROOT}/.env' >/dev/null
+  sudo grep -q '^STRUCTURED_PRODUCTS_ENRICHMENT_WORKDIR=' '${REMOTE_ROOT}/.env' \
+    && sudo sed -i 's#^STRUCTURED_PRODUCTS_ENRICHMENT_WORKDIR=.*#STRUCTURED_PRODUCTS_ENRICHMENT_WORKDIR=tools/tr-structured-products#' '${REMOTE_ROOT}/.env' \
+    || echo 'STRUCTURED_PRODUCTS_ENRICHMENT_WORKDIR=tools/tr-structured-products' | sudo tee -a '${REMOTE_ROOT}/.env' >/dev/null
+  sudo grep -q '^STRUCTURED_PRODUCTS_ENRICHMENT_JSON=' '${REMOTE_ROOT}/.env' \
+    && sudo sed -i 's#^STRUCTURED_PRODUCTS_ENRICHMENT_JSON=.*#STRUCTURED_PRODUCTS_ENRICHMENT_JSON=data/structured-products-enrichment.json#' '${REMOTE_ROOT}/.env' \
+    || echo 'STRUCTURED_PRODUCTS_ENRICHMENT_JSON=data/structured-products-enrichment.json' | sudo tee -a '${REMOTE_ROOT}/.env' >/dev/null
+  sudo grep -q '^STRUCTURED_PRODUCTS_ENRICHMENT_CSV=' '${REMOTE_ROOT}/.env' \
+    && sudo sed -i 's#^STRUCTURED_PRODUCTS_ENRICHMENT_CSV=.*#STRUCTURED_PRODUCTS_ENRICHMENT_CSV=data/structured-products-enrichment.csv#' '${REMOTE_ROOT}/.env' \
+    || echo 'STRUCTURED_PRODUCTS_ENRICHMENT_CSV=data/structured-products-enrichment.csv' | sudo tee -a '${REMOTE_ROOT}/.env' >/dev/null
+  sudo grep -q '^STRUCTURED_PRODUCTS_ENRICHMENT_DB=' '${REMOTE_ROOT}/.env' \
+    && sudo sed -i 's#^STRUCTURED_PRODUCTS_ENRICHMENT_DB=.*#STRUCTURED_PRODUCTS_ENRICHMENT_DB=data/structured-products-enrichment.sqlite3#' '${REMOTE_ROOT}/.env' \
+    || echo 'STRUCTURED_PRODUCTS_ENRICHMENT_DB=data/structured-products-enrichment.sqlite3' | sudo tee -a '${REMOTE_ROOT}/.env' >/dev/null
   sudo chown -R '${REMOTE_USER}:${REMOTE_GROUP}' '${REMOTE_ROOT}'
   sudo install -d -o '${SYNC_USER}' -g '${REMOTE_GROUP}' -m 2750 '${REMOTE_ROOT}/data/hermes-cron'
   sudo chmod +x '${REMOTE_ROOT}/bin/agent-foundry-backend' '${REMOTE_ROOT}/bin/sync-hermes-cron-jobs.sh'
