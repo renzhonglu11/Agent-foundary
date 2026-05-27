@@ -20,6 +20,7 @@ from tr_structured_products.agent_foundry import (
 )
 from tr_structured_products.enrichment import enrich_structured_product_rows
 from tr_structured_products.providers.boerse_frankfurt import BoerseFrankfurtQuoteProvider
+from tr_structured_products.providers.gs_de import GsDeProductProvider
 from tr_structured_products.providers.onvista import OnvistaProductProvider
 
 
@@ -42,7 +43,8 @@ async def generate_outputs(args: argparse.Namespace) -> list[dict]:
     if not args.no_live_enrichment:
         quote_provider = BoerseFrankfurtQuoteProvider(timeout=args.provider_timeout)
         onvista_provider = OnvistaProductProvider(timeout=args.provider_timeout)
-        product_providers = [onvista_provider]
+        gs_de_provider = GsDeProductProvider(timeout=args.provider_timeout)
+        product_providers = [onvista_provider, gs_de_provider]
         try:
             rows = await enrich_structured_product_rows(
                 rows,
@@ -55,6 +57,7 @@ async def generate_outputs(args: argparse.Namespace) -> list[dict]:
         finally:
             await quote_provider.aclose()
             await onvista_provider.aclose()
+            await gs_de_provider.aclose()
 
     write_structured_product_rows_outputs(rows, csv_path=args.csv, json_path=args.json, db_path=args.db)
     return rows

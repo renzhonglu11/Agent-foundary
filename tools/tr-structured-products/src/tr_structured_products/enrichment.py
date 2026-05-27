@@ -46,9 +46,9 @@ async def enrich_structured_product_rows(
 ) -> list[dict]:
     """Enrich rows with live quotes, metadata, and greeks.
 
-    Product providers are tried in order. The intended default order is
-    finanzen.net first, Onvista fallback. Provider failures are expected to
-    return None so the pipeline can continue with Rust summary data.
+    Product providers are tried in order. Provider failures are expected to
+    return None so the pipeline can continue with the next provider or Rust
+    summary data.
     """
     enriched_rows: list[dict] = []
     live_total = sum(1 for row in rows if _should_live_enrich(row, live_enrichment_tier))
