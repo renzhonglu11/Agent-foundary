@@ -5,18 +5,18 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=agentfoundry
-Group=agentfoundry
-WorkingDirectory=/opt/agent-foundry
-EnvironmentFile=/opt/agent-foundry/.env
-ExecStart=/opt/agent-foundry/bin/agent-foundry-backend
+User=rz
+Group=rz
+WorkingDirectory=/home/rz/Agent-Foundry
+EnvironmentFile=/home/rz/Agent-Foundry/.env
+ExecStart=/home/rz/Agent-Foundry/bin/agent-foundry-backend
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=/opt/agent-foundry/data
+ProtectHome=false
+ReadWritePaths=/home/rz/Agent-Foundry/data
 
 [Install]
 WantedBy=multi-user.target

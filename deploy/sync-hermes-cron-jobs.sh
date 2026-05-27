@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SOURCE_PATH="${HERMES_SOURCE_CRON_JOBS_PATH:-/home/rz/.hermes/cron/jobs.json}"
-DEST_PATH="${AGENT_FOUNDRY_CRON_JOBS_PATH:-/opt/agent-foundry/data/hermes-cron/jobs.json}"
+DEST_PATH="${AGENT_FOUNDRY_CRON_JOBS_PATH:-/home/rz/Agent-Foundry/data/hermes-cron/jobs.json}"
 DEST_DIR="$(dirname -- "${DEST_PATH}")"
 
 if [[ ! -f "${SOURCE_PATH}" ]]; then

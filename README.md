@@ -25,8 +25,8 @@ Important values:
 
 ```text
 DATABASE_URL=sqlite://data/agent_foundry.db
-CSV_PATH=data/Transaktionsexport.csv
-PDF_PATH=data/Vermögensübersicht.pdf
+CSV_PATH=data/portfolio-transactions.csv
+PDF_PATH=data/asset-overview.pdf
 PDF_TEXT_PATH=data/asset_overview_extracted.txt
 HOST=127.0.0.1
 PORT=8080
@@ -84,23 +84,22 @@ cargo build --release
 Upload the binary and runtime files:
 
 ```bash
-ssh user@vps 'sudo mkdir -p /opt/agent-foundry/bin /opt/agent-foundry/data'
+ssh user@vps 'mkdir -p /home/rz/Agent-Foundry/bin /home/rz/Agent-Foundry/data'
 scp target/release/agent-foundry-backend user@vps:/tmp/agent-foundry-backend
 scp .env.example user@vps:/tmp/agent-foundry.env
 scp deploy/agent-foundry-backend.service user@vps:/tmp/agent-foundry-backend.service
-scp data/Transaktionsexport.csv user@vps:/tmp/Transaktionsexport.csv
+scp data/portfolio-transactions.csv user@vps:/tmp/portfolio-transactions.csv
 ```
 
 On the VPS, install:
 
 ```bash
-sudo useradd --system --home /opt/agent-foundry --shell /usr/sbin/nologin agentfoundry || true
-sudo mv /tmp/agent-foundry-backend /opt/agent-foundry/bin/agent-foundry-backend
-sudo mv /tmp/agent-foundry.env /opt/agent-foundry/.env
-sudo mv /tmp/Transaktionsexport.csv /opt/agent-foundry/data/Transaktionsexport.csv
+sudo mv /tmp/agent-foundry-backend /home/rz/Agent-Foundry/bin/agent-foundry-backend
+sudo mv /tmp/agent-foundry.env /home/rz/Agent-Foundry/.env
+sudo mv /tmp/portfolio-transactions.csv /home/rz/Agent-Foundry/data/portfolio-transactions.csv
 sudo mv /tmp/agent-foundry-backend.service /etc/systemd/system/agent-foundry-backend.service
-sudo chown -R agentfoundry:agentfoundry /opt/agent-foundry
-sudo chmod +x /opt/agent-foundry/bin/agent-foundry-backend
+sudo chown -R rz:rz /home/rz/Agent-Foundry
+sudo chmod +x /home/rz/Agent-Foundry/bin/agent-foundry-backend
 sudo systemctl daemon-reload
 sudo systemctl enable --now agent-foundry-backend
 sudo systemctl status agent-foundry-backend

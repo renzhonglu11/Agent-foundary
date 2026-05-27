@@ -2,9 +2,9 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-REMOTE_ROOT="${REMOTE_ROOT:-/opt/agent-foundry}"
-REMOTE_USER="${REMOTE_USER:-agentfoundry}"
-REMOTE_GROUP="${REMOTE_GROUP:-agentfoundry}"
+REMOTE_ROOT="${REMOTE_ROOT:-/home/rz/Agent-Foundry}"
+REMOTE_USER="${REMOTE_USER:-rz}"
+REMOTE_GROUP="${REMOTE_GROUP:-rz}"
 SYNC_USER="${SYNC_USER:-rz}"
 BACKEND_SERVICE="${BACKEND_SERVICE:-agent-foundry-backend}"
 SYNC_SERVICE="${SYNC_SERVICE:-agent-foundry-hermes-cron-sync}"
