@@ -20,7 +20,7 @@ use crate::{
         ports::{fx_rate_cache::FxRateCache, transaction_repository::TransactionRepository},
         services::{
             fx_rate_service::FxRateService, portfolio_service::PortfolioService,
-            transaction_importer::TransactionImporter,
+            transaction_importer::TransactionImporter, upload_data_service::UploadDataService,
         },
     },
     config::Settings,
@@ -85,9 +85,14 @@ impl App {
         let fx_rate_service = FxRateService::new(fx_rate_cache, settings.fx_rates.clone());
         let alpaca_market_data_service =
             AlpacaMarketDataService::new(settings.alpaca.clone(), fx_rate_service);
+        let upload_data_service = UploadDataService::new(
+            portfolio_service.clone(),
+            structured_products_service.clone(),
+        );
 
         let state = Arc::new(AppState::new(
             portfolio_service,
+            upload_data_service,
             structured_products_service,
             alpaca_market_data_service,
         ));

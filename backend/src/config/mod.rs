@@ -73,7 +73,7 @@ impl Settings {
             .context("PORT must be a valid u16")?;
         let database_url = env_or("DATABASE_URL", "sqlite://data/agent_foundry.db");
         let csv_path = csv_path_from_env();
-        let pdf_path = PathBuf::from(env_or("PDF_PATH", "data/Vermögensübersicht.pdf"));
+        let pdf_path = PathBuf::from(env_or("PDF_PATH", "data/asset-overview.pdf"));
         let pdf_text_path = Some(PathBuf::from(env_or(
             "PDF_TEXT_PATH",
             "data/asset_overview_extracted.txt",
@@ -187,10 +187,5 @@ fn csv_path_from_env() -> PathBuf {
         return PathBuf::from(path);
     }
 
-    let preferred = PathBuf::from("data/Transaktionsexport.csv");
-    if preferred.exists() {
-        preferred
-    } else {
-        PathBuf::from("data/Transaktionsexport(2).csv")
-    }
+    PathBuf::from("data/portfolio-transactions.csv")
 }
