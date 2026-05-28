@@ -72,19 +72,9 @@ rsync -az --delete \
 echo "Installing on VPS..."
 ssh -tt "${SSH_HOST}" "
   set -euo pipefail
-  sudo mkdir -p '${REMOTE_ROOT}/bin' '${REMOTE_ROOT}/data' '${REMOTE_ROOT}/scripts' '${REMOTE_ROOT}/tools'
+  sudo mkdir -p '${REMOTE_ROOT}/bin' '${REMOTE_ROOT}/data/uploads' '${REMOTE_ROOT}/scripts' '${REMOTE_ROOT}/tools'
   if [ -d '${LEGACY_REMOTE_ROOT}/data' ] && ! find '${REMOTE_ROOT}/data' -mindepth 1 -print -quit | grep -q .; then
     sudo cp -a '${LEGACY_REMOTE_ROOT}/data/.' '${REMOTE_ROOT}/data/'
-  fi
-  if [ ! -f '${REMOTE_ROOT}/data/portfolio-transactions.csv' ]; then
-    if [ -f '${REMOTE_ROOT}/data/Transaktionsexport.csv' ]; then
-      sudo cp -a '${REMOTE_ROOT}/data/Transaktionsexport.csv' '${REMOTE_ROOT}/data/portfolio-transactions.csv'
-    elif [ -f '${REMOTE_ROOT}/data/Transaktionsexport(2).csv' ]; then
-      sudo cp -a '${REMOTE_ROOT}/data/Transaktionsexport(2).csv' '${REMOTE_ROOT}/data/portfolio-transactions.csv'
-    fi
-  fi
-  if [ ! -f '${REMOTE_ROOT}/data/asset-overview.pdf' ] && [ -f '${REMOTE_ROOT}/data/Vermögensübersicht.pdf' ]; then
-    sudo cp -a '${REMOTE_ROOT}/data/Vermögensübersicht.pdf' '${REMOTE_ROOT}/data/asset-overview.pdf'
   fi
   if ! id -u '${REMOTE_USER}' >/dev/null 2>&1; then
     sudo useradd --system --home '${REMOTE_ROOT}' --shell /usr/sbin/nologin '${REMOTE_USER}'
