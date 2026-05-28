@@ -92,7 +92,7 @@ export default function DataImportSpeedDial() {
         const rejectedReason = payload?.rejected
           ?.map((item) => `${item.filename}: ${item.reason}`)
           .join('；');
-        throw new Error(payload?.error || rejectedReason || '上传失败');
+        throw new Error(rejectedReason || payload?.error || '上传失败');
       }
       setResult(payload);
       setFiles([]);

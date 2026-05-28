@@ -4,6 +4,7 @@ const alpacaSymbolByIsin = new Map([
   ['US02079K1079', 'GOOG'],
   ['US0231351067', 'AMZN'],
   ['US0420682058', 'ARM'],
+  ['US0079031078', 'AMD'],
   ['US1491231015', 'CAT'],
   ['US19247G1076', 'COIN'],
   ['US24703L2025', 'DELL'],
@@ -35,6 +36,7 @@ const alpacaSymbolByIsin = new Map([
 const alpacaSymbolByAliasKey = new Map([
   ['accenture', 'ACN'],
   ['alphabet', 'GOOG'],
+  ['advanced micro devices', 'AMD'],
   ['amazon', 'AMZN'],
   ['arm', 'ARM'],
   ['asml', 'ASML'],
@@ -73,6 +75,7 @@ const alpacaSymbolByAliasKey = new Map([
 const underlyingAliasKeys = new Map([
   ['accent', 'accenture'],
   ['accenture plc', 'accenture'],
+  ['amd advanced micro devices', 'advanced micro devices'],
   ['micron', 'micron technology'],
   ['taiwansm', 'taiwan semiconduct'],
   ['taiwan semiconductor', 'taiwan semiconduct'],
@@ -160,9 +163,6 @@ function addInstrumentToGroup(groupsByKey, row) {
   existing.derivativeCount += row.isDerivative ? 1 : 0
   existing.stockCount += row.isDerivative ? 0 : 1
   existing.maxLeverage = Math.max(existing.maxLeverage || 0, Number(row.leverage) || 0)
-  if (row.delta != null && row.marketValue) {
-    existing.deltaExposure += Number(row.delta) * row.marketValue
-  }
   if (tierRank[row.enrichmentTier] < tierRank[existing.enrichmentTier]) {
     existing.enrichmentTier = row.enrichmentTier
   }
@@ -253,17 +253,29 @@ function applyGroupSpotQuote(group, alpacaQuoteBySymbol) {
 
 function applyGroupMonitoringMetrics(group) {
   const spot = spotPriceForGroup(group)
+  let deltaExposure = 0
+  let hasDeltaExposure = false
+  let hasEstimatedDeltaExposure = false
+
   group.instruments.forEach((row) => {
     row.underlyingSpot = spot
     row.calculatedBreakEven = breakEvenForRow(row)
-    const deltaExposure = calculateDeltaExposure(row, spot)
-    row.deltaExposureEur = deltaExposure.value
-    row.deltaExposureEstimated = deltaExposure.estimated
+    const rowDeltaExposure = calculateDeltaExposure(row, spot)
+    row.deltaExposureEur = rowDeltaExposure.value
+    row.deltaExposureEstimated = rowDeltaExposure.estimated
+    if (row.isDerivative && rowDeltaExposure.value != null) {
+      deltaExposure += rowDeltaExposure.value
+      hasDeltaExposure = true
+      hasEstimatedDeltaExposure = hasEstimatedDeltaExposure || rowDeltaExposure.estimated
+    }
     row.effectiveLeverage = calculateEffectiveLeverage(row, spot)
     row.breakEvenDistanceAbs = calculateBreakEvenDistanceAbs(row, spot)
     row.breakEvenDistancePct = calculateBreakEvenDistancePct(row, spot)
     row.breakEvenStatus = calculateBreakEvenStatus(row.breakEvenDistanceAbs)
   })
+
+  group.deltaExposure = hasDeltaExposure ? deltaExposure : null
+  group.deltaExposureEstimated = hasEstimatedDeltaExposure
 }
 
 function spotPriceForGroup(group) {

@@ -20,7 +20,7 @@ export default function GroupDetailPanel({ group }) {
           <Chip size="small" color={group.liveStockQuoteCount ? 'success' : 'default'} variant="outlined" label={`Alpaca ${group.liveStockQuoteCount}/${group.stockCount}`} />
           <Chip size="small" color={group.liveDerivativeCount ? 'success' : 'default'} variant="outlined" label={`衍生品实时 ${group.liveDerivativeCount}/${group.derivativeCount}`} />
           {group.maxLeverage ? <Chip size="small" color="warning" variant="outlined" label={`Max Hebel ${Number(group.maxLeverage).toFixed(2)}x`} /> : null}
-          {group.deltaExposure ? <Chip size="small" color="secondary" variant="outlined" label={`Delta exposure ${preciseCurrency.format(group.deltaExposure)}`} /> : null}
+          {group.deltaExposure ? <Chip size="small" color="secondary" variant="outlined" label={`${group.deltaExposureEstimated ? 'Delta exposure est.' : 'Delta exposure'} ${preciseCurrency.format(group.deltaExposure)}`} /> : null}
         </Stack>
         <Stack spacing={1.25}>
           <InstrumentList title="股票 / ETF / Bond / JSON fallback" rows={group.stocks} emptyText="这个 underlying 下没有普通持仓。" />

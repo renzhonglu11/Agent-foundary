@@ -193,6 +193,8 @@ test('calculates derivative monitoring metrics from group spot, delta, ratio and
   )
 
   const derivative = groups.tier1[0].derivatives[0]
+  assert.equal(groups.tier1[0].deltaExposure, 90)
+  assert.equal(groups.tier1[0].deltaExposureEstimated, false)
   assert.equal(derivative.underlyingSpot, 180)
   assert.equal(derivative.deltaExposureEur, 90)
   assert.equal(derivative.deltaExposureEstimated, false)
@@ -244,6 +246,22 @@ test('estimates derivative leverage from spot, ratio and product quote when omeg
   const derivative = groups.tier1[0].derivatives[0]
   assert.equal(Math.round(derivative.effectiveLeverage * 100) / 100, 1.44)
   assert.equal(Math.round(derivative.calculatedBreakEven * 100) / 100, 461.8)
+})
+
+test('aggregates group delta exposure from omega fallback when delta is missing', () => {
+  const groups = buildWatchlistGroups(
+    { summary: { totalMarketValue: 10000 }, positions: [] },
+    [
+      { isin: 'D-AMD-1', display_name: 'Call AMD 160', instrument: 'Call 18.12.26 AMD 160', asset_class: 'DERIVATIVE', product_type: 'optionsschein', underlying: 'AMD', enrichment_tier: 'tier1', live_enrichment_enabled: true, quote_source: 'boerse_frankfurt', quantity: 43, market_value: 1200, omega: 1.8, ratio: 0.1 },
+      { isin: 'D-AMD-2', display_name: 'Call AMD 250', instrument: 'Call 17.06.27 AMD 250', asset_class: 'DERIVATIVE', product_type: 'optionsschein', underlying: 'AMD', enrichment_tier: 'tier1', live_enrichment_enabled: true, quote_source: 'boerse_frankfurt', quantity: 10, market_value: 250, omega: 2.2, ratio: 0.1 },
+    ],
+  )
+
+  const amd = groups.tier1[0]
+  assert.equal(amd.deltaExposure, 2710)
+  assert.equal(amd.deltaExposureEstimated, true)
+  assert.equal(amd.derivatives[0].deltaExposureEur, 2160)
+  assert.equal(amd.derivatives[1].deltaExposureEur, 550)
 })
 
 test('collects unique tier1 Alpaca symbols from stock rows', () => {
@@ -333,6 +351,17 @@ test('maps semiconductor broker underlyings to Alpaca tickers before requesting 
   )
 
   assert.deepEqual(collectTier1AlpacaSymbols(groups), ['STM', 'AVGO'])
+})
+
+test('maps AMD long-form broker underlying to Alpaca ticker before requesting quotes', () => {
+  const groups = buildWatchlistGroups(
+    { summary: { totalMarketValue: 10000 }, positions: [] },
+    [
+      { isin: 'D-AMD', display_name: 'Call AMD', instrument: 'Call 18.12.26 AMD 160', asset_class: 'DERIVATIVE', product_type: 'optionsschein', underlying: 'AMD - Advanced Micro Devices', enrichment_tier: 'tier1', live_enrichment_enabled: true },
+    ],
+  )
+
+  assert.deepEqual(collectTier1AlpacaSymbols(groups), ['AMD'])
 })
 
 test('group latest trade uses the newest instrument date across nested categories', () => {
