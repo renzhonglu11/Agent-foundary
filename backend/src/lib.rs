@@ -26,6 +26,7 @@ use crate::{
     config::Settings,
     infrastructure::db::{
         connection::connect, migrations::run_migrations, sqlite_fx_rate_cache::SqliteFxRateCache,
+        sqlite_market_data_repository::SqliteMarketDataRepository,
         sqlite_transaction_repository::SqliteTransactionRepository,
         sqlite_upload_archive_repository::SqliteUploadArchiveRepository,
     },
@@ -50,6 +51,7 @@ impl App {
             Arc::new(SqliteTransactionRepository::new(pool.clone()));
 
         let upload_archive_repository = Arc::new(SqliteUploadArchiveRepository::new(pool.clone()));
+        let market_data_repository = Arc::new(SqliteMarketDataRepository::new(pool.clone()));
         let portfolio_service = PortfolioService::new(
             repository,
             upload_archive_repository.clone(),
@@ -64,14 +66,21 @@ impl App {
             .summary()
             .await
             .context("failed to load warmed portfolio summary")?;
-        let structured_products_service =
-            StructuredProductsService::new(settings.structured_products.clone())
-                .context("failed to configure structured products enrichment")?;
-        structured_products_service.refresh_if_missing(summary);
+        let structured_products_service = StructuredProductsService::new(
+            settings.structured_products.clone(),
+            market_data_repository.clone(),
+        )
+        .context("failed to configure structured products enrichment")?;
+        structured_products_service
+            .refresh_if_missing(summary)
+            .await;
         let fx_rate_cache: Arc<dyn FxRateCache> = Arc::new(SqliteFxRateCache::new(pool.clone()));
         let fx_rate_service = FxRateService::new(fx_rate_cache, settings.fx_rates.clone());
-        let alpaca_market_data_service =
-            AlpacaMarketDataService::new(settings.alpaca.clone(), fx_rate_service);
+        let alpaca_market_data_service = AlpacaMarketDataService::new(
+            settings.alpaca.clone(),
+            fx_rate_service,
+            market_data_repository,
+        );
         let hermes_cron_status_service = HermesCronStatusService::new();
         let fred_service = FredService::new(settings.fred.clone());
         let upload_data_service = UploadDataService::new(

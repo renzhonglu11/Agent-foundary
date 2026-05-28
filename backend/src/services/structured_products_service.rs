@@ -13,7 +13,12 @@ use tokio::{
 };
 use tracing::{info, warn};
 
-use crate::{config::StructuredProductsSettings, domain::portfolio::PortfolioSummaryResponse};
+use crate::{
+    application::ports::market_data_repository::MarketDataRepository,
+    config::StructuredProductsSettings, domain::portfolio::PortfolioSummaryResponse,
+};
+
+const STRUCTURED_PRODUCTS_PAYLOAD_KEY: &str = "structured_products_enrichment";
 
 #[derive(Debug, Clone, Copy)]
 pub enum RefreshMode {
@@ -21,9 +26,10 @@ pub enum RefreshMode {
     Live,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct StructuredProductsService {
     settings: StructuredProductsSettings,
+    market_data_repository: Arc<dyn MarketDataRepository>,
     output_json_path: PathBuf,
     output_csv_path: PathBuf,
     output_db_path: PathBuf,
@@ -46,21 +52,37 @@ struct RefreshStatus {
 }
 
 impl StructuredProductsService {
-    pub fn new(settings: StructuredProductsSettings) -> anyhow::Result<Self> {
+    pub fn new(
+        settings: StructuredProductsSettings,
+        market_data_repository: Arc<dyn MarketDataRepository>,
+    ) -> anyhow::Result<Self> {
         Ok(Self {
             output_json_path: absolute_path(&settings.output_json_path)?,
             output_csv_path: absolute_path(&settings.output_csv_path)?,
             output_db_path: absolute_path(&settings.output_db_path)?,
             uv_cache_path: absolute_path(Path::new("data/uv-cache"))?,
             settings,
+            market_data_repository,
             refresh_lock: Arc::new(Mutex::new(())),
             status: Arc::new(RwLock::new(RefreshStatus::default())),
         })
     }
 
-    pub fn refresh_if_missing(&self, summary: PortfolioSummaryResponse) {
+    pub async fn refresh_if_missing(&self, summary: PortfolioSummaryResponse) {
         if self.output_json_path.exists() {
             return;
+        }
+
+        match self
+            .market_data_repository
+            .load_payload(STRUCTURED_PRODUCTS_PAYLOAD_KEY)
+            .await
+        {
+            Ok(Some(_)) => return,
+            Ok(None) => {}
+            Err(error) => {
+                warn!(%error, "failed to check persisted structured products payload");
+            }
         }
 
         self.spawn_refresh(summary, "startup_missing_output", RefreshMode::FallbackOnly);
@@ -85,6 +107,23 @@ impl StructuredProductsService {
     }
 
     pub async fn read_payload(&self) -> Value {
+        match self
+            .market_data_repository
+            .load_payload(STRUCTURED_PRODUCTS_PAYLOAD_KEY)
+            .await
+        {
+            Ok(Some(content)) => match serde_json::from_str::<Value>(&content) {
+                Ok(payload) => return payload,
+                Err(error) => {
+                    warn!(%error, "failed to parse persisted structured products payload");
+                }
+            },
+            Ok(None) => {}
+            Err(error) => {
+                warn!(%error, "failed to read persisted structured products payload");
+            }
+        }
+
         match tokio::fs::read_to_string(&self.output_json_path).await {
             Ok(content) => match serde_json::from_str::<Value>(&content) {
                 Ok(payload) => payload,
@@ -277,6 +316,23 @@ impl StructuredProductsService {
                 "structured products generator exited with {status}: {stderr}",
             ));
         }
+
+        let payload_json = tokio::fs::read_to_string(&self.output_json_path)
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to read structured products output {}",
+                    self.output_json_path.display()
+                )
+            })?;
+        self.market_data_repository
+            .store_payload(
+                STRUCTURED_PRODUCTS_PAYLOAD_KEY,
+                &payload_json,
+                &chrono::Utc::now().to_rfc3339(),
+            )
+            .await
+            .context("failed to persist structured products realtime payload")?;
 
         info!(
             reason,

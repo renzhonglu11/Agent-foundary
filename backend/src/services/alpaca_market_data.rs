@@ -8,16 +8,23 @@ use apca::{
     ApiInfo, Client,
     data::v2::{Feed, last_quotes},
 };
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde::Serialize;
 use tracing::{info, warn};
 
-use crate::{application::services::fx_rate_service::FxRateService, config::AlpacaSettings};
+use crate::{
+    application::{
+        ports::market_data_repository::{MarketDataRepository, MarketQuoteRecord},
+        services::fx_rate_service::FxRateService,
+    },
+    config::AlpacaSettings,
+};
 
 #[derive(Clone)]
 pub struct AlpacaMarketDataService {
     settings: AlpacaSettings,
     fx_rate_service: FxRateService,
+    market_data_repository: Arc<dyn MarketDataRepository>,
     client: Option<Arc<Client>>,
     cache: Arc<RwLock<HashMap<String, CachedQuote>>>,
 }
@@ -61,24 +68,28 @@ pub enum AlpacaQuoteStatus {
 pub struct AlpacaQuote {
     pub symbol: String,
     pub price: f64,
-    pub currency: &'static str,
+    pub currency: String,
     pub bid_price: f64,
     pub ask_price: f64,
     pub raw_price: f64,
     pub raw_bid_price: f64,
     pub raw_ask_price: f64,
-    pub raw_currency: &'static str,
+    pub raw_currency: String,
     pub usd_eur_rate: f64,
     pub fx_rate_source: String,
     pub bid_size: u64,
     pub ask_size: u64,
-    pub price_source: &'static str,
+    pub price_source: String,
     pub price_as_of: String,
     pub cached: bool,
 }
 
 impl AlpacaMarketDataService {
-    pub fn new(settings: AlpacaSettings, fx_rate_service: FxRateService) -> Self {
+    pub fn new(
+        settings: AlpacaSettings,
+        fx_rate_service: FxRateService,
+        market_data_repository: Arc<dyn MarketDataRepository>,
+    ) -> Self {
         let client = if settings.enabled
             && std::env::var_os("APCA_API_KEY_ID").is_some()
             && std::env::var_os("APCA_API_SECRET_KEY").is_some()
@@ -97,6 +108,7 @@ impl AlpacaMarketDataService {
         Self {
             settings,
             fx_rate_service,
+            market_data_repository,
             client,
             cache: Arc::new(RwLock::new(HashMap::new())),
         }
@@ -104,21 +116,6 @@ impl AlpacaMarketDataService {
 
     pub async fn latest_quotes(&self, symbols_param: &str) -> AlpacaQuotesResponse {
         let mut warnings = Vec::new();
-
-        if !self.settings.enabled {
-            info!("Alpaca market data refresh skipped because provider is disabled");
-            return self.response(AlpacaQuoteStatus::Disabled, Vec::new(), warnings);
-        }
-
-        let Some(client) = &self.client else {
-            warn!("Alpaca market data refresh skipped because credentials are missing");
-            warnings.push(
-                "Alpaca credentials are missing; set APCA_API_KEY_ID and APCA_API_SECRET_KEY"
-                    .to_owned(),
-            );
-            return self.response(AlpacaQuoteStatus::MissingCredentials, Vec::new(), warnings);
-        };
-
         let (symbols, rejected) =
             parse_symbols_param(symbols_param, self.settings.max_symbols_per_request);
         warnings.extend(rejected);
@@ -128,6 +125,27 @@ impl AlpacaMarketDataService {
             return self.response(AlpacaQuoteStatus::EmptyRequest, Vec::new(), warnings);
         }
 
+        if !self.settings.enabled {
+            info!("Alpaca market data refresh skipped because provider is disabled");
+            warnings
+                .push("Alpaca provider is disabled; using stored quotes if available".to_owned());
+            return self
+                .stored_quotes_response(AlpacaQuoteStatus::Disabled, &symbols, warnings)
+                .await;
+        }
+
+        let Some(client) = &self.client else {
+            warn!("Alpaca market data refresh skipped because credentials are missing");
+            warnings.push(
+                "Alpaca credentials are missing; set APCA_API_KEY_ID and APCA_API_SECRET_KEY"
+                    .to_owned(),
+            );
+            warnings.push("Using stored Alpaca quotes if available".to_owned());
+            return self
+                .stored_quotes_response(AlpacaQuoteStatus::MissingCredentials, &symbols, warnings)
+                .await;
+        };
+
         info!(
             symbols = ?symbols,
             max_symbols = self.settings.max_symbols_per_request,
@@ -136,10 +154,12 @@ impl AlpacaMarketDataService {
         );
 
         let now = Instant::now();
+        let now_utc = Utc::now();
         let ttl = Duration::from_secs(self.settings.cache_ttl_seconds);
         let fx_rate = self.fx_rate_service.usd_eur_rate().await;
         let mut quotes_by_symbol = HashMap::new();
         let mut missing = Vec::new();
+        let mut stored_fallbacks = HashMap::new();
 
         match self.cache.read() {
             Ok(cache) => {
@@ -175,6 +195,59 @@ impl AlpacaMarketDataService {
         }
 
         if !missing.is_empty() {
+            match self
+                .market_data_repository
+                .load_quotes("alpaca", "iex", &missing)
+                .await
+            {
+                Ok(records) => {
+                    let mut still_missing = Vec::new();
+                    let stored_symbols: HashSet<_> =
+                        records.iter().map(|record| record.symbol.clone()).collect();
+
+                    for record in records {
+                        let quote = quote_from_record(&record, true);
+                        if is_fresh(record.fetched_at, now_utc, ttl) {
+                            info!(
+                                symbol = %quote.symbol,
+                                price = quote.price,
+                                price_as_of = %quote.price_as_of,
+                                fetched_at = %record.fetched_at.to_rfc3339(),
+                                "using persisted Alpaca IEX quote"
+                            );
+                            if let Ok(mut cache) = self.cache.write() {
+                                cache.insert(
+                                    quote.symbol.clone(),
+                                    CachedQuote {
+                                        quote: quote.clone(),
+                                        fetched_at: now,
+                                    },
+                                );
+                            }
+                            quotes_by_symbol.insert(quote.symbol.clone(), quote);
+                        } else {
+                            stored_fallbacks.insert(quote.symbol.clone(), quote);
+                        }
+                    }
+
+                    for symbol in missing {
+                        if !quotes_by_symbol.contains_key(&symbol) {
+                            still_missing.push(symbol.clone());
+                        }
+                        if !stored_symbols.contains(&symbol) {
+                            stored_fallbacks.remove(&symbol);
+                        }
+                    }
+                    missing = still_missing;
+                }
+                Err(error) => {
+                    warn!(%error, "failed to read persisted Alpaca quotes");
+                    warnings.push("Alpaca quote database cache read failed".to_owned());
+                }
+            }
+        }
+
+        if !missing.is_empty() {
             info!(
                 symbols = ?missing,
                 count = missing.len(),
@@ -190,7 +263,9 @@ impl AlpacaMarketDataService {
             match client.issue::<last_quotes::Get>(&request).await {
                 Ok(items) => {
                     let fetched_at = Instant::now();
+                    let fetched_at_utc = Utc::now();
                     let mut fetched_symbols = HashSet::new();
+                    let mut records = Vec::new();
                     for (symbol, quote) in items {
                         let symbol = symbol.to_ascii_uppercase();
                         fetched_symbols.insert(symbol.clone());
@@ -215,6 +290,7 @@ impl AlpacaMarketDataService {
                                 "updated Alpaca IEX quote"
                             );
                             quotes_by_symbol.insert(symbol.clone(), alpaca_quote.clone());
+                            records.push(record_from_quote(&alpaca_quote, fetched_at_utc));
                             match self.cache.write() {
                                 Ok(mut cache) => {
                                     cache.insert(
@@ -232,6 +308,11 @@ impl AlpacaMarketDataService {
                         }
                     }
 
+                    if let Err(error) = self.market_data_repository.store_quotes(&records).await {
+                        warn!(%error, "failed to persist Alpaca quotes");
+                        warnings.push("Alpaca quote database cache write failed".to_owned());
+                    }
+
                     for symbol in missing {
                         if !fetched_symbols.contains(&symbol) {
                             warn!(
@@ -240,12 +321,21 @@ impl AlpacaMarketDataService {
                             );
                             warnings
                                 .push(format!("Alpaca returned no latest IEX quote for {symbol}"));
+                            if let Some(quote) = stored_fallbacks.remove(&symbol) {
+                                warnings
+                                    .push(format!("Using last stored Alpaca quote for {symbol}"));
+                                quotes_by_symbol.insert(symbol, quote);
+                            }
                         }
                     }
                 }
                 Err(error) => {
                     warn!(%error, "Alpaca latest quote request failed");
                     warnings.push(format!("Alpaca latest quote request failed: {error}"));
+                    for (symbol, quote) in stored_fallbacks {
+                        warnings.push(format!("Using last stored Alpaca quote for {symbol}"));
+                        quotes_by_symbol.entry(symbol).or_insert(quote);
+                    }
                     let quotes = ordered_quotes(&symbols, &quotes_by_symbol);
                     return self.response(AlpacaQuoteStatus::Error, quotes, warnings);
                 }
@@ -267,6 +357,36 @@ impl AlpacaMarketDataService {
             &fx_rate.source,
             &fx_rate.fetched_at.to_rfc3339(),
         )
+    }
+
+    async fn stored_quotes_response(
+        &self,
+        status: AlpacaQuoteStatus,
+        symbols: &[String],
+        mut warnings: Vec<String>,
+    ) -> AlpacaQuotesResponse {
+        match self
+            .market_data_repository
+            .load_quotes("alpaca", "iex", symbols)
+            .await
+        {
+            Ok(records) => {
+                let quotes_by_symbol = records
+                    .iter()
+                    .map(|record| (record.symbol.clone(), quote_from_record(record, true)))
+                    .collect();
+                let quotes = ordered_quotes(symbols, &quotes_by_symbol);
+                if !quotes.is_empty() {
+                    warnings.push("Returned persisted Alpaca quotes from SQLite".to_owned());
+                }
+                self.response(status, quotes, warnings)
+            }
+            Err(error) => {
+                warn!(%error, "failed to read persisted Alpaca quotes");
+                warnings.push("Alpaca quote database cache read failed".to_owned());
+                self.response(status, Vec::new(), warnings)
+            }
+        }
     }
 
     fn response(
@@ -308,6 +428,57 @@ impl AlpacaMarketDataService {
             quotes,
             warnings,
         }
+    }
+}
+
+fn is_fresh(fetched_at: DateTime<Utc>, now: DateTime<Utc>, ttl: Duration) -> bool {
+    now.signed_duration_since(fetched_at)
+        .to_std()
+        .map(|age| age <= ttl)
+        .unwrap_or(false)
+}
+
+fn record_from_quote(quote: &AlpacaQuote, fetched_at: DateTime<Utc>) -> MarketQuoteRecord {
+    MarketQuoteRecord {
+        provider: "alpaca".to_owned(),
+        feed: "iex".to_owned(),
+        symbol: quote.symbol.clone(),
+        price: quote.price,
+        currency: quote.currency.clone(),
+        bid_price: quote.bid_price,
+        ask_price: quote.ask_price,
+        raw_price: quote.raw_price,
+        raw_bid_price: quote.raw_bid_price,
+        raw_ask_price: quote.raw_ask_price,
+        raw_currency: quote.raw_currency.clone(),
+        usd_eur_rate: quote.usd_eur_rate,
+        fx_rate_source: quote.fx_rate_source.clone(),
+        bid_size: quote.bid_size as i64,
+        ask_size: quote.ask_size as i64,
+        price_source: quote.price_source.clone(),
+        price_as_of: quote.price_as_of.clone(),
+        fetched_at,
+    }
+}
+
+fn quote_from_record(record: &MarketQuoteRecord, cached: bool) -> AlpacaQuote {
+    AlpacaQuote {
+        symbol: record.symbol.clone(),
+        price: record.price,
+        currency: record.currency.clone(),
+        bid_price: record.bid_price,
+        ask_price: record.ask_price,
+        raw_price: record.raw_price,
+        raw_bid_price: record.raw_bid_price,
+        raw_ask_price: record.raw_ask_price,
+        raw_currency: record.raw_currency.clone(),
+        usd_eur_rate: record.usd_eur_rate,
+        fx_rate_source: record.fx_rate_source.clone(),
+        bid_size: record.bid_size.max(0) as u64,
+        ask_size: record.ask_size.max(0) as u64,
+        price_source: record.price_source.clone(),
+        price_as_of: record.price_as_of.clone(),
+        cached,
     }
 }
 
@@ -375,18 +546,18 @@ fn convert_quote(
     Some(AlpacaQuote {
         symbol,
         price: raw_price * usd_eur_rate,
-        currency: "EUR",
+        currency: "EUR".to_owned(),
         bid_price: raw_bid_price * usd_eur_rate,
         ask_price: raw_ask_price * usd_eur_rate,
         raw_price,
         raw_bid_price,
         raw_ask_price,
-        raw_currency: "USD",
+        raw_currency: "USD".to_owned(),
         usd_eur_rate,
         fx_rate_source,
         bid_size: quote.bid_size,
         ask_size: quote.ask_size,
-        price_source: "alpaca_iex",
+        price_source: "alpaca_iex".to_owned(),
         price_as_of: quote.time.to_rfc3339(),
         cached: false,
     })
