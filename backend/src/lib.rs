@@ -11,7 +11,7 @@ use std::{net::SocketAddr, sync::Arc};
 
 use anyhow::Context;
 use tokio::net::TcpListener;
-use tracing::{info, warn};
+use tracing::info;
 
 use crate::{
     api::router,
@@ -20,13 +20,14 @@ use crate::{
         ports::{fx_rate_cache::FxRateCache, transaction_repository::TransactionRepository},
         services::{
             fx_rate_service::FxRateService, portfolio_service::PortfolioService,
-            transaction_importer::TransactionImporter, upload_data_service::UploadDataService,
+            upload_data_service::UploadDataService,
         },
     },
     config::Settings,
     infrastructure::db::{
         connection::connect, migrations::run_migrations, sqlite_fx_rate_cache::SqliteFxRateCache,
         sqlite_transaction_repository::SqliteTransactionRepository,
+        sqlite_upload_archive_repository::SqliteUploadArchiveRepository,
     },
     services::{
         alpaca_market_data::AlpacaMarketDataService, hermes_cron_status::HermesCronStatusService,
@@ -46,27 +47,12 @@ impl App {
 
         let repository: Arc<dyn TransactionRepository> =
             Arc::new(SqliteTransactionRepository::new(pool.clone()));
-        if settings.csv_path.exists() {
-            TransactionImporter::new(repository.clone())
-                .import_csv(&settings.csv_path)
-                .await
-                .with_context(|| format!("failed to import {}", settings.csv_path.display()))?;
-        } else {
-            warn!(
-                path = %settings.csv_path.display(),
-                "CSV file not found; starting with empty portfolio data"
-            );
-            repository
-                .replace_all(&[])
-                .await
-                .context("failed to clear transactions for missing CSV data")?;
-        }
 
+        let upload_archive_repository = Arc::new(SqliteUploadArchiveRepository::new(pool.clone()));
         let portfolio_service = PortfolioService::new(
             repository,
-            settings.csv_path.clone(),
-            settings.pdf_path.clone(),
-            settings.pdf_text_path.clone(),
+            upload_archive_repository.clone(),
+            settings.database_url.clone(),
             Some(settings.structured_products.output_json_path.clone()),
         );
         portfolio_service
@@ -89,6 +75,7 @@ impl App {
         let upload_data_service = UploadDataService::new(
             portfolio_service.clone(),
             structured_products_service.clone(),
+            upload_archive_repository,
         );
 
         let state = Arc::new(AppState::new(

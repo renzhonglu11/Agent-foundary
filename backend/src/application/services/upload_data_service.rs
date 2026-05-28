@@ -2,37 +2,42 @@ use std::{
     env,
     path::{Path, PathBuf},
     process::Command,
+    sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use axum::extract::Multipart;
+use chrono::Utc;
 use serde::Serialize;
 
 use crate::{
-    application::services::{
-        portfolio_service::PortfolioService, transaction_importer::validate_csv,
+    application::{
+        ports::upload_archive_repository::{UploadArchiveRepository, UploadedFileRecord},
+        services::{portfolio_service::PortfolioService, transaction_importer::validate_csv},
     },
     services::structured_products_service::{RefreshMode, StructuredProductsService},
 };
 
 const ALLOWED_EXTENSIONS: &[&str] = &["csv", "pdf"];
-const CANONICAL_CSV_PATH: &str = "data/portfolio-transactions.csv";
-const CANONICAL_PDF_PATH: &str = "data/asset-overview.pdf";
+const UPLOAD_ARCHIVE_DIR: &str = "data/uploads";
 
 #[derive(Clone)]
 pub struct UploadDataService {
     portfolio_service: PortfolioService,
     structured_products_service: StructuredProductsService,
+    upload_archive_repository: Arc<dyn UploadArchiveRepository>,
 }
 
 impl UploadDataService {
     pub fn new(
         portfolio_service: PortfolioService,
         structured_products_service: StructuredProductsService,
+        upload_archive_repository: Arc<dyn UploadArchiveRepository>,
     ) -> Self {
         Self {
             portfolio_service,
             structured_products_service,
+            upload_archive_repository,
         }
     }
 
@@ -100,7 +105,7 @@ impl UploadDataService {
                     }
                 }
             } else {
-                match prepare_uploaded_pdf(&self.portfolio_service, &filename, &content) {
+                match prepare_uploaded_pdf(&filename, &content) {
                     Ok(prepared_pdf) => {
                         saw_pdf = true;
                         PreparedUploadKind::Pdf(prepared_pdf)
@@ -141,44 +146,64 @@ impl UploadDataService {
             });
         }
 
+        let archive = UploadArchive::new();
+        std::fs::create_dir_all(&archive.dir)?;
+
         let mut csv_path = None;
-        let mut pdf_path = None;
         let mut saved = Vec::new();
+        let mut archived_records = Vec::new();
 
         for item in &prepared {
             match &item.kind {
                 PreparedUploadKind::Csv(csv) => {
-                    let target = canonical_csv_path();
-                    write_upload_target(&target, &item.content)?;
-                    csv_path = Some(target.clone());
-                    saved.push(item.saved_upload(vec![target], Some(csv.imported_rows), None));
+                    let archived_csv_path = archive.path_for(&item.filename, "csv");
+                    write_upload_target(&archived_csv_path, &item.content)?;
+                    csv_path = Some(archived_csv_path.clone());
+                    saved.push(item.saved_upload(
+                        vec![archived_csv_path.clone()],
+                        Some(csv.imported_rows),
+                        None,
+                    ));
+                    archived_records.push(ArchivedUploadRecord {
+                        filename: item.filename.clone(),
+                        kind: "csv".to_owned(),
+                        stored_path: archived_csv_path,
+                        size_bytes: item.content.len(),
+                        imported_rows: Some(csv.imported_rows),
+                        extracted_text_path: None,
+                        extracted_text: None,
+                    });
                 }
                 PreparedUploadKind::Pdf(pdf) => {
-                    let Some(pdf_text_path) = self.portfolio_service.pdf_text_path() else {
-                        anyhow::bail!("PDF_TEXT_PATH is not configured");
-                    };
-                    let target = canonical_pdf_path();
-                    write_upload_target(&target, &item.content)?;
-                    if let Some(parent) = pdf_text_path.parent() {
-                        std::fs::create_dir_all(parent)?;
-                    }
-                    std::fs::write(&pdf_text_path, &pdf.extracted_text)?;
-                    pdf_path = Some(target.clone());
+                    let archived_pdf_path = archive.path_for(&item.filename, "pdf");
+                    write_upload_target(&archived_pdf_path, &item.content)?;
+
                     saved.push(item.saved_upload(
-                        vec![target],
+                        vec![archived_pdf_path.clone()],
                         None,
                         Some(pdf.extracted_text.len()),
                     ));
+                    archived_records.push(ArchivedUploadRecord {
+                        filename: item.filename.clone(),
+                        kind: "pdf".to_owned(),
+                        stored_path: archived_pdf_path,
+                        size_bytes: item.content.len(),
+                        imported_rows: None,
+                        extracted_text_path: None,
+                        extracted_text: Some(pdf.extracted_text.clone()),
+                    });
                 }
             }
         }
 
         let update_result = self
             .portfolio_service
-            .apply_data_update(csv_path.as_deref(), pdf_path)
+            .apply_data_update(csv_path.as_deref())
             .await;
         cleanup_prepared_uploads(&prepared);
-        let (_, summary) = update_result?;
+        let _ = update_result?;
+        self.record_archive(&archive, &archived_records).await?;
+        let summary = self.portfolio_service.refresh_summary_cache().await?;
         self.structured_products_service.spawn_refresh(
             summary,
             "upload_data_success",
@@ -191,6 +216,38 @@ impl UploadDataService {
             rejected,
             error: None,
         })
+    }
+
+    async fn record_archive(
+        &self,
+        archive: &UploadArchive,
+        records: &[ArchivedUploadRecord],
+    ) -> anyhow::Result<()> {
+        self.upload_archive_repository
+            .create_batch(&archive.batch_id, &archive.created_at)
+            .await?;
+
+        for (index, record) in records.iter().enumerate() {
+            self.upload_archive_repository
+                .insert_file(&UploadedFileRecord {
+                    file_id: format!("{}-{:02}-{}", archive.batch_id, index + 1, record.kind),
+                    batch_id: archive.batch_id.clone(),
+                    kind: record.kind.clone(),
+                    original_filename: record.filename.clone(),
+                    stored_path: record.stored_path.display().to_string(),
+                    size_bytes: record.size_bytes as i64,
+                    imported_rows: record.imported_rows.map(|rows| rows as i64),
+                    extracted_text_path: record
+                        .extracted_text_path
+                        .as_ref()
+                        .map(|path| path.display().to_string()),
+                    extracted_text: record.extracted_text.clone(),
+                    created_at: archive.created_at.clone(),
+                })
+                .await?;
+        }
+
+        Ok(())
     }
 }
 
@@ -213,14 +270,6 @@ fn sanitize_filename(name: &str) -> String {
         })
         .take(180)
         .collect()
-}
-
-fn canonical_csv_path() -> PathBuf {
-    PathBuf::from(CANONICAL_CSV_PATH)
-}
-
-fn canonical_pdf_path() -> PathBuf {
-    PathBuf::from(CANONICAL_PDF_PATH)
 }
 
 fn write_upload_target(path: &Path, content: &[u8]) -> anyhow::Result<()> {
@@ -250,15 +299,7 @@ fn prepare_uploaded_csv(filename: &str, content: &[u8]) -> anyhow::Result<Prepar
     }
 }
 
-fn prepare_uploaded_pdf(
-    service: &PortfolioService,
-    filename: &str,
-    content: &[u8],
-) -> anyhow::Result<PreparedPdfUpload> {
-    if service.pdf_text_path().is_none() {
-        anyhow::bail!("PDF_TEXT_PATH is not configured");
-    };
-
+fn prepare_uploaded_pdf(filename: &str, content: &[u8]) -> anyhow::Result<PreparedPdfUpload> {
     let temp_pdf_path = temporary_upload_path(filename, "pdf");
     let temp_text_path = temporary_upload_path(filename, "txt");
     if let Some(parent) = temp_pdf_path.parent() {
@@ -290,15 +331,25 @@ fn run_pdf_text_extractor(pdf_path: &Path, text_path: &Path) -> anyhow::Result<(
         .arg(script_path)
         .arg(pdf_path)
         .arg(text_path)
-        .output()?;
+        .output()
+        .map_err(|error| {
+            anyhow::anyhow!(
+                "failed to run PDF text extractor. Install dependencies with `python3 -m venv .venv` and `.venv/bin/python -m pip install -r backend/scripts/requirements.txt`, or set PDF_EXTRACT_PYTHON to a Python with PyMuPDF installed: {error}"
+            )
+        })?;
 
     if output.status.success() {
         Ok(())
     } else {
-        anyhow::bail!(
-            "PDF text extraction failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains("No module named 'pymupdf'") || stderr.contains("No module named 'fitz'")
+        {
+            anyhow::bail!(
+                "PDF text extraction failed because PyMuPDF is not installed. Run `.venv/bin/python -m pip install -r backend/scripts/requirements.txt` or set PDF_EXTRACT_PYTHON to a Python with PyMuPDF installed."
+            );
+        }
+
+        anyhow::bail!("PDF text extraction failed: {stderr}");
     }
 }
 
@@ -337,6 +388,48 @@ fn temporary_upload_path(filename: &str, extension: &str) -> PathBuf {
         std::process::id(),
         timestamp
     ))
+}
+
+#[derive(Debug, Clone)]
+struct UploadArchive {
+    batch_id: String,
+    created_at: String,
+    dir: PathBuf,
+}
+
+impl UploadArchive {
+    fn new() -> Self {
+        let now = Utc::now();
+        let timestamp = now.format("%Y%m%dT%H%M%SZ").to_string();
+        let batch_id = format!("upload-{timestamp}-{}", std::process::id());
+        Self {
+            dir: PathBuf::from(UPLOAD_ARCHIVE_DIR).join(&batch_id),
+            batch_id,
+            created_at: now.to_rfc3339(),
+        }
+    }
+
+    fn path_for(&self, filename: &str, extension: &str) -> PathBuf {
+        let stem = Path::new(filename)
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .map(sanitize_filename)
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "upload".to_owned());
+        self.dir
+            .join(format!("{}-{stem}.{extension}", self.batch_id))
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ArchivedUploadRecord {
+    filename: String,
+    kind: String,
+    stored_path: PathBuf,
+    size_bytes: usize,
+    imported_rows: Option<usize>,
+    extracted_text_path: Option<PathBuf>,
+    extracted_text: Option<String>,
 }
 
 struct PreparedUpload {

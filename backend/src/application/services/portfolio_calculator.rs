@@ -317,7 +317,11 @@ pub fn build_isin_name_map(
     }
 
     let content = std::fs::read_to_string(path)?;
-    Ok(parse_isin_name_map(&content))
+    Ok(build_isin_name_map_from_text(Some(&content)))
+}
+
+pub fn build_isin_name_map_from_text(content: Option<&str>) -> HashMap<String, PdfSecurityInfo> {
+    content.map(parse_isin_name_map).unwrap_or_default()
 }
 
 fn parse_isin_name_map(content: &str) -> HashMap<String, PdfSecurityInfo> {

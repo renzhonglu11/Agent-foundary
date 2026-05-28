@@ -8,9 +8,6 @@ pub struct Settings {
     pub host: IpAddr,
     pub port: u16,
     pub database_url: String,
-    pub csv_path: PathBuf,
-    pub pdf_path: PathBuf,
-    pub pdf_text_path: Option<PathBuf>,
     pub structured_products: StructuredProductsSettings,
     pub fx_rates: FxRateSettings,
     pub alpaca: AlpacaSettings,
@@ -72,12 +69,6 @@ impl Settings {
             .parse()
             .context("PORT must be a valid u16")?;
         let database_url = env_or("DATABASE_URL", "sqlite://data/agent_foundry.db");
-        let csv_path = csv_path_from_env();
-        let pdf_path = PathBuf::from(env_or("PDF_PATH", "data/asset-overview.pdf"));
-        let pdf_text_path = Some(PathBuf::from(env_or(
-            "PDF_TEXT_PATH",
-            "data/asset_overview_extracted.txt",
-        )));
         let structured_products = StructuredProductsSettings::from_env();
         let fx_rates = FxRateSettings::from_env()?;
         let alpaca = AlpacaSettings::from_env()?;
@@ -92,9 +83,6 @@ impl Settings {
             host,
             port,
             database_url,
-            csv_path,
-            pdf_path,
-            pdf_text_path,
             structured_products,
             fx_rates,
             alpaca,
@@ -180,12 +168,4 @@ fn env_bool(key: &str, default: bool) -> bool {
         ),
         Err(_) => default,
     }
-}
-
-fn csv_path_from_env() -> PathBuf {
-    if let Ok(path) = std::env::var("CSV_PATH") {
-        return PathBuf::from(path);
-    }
-
-    PathBuf::from("data/portfolio-transactions.csv")
 }

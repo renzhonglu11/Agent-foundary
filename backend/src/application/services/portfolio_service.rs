@@ -9,10 +9,13 @@ use tracing::warn;
 
 use crate::{
     application::{
-        ports::transaction_repository::TransactionRepository,
+        ports::{
+            transaction_repository::TransactionRepository,
+            upload_archive_repository::UploadArchiveRepository,
+        },
         services::{
             portfolio_calculator::{
-                CalculatorInput, PriceOverride, build_isin_name_map, calculate_portfolio,
+                CalculatorInput, PriceOverride, build_isin_name_map_from_text, calculate_portfolio,
             },
             transaction_importer::TransactionImporter,
         },
@@ -24,9 +27,8 @@ use serde::Deserialize;
 #[derive(Clone)]
 pub struct PortfolioService {
     repository: Arc<dyn TransactionRepository>,
-    csv_path: PathBuf,
-    pdf_path: Arc<RwLock<PathBuf>>,
-    pdf_text_path: Option<PathBuf>,
+    upload_archive_repository: Arc<dyn UploadArchiveRepository>,
+    csv_source: Arc<RwLock<String>>,
     structured_products_json_path: Option<PathBuf>,
     summary_cache: Arc<RwLock<Option<CachedPortfolioSummary>>>,
 }
@@ -40,16 +42,14 @@ struct CachedPortfolioSummary {
 impl PortfolioService {
     pub fn new(
         repository: Arc<dyn TransactionRepository>,
-        csv_path: PathBuf,
-        pdf_path: PathBuf,
-        pdf_text_path: Option<PathBuf>,
+        upload_archive_repository: Arc<dyn UploadArchiveRepository>,
+        csv_source: String,
         structured_products_json_path: Option<PathBuf>,
     ) -> Self {
         Self {
             repository,
-            csv_path,
-            pdf_path: Arc::new(RwLock::new(pdf_path)),
-            pdf_text_path,
+            upload_archive_repository,
+            csv_source: Arc::new(RwLock::new(csv_source)),
             structured_products_json_path,
             summary_cache: Arc::new(RwLock::new(None)),
         }
@@ -82,6 +82,7 @@ impl PortfolioService {
             .import_csv(path)
             .await?;
 
+        self.set_csv_source(path.display().to_string())?;
         self.clear_summary_cache()?;
         if let Err(error) = self.refresh_summary_cache().await {
             warn!(%error, "failed to refresh portfolio summary cache after CSV import");
@@ -93,49 +94,21 @@ impl PortfolioService {
     pub async fn apply_data_update(
         &self,
         csv_path: Option<&Path>,
-        pdf_path: Option<PathBuf>,
     ) -> anyhow::Result<(Option<usize>, PortfolioSummaryResponse)> {
         let imported_rows = if let Some(path) = csv_path {
-            Some(
-                TransactionImporter::new(self.repository.clone())
-                    .import_csv(path)
-                    .await?,
-            )
+            let rows = TransactionImporter::new(self.repository.clone())
+                .import_csv(path)
+                .await?;
+            self.set_csv_source(path.display().to_string())?;
+            Some(rows)
         } else {
             None
         };
-
-        if let Some(pdf_path) = pdf_path {
-            let mut current_pdf_path = self
-                .pdf_path
-                .write()
-                .map_err(|_| anyhow!("portfolio PDF path lock poisoned"))?;
-            *current_pdf_path = pdf_path;
-        }
 
         self.clear_summary_cache()?;
         let summary = self.refresh_summary_cache().await?;
 
         Ok((imported_rows, summary))
-    }
-
-    pub fn pdf_text_path(&self) -> Option<PathBuf> {
-        self.pdf_text_path.clone()
-    }
-
-    pub async fn refresh_after_pdf_update(&self, pdf_path: PathBuf) -> anyhow::Result<()> {
-        {
-            let mut current_pdf_path = self
-                .pdf_path
-                .write()
-                .map_err(|_| anyhow!("portfolio PDF path lock poisoned"))?;
-            *current_pdf_path = pdf_path;
-        }
-
-        self.clear_summary_cache()?;
-        self.refresh_summary_cache().await?;
-
-        Ok(())
     }
 
     fn cached_summary(&self) -> anyhow::Result<Option<PortfolioSummaryResponse>> {
@@ -164,33 +137,50 @@ impl PortfolioService {
         Ok(())
     }
 
+    fn set_csv_source(&self, source: String) -> anyhow::Result<()> {
+        let mut csv_source = self
+            .csv_source
+            .write()
+            .map_err(|_| anyhow!("portfolio CSV source lock poisoned"))?;
+        *csv_source = source;
+
+        Ok(())
+    }
+
     async fn calculate_summary(&self) -> anyhow::Result<PortfolioSummaryResponse> {
         let transactions = self
             .repository
             .list_all()
             .await
             .context("failed to load transactions")?;
-        let isin_names = build_isin_name_map(self.pdf_text_path.as_deref())
-            .context("failed to parse extracted PDF text")?;
+        let latest_pdf = self
+            .upload_archive_repository
+            .latest_pdf_text()
+            .await
+            .context("failed to load latest uploaded PDF text")?;
+        let isin_names = build_isin_name_map_from_text(
+            latest_pdf.as_ref().map(|pdf| pdf.extracted_text.as_str()),
+        );
         let price_overrides =
             build_structured_product_price_overrides(self.structured_products_json_path.as_deref())
                 .context("failed to parse structured products quote overrides")?;
-        let pdf_path = self
-            .pdf_path
+        let csv_source = self
+            .csv_source
             .read()
-            .map_err(|_| anyhow!("portfolio PDF path lock poisoned"))?
+            .map_err(|_| anyhow!("portfolio CSV source lock poisoned"))?
             .clone();
 
         Ok(calculate_portfolio(
             &transactions,
             CalculatorInput {
-                csv_source: self.csv_path.display().to_string(),
-                pdf_source: pdf_path.display().to_string(),
-                pdf_text_source: self
-                    .pdf_text_path
+                csv_source,
+                pdf_source: latest_pdf
                     .as_ref()
-                    .filter(|path| path.exists())
-                    .map(|path| path.display().to_string()),
+                    .map(|pdf| pdf.stored_path.clone())
+                    .unwrap_or_else(|| "sqlite://uploaded_files?kind=pdf".to_owned()),
+                pdf_text_source: latest_pdf
+                    .as_ref()
+                    .map(|_| "sqlite://uploaded_files.extracted_text".to_owned()),
                 isin_names,
                 price_overrides,
             },
