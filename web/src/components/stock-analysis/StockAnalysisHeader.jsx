@@ -45,7 +45,7 @@ export default function StockAnalysisHeader({
               </Button>
             </Stack>
             <Typography color="text.secondary" mt={0.5}>
-              当前 watchlist 按 underlying / 标的聚合展示；点击 real time 后才对 Tier1 金融衍生品叠加 Onvista/Börse Frankfurt 实时数据，股票/ETF/Bond 先使用 Rust JSON fallback。
+              当前 watchlist 按 underlying / 标的聚合展示；real time 只刷新 Tier1 金融衍生品的 Onvista/Börse Frankfurt 数据，Tier1 分组里的股票由 Alpaca 按周期自动更新。
             </Typography>
           </Box>
           <Chip icon={<BusinessCenterRoundedIcon />} color="primary" label={`${totalRows} 个标的组 · ${totalInstruments} 个持仓行 · ${enrichedRows} 个结构化产品`} />

@@ -282,7 +282,7 @@ test('collects unique tier1 Alpaca symbols from stock rows', () => {
   assert.deepEqual(collectTier1AlpacaSymbols(groups), ['NVDA'])
 })
 
-test('collects one Alpaca spot per tier1 derivative-only group and shares it with instruments', () => {
+test('does not collect Alpaca symbols from tier1 derivative-only groups', () => {
   const groupsWithoutQuotes = buildWatchlistGroups(
     { summary: { totalMarketValue: 10000 }, positions: [] },
     [
@@ -291,26 +291,10 @@ test('collects one Alpaca spot per tier1 derivative-only group and shares it wit
     ],
   )
 
-  assert.deepEqual(collectTier1AlpacaSymbols(groupsWithoutQuotes), ['INTC'])
-
-  const groups = buildWatchlistGroups(
-    { summary: { totalMarketValue: 10000 }, positions: [] },
-    [
-      { isin: 'D-INTC-1', display_name: 'Call Intel', instrument: 'Call 15.01.27 Intel 30', asset_class: 'DERIVATIVE', product_type: 'optionsschein', underlying: 'Intel', enrichment_tier: 'tier1', live_enrichment_enabled: true, quote_source: 'boerse_frankfurt', quantity: 10, market_value: 100, delta: 1, omega: 2 },
-      { isin: 'D-INTC-2', display_name: 'Call Intel', instrument: 'Call 15.01.27 Intel 50', asset_class: 'DERIVATIVE', product_type: 'optionsschein', underlying: 'Intel', enrichment_tier: 'tier1', live_enrichment_enabled: true, quote_source: 'boerse_frankfurt', quantity: 5, market_value: 50, delta: 1, omega: 1.5 },
-    ],
-    [
-      { symbol: 'INTC', price: 109.05, currency: 'EUR', rawPrice: 118.53, rawCurrency: 'USD', usdEurRate: 0.92, priceSource: 'alpaca_iex', priceAsOf: '2026-05-22T14:00:00Z' },
-    ],
-  )
-
-  assert.equal(groups.tier1[0].alpacaSymbol, 'INTC')
-  assert.equal(groups.tier1[0].spotQuote.price, 109.05)
-  assert.equal(groups.tier1[0].derivatives[0].underlyingSpot, 109.05)
-  assert.equal(groups.tier1[0].derivatives[1].underlyingSpot, 109.05)
+  assert.deepEqual(collectTier1AlpacaSymbols(groupsWithoutQuotes), [])
 })
 
-test('maps broker underlying shorthands to Alpaca tickers before requesting quotes', () => {
+test('does not request Alpaca quotes for derivative-only broker underlying shorthands', () => {
   const groups = buildWatchlistGroups(
     { summary: { totalMarketValue: 10000 }, positions: [] },
     [
@@ -326,10 +310,10 @@ test('maps broker underlying shorthands to Alpaca tickers before requesting quot
     ],
   )
 
-  assert.deepEqual(collectTier1AlpacaSymbols(groups), ['ORCL', 'TXN', 'MRVL', 'DELL', 'GFS', 'ACN', 'TER', 'QCOM', 'CCL'])
+  assert.deepEqual(collectTier1AlpacaSymbols(groups), [])
 })
 
-test('maps energy broker underlyings to Alpaca tickers before requesting quotes', () => {
+test('does not request Alpaca quotes for derivative-only energy underlyings', () => {
   const groups = buildWatchlistGroups(
     { summary: { totalMarketValue: 10000 }, positions: [] },
     [
@@ -338,10 +322,10 @@ test('maps energy broker underlyings to Alpaca tickers before requesting quotes'
     ],
   )
 
-  assert.deepEqual(collectTier1AlpacaSymbols(groups), ['ENPH', 'NEE'])
+  assert.deepEqual(collectTier1AlpacaSymbols(groups), [])
 })
 
-test('maps semiconductor broker underlyings to Alpaca tickers before requesting quotes', () => {
+test('does not request Alpaca quotes for derivative-only semiconductor underlyings', () => {
   const groups = buildWatchlistGroups(
     { summary: { totalMarketValue: 10000 }, positions: [] },
     [
@@ -350,10 +334,10 @@ test('maps semiconductor broker underlyings to Alpaca tickers before requesting 
     ],
   )
 
-  assert.deepEqual(collectTier1AlpacaSymbols(groups), ['STM', 'AVGO'])
+  assert.deepEqual(collectTier1AlpacaSymbols(groups), [])
 })
 
-test('maps AMD long-form broker underlying to Alpaca ticker before requesting quotes', () => {
+test('does not request Alpaca quotes for derivative-only AMD long-form underlying', () => {
   const groups = buildWatchlistGroups(
     { summary: { totalMarketValue: 10000 }, positions: [] },
     [
@@ -361,7 +345,7 @@ test('maps AMD long-form broker underlying to Alpaca ticker before requesting qu
     ],
   )
 
-  assert.deepEqual(collectTier1AlpacaSymbols(groups), ['AMD'])
+  assert.deepEqual(collectTier1AlpacaSymbols(groups), [])
 })
 
 test('group latest trade uses the newest instrument date across nested categories', () => {

@@ -467,11 +467,13 @@ export function collectTier1AlpacaSymbols(stockRows) {
   const seen = new Set()
 
   tier1.forEach((group) => {
-    const symbol = group.alpacaSymbol || resolveAlpacaSymbolForGroup(group)
-    if (symbol && !seen.has(symbol)) {
-      seen.add(symbol)
-      symbols.push(symbol)
-    }
+    group.stocks.forEach((row) => {
+      const symbol = row.alpacaSymbol
+      if (symbol && !seen.has(symbol)) {
+        seen.add(symbol)
+        symbols.push(symbol)
+      }
+    })
   })
 
   return symbols

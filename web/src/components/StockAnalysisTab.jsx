@@ -106,24 +106,39 @@ export default function StockAnalysisTab({ data }) {
 
   useEffect(() => {
     let cancelled = false
+    let timer = null
 
     if (!tier1AlpacaSymbolKey) {
       setAlpacaQuotes([])
       return () => {
         cancelled = true
+        if (timer) window.clearTimeout(timer)
       }
     }
 
-    loadAlpacaQuotes(tier1AlpacaSymbols)
-      .then((quotes) => {
-        if (!cancelled) setAlpacaQuotes(quotes)
-      })
-      .catch(() => {
-        if (!cancelled) setAlpacaQuotes([])
-      })
+    const scheduleNextLoad = (cacheTtlSeconds) => {
+      const intervalMs = Math.max(Number(cacheTtlSeconds) || 60, 60) * 1000
+      timer = window.setTimeout(load, intervalMs)
+    }
+
+    const load = async () => {
+      try {
+        const payload = await loadAlpacaQuotesPayload(tier1AlpacaSymbols)
+        if (cancelled) return
+        setAlpacaQuotes(Array.isArray(payload?.quotes) ? payload.quotes : [])
+        scheduleNextLoad(payload?.cacheTtlSeconds)
+      } catch {
+        if (cancelled) return
+        setAlpacaQuotes([])
+        scheduleNextLoad(60)
+      }
+    }
+
+    load()
 
     return () => {
       cancelled = true
+      if (timer) window.clearTimeout(timer)
     }
   }, [tier1AlpacaSymbolKey])
 
@@ -166,11 +181,10 @@ async function fetchRefreshStatus() {
   return response.ok ? response.json() : { running: false }
 }
 
-async function loadAlpacaQuotes(symbols) {
+async function loadAlpacaQuotesPayload(symbols) {
   const query = symbols.map((symbol) => String(symbol).trim()).filter(Boolean).join(',')
-  if (!query) return []
+  if (!query) return { quotes: [], cacheTtlSeconds: 60 }
   const response = await fetch(`/api/stock-analysis/alpaca-quotes?symbols=${encodeURIComponent(query)}`, { cache: 'no-store' })
-  if (!response.ok) return []
-  const payload = await response.json()
-  return Array.isArray(payload?.quotes) ? payload.quotes : []
+  if (!response.ok) return { quotes: [], cacheTtlSeconds: 60 }
+  return response.json()
 }
