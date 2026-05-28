@@ -230,7 +230,7 @@ def _parse_decimal(value: Any) -> float | None:
 
 def _parse_delta(value: Any) -> float | None:
     number = _parse_decimal(value)
-    if number is None:
+    if number is None or number == 0:
         return None
     return number / 100
 

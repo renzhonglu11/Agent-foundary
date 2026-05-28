@@ -94,4 +94,55 @@ async def test_enrich_rows_uses_finanzen_first_onvista_fallback_and_boerse_quote
     assert enriched[1]["metadata_source"] == "onvista"
     assert enriched[1]["delta"] is None
     assert finanzen.calls == ["DE000LIVE001", "DE000FALLBACK"]
-    assert onvista.calls == ["DE000FALLBACK"]
+    assert onvista.calls == ["DE000LIVE001", "DE000FALLBACK"]
+
+
+@pytest.mark.asyncio
+async def test_enrich_rows_uses_later_product_provider_to_fill_missing_fields():
+    rows = [
+        {
+            "isin": "DE000PARTIAL",
+            "display_name": "Call AMD",
+            "issuer": "HSBC",
+            "instrument": "Call AMD",
+            "asset_class": "DERIVATIVE",
+            "product_type": "optionsschein",
+            "quantity": 1,
+            "quote_price": 30.18,
+            "quote_currency": "EUR",
+            "quote_source": "rust_portfolio_summary",
+            "market_value": 30.18,
+        },
+    ]
+    onvista = FakeProductProvider(
+        {
+            "DE000PARTIAL": ProductData(
+                metadata=InstrumentMetadata(isin="DE000PARTIAL", issuer="HSBC", underlying="AMD", product_type="optionsschein", strike_price=160),
+                greek=None,
+                source="onvista",
+                url="https://www.onvista.de/suche?searchValue=DE000PARTIAL",
+            )
+        }
+    )
+    gs_de = FakeProductProvider(
+        {
+            "DE000PARTIAL": ProductData(
+                metadata=InstrumentMetadata(isin="DE000PARTIAL", issuer="GS fallback issuer should not replace", underlying="AMD - Advanced Micro Devices", ratio=0.1, expiry="2026-12-18"),
+                greek=Greek(isin="DE000PARTIAL", iv=0.614),
+                source="gs.de",
+                url="https://www.gs.de/de/optionsschein-rechner?isin=DE000PARTIAL",
+            )
+        }
+    )
+
+    enriched = await enrich_structured_product_rows(rows, product_providers=[onvista, gs_de])
+
+    assert enriched[0]["issuer"] == "HSBC"
+    assert enriched[0]["underlying"] == "AMD"
+    assert enriched[0]["strike_price"] == 160
+    assert enriched[0]["ratio"] == 0.1
+    assert enriched[0]["expiry"] == "2026-12-18"
+    assert enriched[0]["iv"] == 0.614
+    assert enriched[0]["metadata_source"] == "onvista+gs.de"
+    assert enriched[0]["greeks_source"] == "gs.de"
+    assert enriched[0]["metadata_url"] == "https://www.gs.de/de/optionsschein-rechner?isin=DE000PARTIAL"

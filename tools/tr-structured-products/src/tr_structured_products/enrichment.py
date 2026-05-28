@@ -90,18 +90,31 @@ async def enrich_structured_product_rows(
                 enriched["quote_day_low"] = quote.day_low
                 enriched["quote_timestamp"] = quote.timestamp.isoformat()
 
+        metadata_sources: list[str] = []
+        greek_sources: list[str] = []
+        metadata_urls: list[str] = []
         for provider in product_providers or []:
             product = await provider.get_product_data(isin)
             if product is None:
                 continue
-            _merge_metadata(enriched, product.metadata)
+            metadata_changed = _merge_metadata(enriched, product.metadata, overwrite=not metadata_sources)
+            if metadata_changed:
+                metadata_sources.append(product.source)
             if product.greek is not None:
-                _merge_greek(enriched, product.greek)
-                enriched["greeks_source"] = product.source
-            enriched["metadata_source"] = product.source
+                greek_changed = _merge_greek(enriched, product.greek, overwrite=not greek_sources)
+                if greek_changed:
+                    greek_sources.append(product.source)
             if product.url:
-                enriched["metadata_url"] = product.url
-            break
+                metadata_urls.append(product.url)
+            if not _needs_product_fallback(enriched):
+                break
+
+        if metadata_sources:
+            enriched["metadata_source"] = "+".join(dict.fromkeys(metadata_sources))
+        if greek_sources:
+            enriched["greeks_source"] = "+".join(dict.fromkeys(greek_sources))
+        if metadata_urls:
+            enriched["metadata_url"] = metadata_urls[-1]
 
         enriched["live_enrichment_enabled"] = _has_live_enrichment(enriched)
         enriched_rows.append(enriched)
@@ -129,7 +142,27 @@ def _has_live_enrichment(row: dict) -> bool:
 
 
 
-def _merge_metadata(row: dict, metadata: InstrumentMetadata) -> None:
+def _needs_product_fallback(row: dict) -> bool:
+    return any(
+        _is_missing(row.get(field))
+        for field in (
+            "leverage",
+            "break_even",
+            "ratio",
+            "expiry",
+            "omega",
+            "theta",
+            "iv",
+        )
+    )
+
+
+def _is_missing(value: Any) -> bool:
+    return value is None or value == ""
+
+
+def _merge_metadata(row: dict, metadata: InstrumentMetadata, *, overwrite: bool = True) -> bool:
+    changed = False
     for field in (
         "wkn",
         "issuer",
@@ -143,13 +176,18 @@ def _merge_metadata(row: dict, metadata: InstrumentMetadata) -> None:
         "expiry",
     ):
         value = getattr(metadata, field)
-        if value is not None and value != "":
+        if value is not None and value != "" and (overwrite or _is_missing(row.get(field))):
+            changed = changed or row.get(field) != value
             row[field] = value
+    return changed
 
 
 
-def _merge_greek(row: dict, greek: Greek) -> None:
+def _merge_greek(row: dict, greek: Greek, *, overwrite: bool = True) -> bool:
+    changed = False
     for field in ("delta", "omega", "theta", "iv"):
         value = getattr(greek, field)
-        if value is not None:
+        if value is not None and (overwrite or _is_missing(row.get(field))):
+            changed = changed or row.get(field) != value
             row[field] = value
+    return changed
