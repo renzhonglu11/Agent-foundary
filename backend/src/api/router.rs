@@ -41,6 +41,10 @@ pub fn build(state: Arc<AppState>) -> Router {
             "/api/stock-analysis/alpaca-quotes",
             get(handlers::stock_analysis_alpaca_quotes),
         )
+        .route(
+            "/api/fred/macro-data",
+            get(handlers::fred_macro_data),
+        )
         .with_state(state)
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())

@@ -91,3 +91,10 @@ pub async fn upload_data(
 
     Ok((status, Json(response)))
 }
+
+pub async fn fred_macro_data(
+    State(state): State<Arc<AppState>>,
+) -> Json<crate::services::fred::FredMacroDataResponse> {
+    Json(state.fred_service.get_macro_data().await)
+}
+

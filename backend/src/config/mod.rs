@@ -11,6 +11,7 @@ pub struct Settings {
     pub structured_products: StructuredProductsSettings,
     pub fx_rates: FxRateSettings,
     pub alpaca: AlpacaSettings,
+    pub fred: FredSettings,
     pub log_format: LogFormat,
 }
 
@@ -42,6 +43,13 @@ pub struct FxRateSettings {
     pub fallback_usd_eur_rate: f64,
 }
 
+#[derive(Debug, Clone)]
+pub struct FredSettings {
+    pub api_key: Option<String>,
+    pub cache_ttl_seconds: u64,
+}
+
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppEnv {
     Local,
@@ -72,6 +80,7 @@ impl Settings {
         let structured_products = StructuredProductsSettings::from_env();
         let fx_rates = FxRateSettings::from_env()?;
         let alpaca = AlpacaSettings::from_env()?;
+        let fred = FredSettings::from_env();
         let log_format = match env_or("LOG_FORMAT", "pretty").as_str() {
             "pretty" => LogFormat::Pretty,
             "json" => LogFormat::Json,
@@ -86,6 +95,7 @@ impl Settings {
             structured_products,
             fx_rates,
             alpaca,
+            fred,
             log_format,
         })
     }
@@ -153,6 +163,17 @@ impl FxRateSettings {
                 .parse()
                 .context("ALPACA_USD_EUR_RATE must be an f64")?,
         })
+    }
+}
+
+impl FredSettings {
+    fn from_env() -> Self {
+        Self {
+            api_key: std::env::var("FRED_API_KEY").ok().filter(|s| !s.trim().is_empty()),
+            cache_ttl_seconds: env_or("FRED_CACHE_TTL_SECONDS", "86400")
+                .parse()
+                .unwrap_or(86400),
+        }
     }
 }
 

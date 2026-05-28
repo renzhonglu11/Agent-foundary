@@ -30,7 +30,8 @@ use crate::{
         sqlite_upload_archive_repository::SqliteUploadArchiveRepository,
     },
     services::{
-        alpaca_market_data::AlpacaMarketDataService, hermes_cron_status::HermesCronStatusService,
+        alpaca_market_data::AlpacaMarketDataService, fred::FredService,
+        hermes_cron_status::HermesCronStatusService,
         structured_products_service::StructuredProductsService,
     },
 };
@@ -72,6 +73,7 @@ impl App {
         let alpaca_market_data_service =
             AlpacaMarketDataService::new(settings.alpaca.clone(), fx_rate_service);
         let hermes_cron_status_service = HermesCronStatusService::new();
+        let fred_service = FredService::new(settings.fred.clone());
         let upload_data_service = UploadDataService::new(
             portfolio_service.clone(),
             structured_products_service.clone(),
@@ -84,6 +86,7 @@ impl App {
             structured_products_service,
             alpaca_market_data_service,
             hermes_cron_status_service,
+            fred_service,
         ));
         let router = router::build(state);
 

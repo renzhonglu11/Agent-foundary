@@ -3,7 +3,8 @@ use crate::{
         portfolio_service::PortfolioService, upload_data_service::UploadDataService,
     },
     services::{
-        alpaca_market_data::AlpacaMarketDataService, hermes_cron_status::HermesCronStatusService,
+        alpaca_market_data::AlpacaMarketDataService, fred::FredService,
+        hermes_cron_status::HermesCronStatusService,
         structured_products_service::StructuredProductsService,
     },
 };
@@ -15,6 +16,7 @@ pub struct AppState {
     pub structured_products_service: StructuredProductsService,
     pub alpaca_market_data_service: AlpacaMarketDataService,
     pub hermes_cron_status_service: HermesCronStatusService,
+    pub fred_service: FredService,
 }
 
 impl AppState {
@@ -24,6 +26,7 @@ impl AppState {
         structured_products_service: StructuredProductsService,
         alpaca_market_data_service: AlpacaMarketDataService,
         hermes_cron_status_service: HermesCronStatusService,
+        fred_service: FredService,
     ) -> Self {
         Self {
             portfolio_service,
@@ -31,6 +34,8 @@ impl AppState {
             structured_products_service,
             alpaca_market_data_service,
             hermes_cron_status_service,
+            fred_service,
         }
     }
 }
+
