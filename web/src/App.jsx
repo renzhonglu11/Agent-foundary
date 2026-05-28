@@ -5,6 +5,7 @@ import { OverviewTab, PositionsTab } from './components/PortfolioTabs.jsx';
 import DividendTab from './components/DividendTab.jsx';
 import HermesCronTab from './components/HermesCronTab.jsx';
 import StockAnalysisTab from './components/StockAnalysisTab.jsx';
+import EventsTab from './components/EventsTab.jsx';
 import { usePortfolioData } from './hooks/usePortfolioData.js';
 
 export default function App() {
@@ -35,6 +36,7 @@ export default function App() {
     positions: <PositionsTab data={data} />,
     dividend: <DividendTab dividend={data.dividend} />,
     stockAnalysis: <StockAnalysisTab data={data} />,
+    events: <EventsTab />,
     hermesCron: <HermesCronTab />,
   };
 
