@@ -1,12 +1,18 @@
 import { Box, Card, CardContent, Grid, Stack, Typography, useTheme } from '@mui/material';
 import { DataGrid, GridToolbar } from '@mui/x-data-grid';
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, Tooltip, XAxis, YAxis } from 'recharts';
+import { Area, Bar, BarChart, CartesianGrid, ComposedChart, Line, Tooltip, XAxis, YAxis } from 'recharts';
 import PaidRoundedIcon from '@mui/icons-material/PaidRounded';
 import ReceiptRoundedIcon from '@mui/icons-material/ReceiptRounded';
 import PercentRoundedIcon from '@mui/icons-material/PercentRounded';
 import InventoryRoundedIcon from '@mui/icons-material/InventoryRounded';
 import { compactCurrency, number, preciseCurrency, pnlColor } from '../utils/formatters.js';
 import MeasuredChart from './MeasuredChart.jsx';
+
+const MONTHLY_CHART_COLORS = {
+  net: '#13deb9',
+  tax: '#fa896b',
+  cumulative: '#5d87ff',
+};
 
 function MetricCard({ title, value, sub, icon: Icon, color }) {
   return (
@@ -30,17 +36,46 @@ function ChartTooltip({ active, payload, label }) {
   return (
     <Box className="chart-tooltip">
       <Typography fontWeight={700}>{label}</Typography>
-      {payload.map((item) => (
-        <Typography key={item.dataKey || item.name} color="text.secondary" variant="body2">
-          {item.name}: {item.dataKey === 'count' ? number.format(item.value) : preciseCurrency.format(item.value)}
-        </Typography>
-      ))}
+      <Stack spacing={0.75} sx={{ mt: 0.75 }}>
+        {payload.map((item) => (
+          <Stack key={item.dataKey || item.name} direction="row" spacing={1} sx={{ alignItems: 'center', justifyContent: 'space-between', minWidth: 190 }}>
+            <Stack direction="row" spacing={0.75} sx={{ alignItems: 'center' }}>
+              <Box
+                sx={{
+                  width: 9,
+                  height: 9,
+                  borderRadius: '50%',
+                  bgcolor: item.stroke || item.color || item.fill || 'text.secondary',
+                  flex: '0 0 auto',
+                }}
+              />
+              <Typography color="text.secondary" variant="body2">{item.name}</Typography>
+            </Stack>
+            <Typography variant="body2" sx={{ color: 'text.primary', fontWeight: 700 }}>
+              {item.dataKey === 'count' ? number.format(item.value) : preciseCurrency.format(item.value)}
+            </Typography>
+          </Stack>
+        ))}
+      </Stack>
     </Box>
   );
 }
 
+function LegendDot({ color, label }) {
+  return (
+    <Stack direction="row" spacing={0.75} sx={{ alignItems: 'center' }}>
+      <Box sx={{ width: 9, height: 9, borderRadius: '50%', bgcolor: color }} />
+      <Typography variant="caption" color="text.secondary">{label}</Typography>
+    </Stack>
+  );
+}
+
 function DividendCharts({ monthly, topSymbols }) {
-  const recentMonthly = monthly.slice(-24);
+  let cumulativeNetAmount = monthly.slice(0, Math.max(0, monthly.length - 24)).reduce((total, item) => total + (item.netAmount || 0), 0);
+  const recentMonthly = monthly.slice(-24).map((item) => {
+    cumulativeNetAmount += item.netAmount || 0;
+    return { ...item, cumulativeNetAmount };
+  });
   const topTen = topSymbols.slice(0, 10).map((item) => {
     const label = item.displayName || item.name;
     return { ...item, shortName: label.length > 22 ? `${label.slice(0, 22)}…` : label };
@@ -51,18 +86,27 @@ function DividendCharts({ monthly, topSymbols }) {
       <Grid size={{ xs: 12, lg: 7 }}>
         <Card className="panel-card">
           <CardContent>
-            <Typography variant="h6" mb={2}>Dividend / Interest 月度趋势</Typography>
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ alignItems: { xs: 'flex-start', sm: 'center' }, justifyContent: 'space-between', mb: 2 }}>
+              <Typography variant="h6">Dividend / Interest 月度趋势</Typography>
+              <Stack direction="row" spacing={1.5} sx={{ flexWrap: 'wrap', rowGap: 0.5 }}>
+                <LegendDot color={MONTHLY_CHART_COLORS.net} label="税后收入" />
+                <LegendDot color={MONTHLY_CHART_COLORS.tax} label="税费" />
+                <LegendDot color={MONTHLY_CHART_COLORS.cumulative} label="累计收入" />
+              </Stack>
+            </Stack>
             <Box sx={{ height: 330, minWidth: 0 }}>
               <MeasuredChart minHeight={280}>
                 {({ width, height }) => (
-                  <AreaChart width={width} height={height} data={recentMonthly}>
+                  <ComposedChart width={width} height={height} data={recentMonthly} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                     <CartesianGrid stroke="#e5eaef" vertical={false} />
                     <XAxis dataKey="month" tick={{ fill: '#7c8fac', fontSize: 12 }} axisLine={false} tickLine={false} />
-                    <YAxis tickFormatter={compactCurrency} tick={{ fill: '#7c8fac', fontSize: 12 }} axisLine={false} tickLine={false} width={70} />
+                    <YAxis yAxisId="monthly" tickFormatter={compactCurrency} tick={{ fill: '#7c8fac', fontSize: 12 }} axisLine={false} tickLine={false} width={70} />
+                    <YAxis yAxisId="cumulative" orientation="right" tickFormatter={compactCurrency} tick={{ fill: MONTHLY_CHART_COLORS.cumulative, fontSize: 12 }} axisLine={false} tickLine={false} width={72} />
                     <Tooltip content={<ChartTooltip />} />
-                    <Area name="税后收入" type="monotone" dataKey="netAmount" stroke="#13deb9" fill="#13deb955" strokeWidth={2} />
-                    <Area name="税费" type="monotone" dataKey="tax" stroke="#fa896b" fill="#fa896b33" strokeWidth={2} />
-                  </AreaChart>
+                    <Area yAxisId="monthly" name="税后收入" type="monotone" dataKey="netAmount" stroke={MONTHLY_CHART_COLORS.net} fill={`${MONTHLY_CHART_COLORS.net}55`} strokeWidth={2} />
+                    <Area yAxisId="monthly" name="税费" type="monotone" dataKey="tax" stroke={MONTHLY_CHART_COLORS.tax} fill={`${MONTHLY_CHART_COLORS.tax}33`} strokeWidth={2} />
+                    <Line yAxisId="cumulative" name="累计收入" type="monotone" dataKey="cumulativeNetAmount" stroke={MONTHLY_CHART_COLORS.cumulative} strokeWidth={2.6} dot={false} activeDot={{ r: 5, strokeWidth: 0 }} />
+                  </ComposedChart>
                 )}
               </MeasuredChart>
             </Box>

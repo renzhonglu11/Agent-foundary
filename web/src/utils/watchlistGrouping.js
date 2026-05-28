@@ -294,18 +294,18 @@ function calculateDeltaExposure(row, spot) {
 }
 
 function calculateEffectiveLeverage(row, spot) {
-  const omega = finiteNumber(row.omega)
+  const omega = positiveNumber(row.omega)
   if (omega != null) return omega
 
-  const delta = finiteNumber(row.delta)
-  const ratio = finiteNumber(row.ratio)
-  const spotPrice = finiteNumber(spot)
-  const bid = positiveNumber(row.bidPrice)
-  const ask = positiveNumber(row.askPrice)
-  if ([delta, ratio, spotPrice, bid, ask].some((value) => value == null)) return null
+  const providerLeverage = positiveNumber(row.leverage)
+  if (providerLeverage != null) return providerLeverage
 
-  const midPrice = (bid + ask) / 2
-  return midPrice > 0 ? (delta * ratio * spotPrice) / midPrice : null
+  const ratio = positiveNumber(row.ratio)
+  const spotPrice = positiveNumber(spot)
+  const productPrice = positiveNumber(row.price)
+  if ([ratio, spotPrice, productPrice].some((value) => value == null)) return null
+
+  return (ratio * spotPrice) / productPrice
 }
 
 function calculateBreakEvenDistanceAbs(row, spot) {
@@ -330,7 +330,24 @@ function calculateBreakEvenStatus(distanceAbs) {
 
 function breakEvenForRow(row) {
   const explicitBreakEven = finiteNumber(row.breakEven)
-  return explicitBreakEven
+  if (explicitBreakEven != null) return explicitBreakEven
+
+  const strike = finiteNumber(row.strikePrice)
+  const ratio = positiveNumber(row.ratio)
+  const price = positiveNumber(row.price)
+  if ([strike, ratio, price].some((value) => value == null)) return null
+
+  const direction = optionDirection(row)
+  if (direction === 'put') return strike - (price / ratio)
+  if (direction === 'call') return strike + (price / ratio)
+  return null
+}
+
+function optionDirection(row) {
+  const text = `${row.stockName || ''} ${row.instrument || ''} ${row.displayName || ''}`.toLowerCase()
+  if (/\bput\b/.test(text)) return 'put'
+  if (/\bcall\b/.test(text)) return 'call'
+  return null
 }
 
 function positionToInstrumentRow(position, enriched, index, totalMarketValue, alpacaQuoteBySymbol = new Map()) {

@@ -14,7 +14,11 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 
 BINARY="${REPO_ROOT}/target/release/agent-foundry-backend"
-ENV_SOURCE="${REPO_ROOT}/.env"
+DEFAULT_ENV_SOURCE="${REPO_ROOT}/.env.remote"
+if [[ ! -f "${DEFAULT_ENV_SOURCE}" ]]; then
+  DEFAULT_ENV_SOURCE="${REPO_ROOT}/.env"
+fi
+ENV_SOURCE="${ENV_SOURCE:-${DEFAULT_ENV_SOURCE}}"
 SERVICE_FILE="${REPO_ROOT}/deploy/agent-foundry-backend.service"
 SYNC_SCRIPT="${REPO_ROOT}/deploy/sync-hermes-cron-jobs.sh"
 SYNC_SERVICE_FILE="${REPO_ROOT}/deploy/agent-foundry-hermes-cron-sync.service"
@@ -24,11 +28,12 @@ PDF_EXTRACT_REQUIREMENTS="${REPO_ROOT}/backend/scripts/requirements.txt"
 STRUCTURED_PRODUCTS_TOOL_DIR="${REPO_ROOT}/tools/tr-structured-products"
 
 if [[ ! -f "${ENV_SOURCE}" ]]; then
-  echo "Missing ${ENV_SOURCE}; create it from .env.example before deploying." >&2
+  echo "Missing ${ENV_SOURCE}; create .env.remote for VPS deploys or .env for local defaults." >&2
   exit 1
 fi
 
 ENV_FILE="${ENV_SOURCE}"
+echo "Using env file: ${ENV_FILE}"
 
 echo "Building release binary..."
 cargo build --release --manifest-path "${REPO_ROOT}/Cargo.toml"

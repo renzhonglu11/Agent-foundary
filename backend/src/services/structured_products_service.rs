@@ -229,10 +229,11 @@ impl StructuredProductsService {
         );
         command.stdout(std::process::Stdio::piped());
         command.stderr(std::process::Stdio::piped());
-        let mut child = command.spawn().with_context(|| {
-            format!(
-                "failed to spawn structured products generator in {}",
-                self.settings.working_dir.display()
+        let mut child = command.spawn().map_err(|error| {
+            anyhow!(
+                "failed to spawn structured products generator command={} workdir={} ({error})",
+                self.settings.command,
+                self.settings.working_dir.display(),
             )
         })?;
 

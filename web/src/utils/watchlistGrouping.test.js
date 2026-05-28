@@ -203,7 +203,7 @@ test('calculates derivative monitoring metrics from group spot, delta, ratio and
   assert.equal(Math.round(derivative.breakEvenDistancePct * 100) / 100, 12.5)
 })
 
-test('falls back to omega exposure but does not guess break-even when provider value is missing', () => {
+test('uses ratio-based delta exposure and estimates option break-even when provider value is missing', () => {
   const groups = buildWatchlistGroups(
     {
       summary: { totalMarketValue: 10000 },
@@ -213,15 +213,37 @@ test('falls back to omega exposure but does not guess break-even when provider v
       ],
     },
     [
-      { isin: 'D-INTC', display_name: 'Call Intel', instrument: 'Call 15.01.27 Intel 50', asset_class: 'DERIVATIVE', product_type: 'optionsschein', underlying: 'Intel', enrichment_tier: 'tier1', live_enrichment_enabled: true, quote_source: 'boerse_frankfurt', quantity: 267, quote_price: 6.13, market_value: 1409.76, delta: 1, omega: 1.73, strike_price: 50 },
+      { isin: 'D-INTC', display_name: 'Call Intel', instrument: 'Call 15.01.27 Intel 50', asset_class: 'DERIVATIVE', product_type: 'optionsschein', underlying: 'Intel', enrichment_tier: 'tier1', live_enrichment_enabled: true, quote_source: 'boerse_frankfurt', quantity: 267, quote_price: 6.13, market_value: 1409.76, delta: 1, omega: 1.73, strike_price: 50, ratio: 0.1 },
     ],
   )
 
   const derivative = groups.tier1[0].derivatives[0]
-  assert.equal(Math.round(derivative.deltaExposureEur * 100) / 100, 2438.88)
-  assert.equal(derivative.deltaExposureEstimated, true)
-  assert.equal(derivative.calculatedBreakEven, null)
-  assert.equal(derivative.breakEvenDistancePct, null)
+  assert.equal(Math.round(derivative.deltaExposureEur * 100) / 100, 3164.75)
+  assert.equal(derivative.deltaExposureEstimated, false)
+  assert.equal(Math.round(derivative.calculatedBreakEven * 100) / 100, 111.3)
+  assert.equal(Math.round(derivative.breakEvenDistancePct * 100) / 100, 6.5)
+})
+
+test('estimates derivative leverage from spot, ratio and product quote when omega is missing', () => {
+  const groups = buildWatchlistGroups(
+    {
+      summary: { totalMarketValue: 10000 },
+      positions: [
+        { symbol: 'US0079031078', displayName: 'Advanced Micro Devices', assetClass: 'STOCK', quantity: 2, marketValue: 1000, costBasis: 800, lastPrice: 434.12 },
+        { symbol: 'DE000HT0Q0Z8', displayName: 'Call AMD', assetClass: 'DERIVATIVE', quantity: 43, marketValue: 1297.74, costBasis: 124.38, lastPrice: 30.18 },
+      ],
+    },
+    [
+      { isin: 'DE000HT0Q0Z8', display_name: 'Call AMD', instrument: 'Call 18.12.26 AMD 160', asset_class: 'DERIVATIVE', product_type: 'optionsschein', underlying: 'AMD', enrichment_tier: 'tier1', live_enrichment_enabled: true, quote_source: 'boerse_frankfurt', quantity: 43, quote_price: 30.18, market_value: 1297.74, strike_price: 160, ratio: 0.1 },
+    ],
+    [
+      { symbol: 'AMD', price: 434.12, priceSource: 'alpaca_iex', priceAsOf: '2026-05-27T00:00:00Z' },
+    ],
+  )
+
+  const derivative = groups.tier1[0].derivatives[0]
+  assert.equal(Math.round(derivative.effectiveLeverage * 100) / 100, 1.44)
+  assert.equal(Math.round(derivative.calculatedBreakEven * 100) / 100, 461.8)
 })
 
 test('collects unique tier1 Alpaca symbols from stock rows', () => {
