@@ -7,6 +7,7 @@ pub struct Settings {
     pub app_env: AppEnv,
     pub host: IpAddr,
     pub port: u16,
+    pub frontend_origin: String,
     pub database_url: String,
     pub structured_products: StructuredProductsSettings,
     pub fx_rates: FxRateSettings,
@@ -49,7 +50,6 @@ pub struct FredSettings {
     pub cache_ttl_seconds: u64,
 }
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppEnv {
     Local,
@@ -76,6 +76,7 @@ impl Settings {
         let port = env_or("PORT", "8080")
             .parse()
             .context("PORT must be a valid u16")?;
+        let frontend_origin = env_or_non_empty("FRONTEND_ORIGIN", "http://localhost:5173");
         let database_url = env_or("DATABASE_URL", "sqlite://data/agent_foundry.db");
         let structured_products = StructuredProductsSettings::from_env();
         let fx_rates = FxRateSettings::from_env()?;
@@ -91,6 +92,7 @@ impl Settings {
             app_env,
             host,
             port,
+            frontend_origin,
             database_url,
             structured_products,
             fx_rates,
@@ -169,7 +171,9 @@ impl FxRateSettings {
 impl FredSettings {
     fn from_env() -> Self {
         Self {
-            api_key: std::env::var("FRED_API_KEY").ok().filter(|s| !s.trim().is_empty()),
+            api_key: std::env::var("FRED_API_KEY")
+                .ok()
+                .filter(|s| !s.trim().is_empty()),
             cache_ttl_seconds: env_or("FRED_CACHE_TTL_SECONDS", "86400")
                 .parse()
                 .unwrap_or(86400),
@@ -179,6 +183,13 @@ impl FredSettings {
 
 fn env_or(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_owned())
+}
+
+fn env_or_non_empty(key: &str, default: &str) -> String {
+    match std::env::var(key) {
+        Ok(value) if !value.trim().is_empty() => value,
+        _ => default.to_owned(),
+    }
 }
 
 fn env_bool(key: &str, default: bool) -> bool {

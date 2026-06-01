@@ -97,7 +97,7 @@ impl App {
             hermes_cron_status_service,
             fred_service,
         ));
-        let router = router::build(state);
+        let router = router::build(state, &settings.frontend_origin)?;
 
         Ok(Self { settings, router })
     }

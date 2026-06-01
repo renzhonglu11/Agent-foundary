@@ -1,16 +1,27 @@
 use std::sync::Arc;
 
+use anyhow::Context;
 use axum::{
     Router,
     extract::DefaultBodyLimit,
+    http::{HeaderValue, Method, header},
     routing::{get, post},
 };
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
 use crate::{api::handlers, app_state::AppState};
 
-pub fn build(state: Arc<AppState>) -> Router {
-    Router::new()
+pub fn build(state: Arc<AppState>, frontend_origin: &str) -> anyhow::Result<Router> {
+    let cors = CorsLayer::new()
+        .allow_origin(
+            frontend_origin
+                .parse::<HeaderValue>()
+                .context("FRONTEND_ORIGIN must be a valid HTTP header value")?,
+        )
+        .allow_methods([Method::GET, Method::POST])
+        .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION]);
+
+    Ok(Router::new()
         .route("/health", get(handlers::health))
         .route("/api/portfolio/summary", get(handlers::portfolio_summary))
         .route(
@@ -41,11 +52,8 @@ pub fn build(state: Arc<AppState>) -> Router {
             "/api/stock-analysis/alpaca-quotes",
             get(handlers::stock_analysis_alpaca_quotes),
         )
-        .route(
-            "/api/fred/macro-data",
-            get(handlers::fred_macro_data),
-        )
+        .route("/api/fred/macro-data", get(handlers::fred_macro_data))
         .with_state(state)
-        .layer(CorsLayer::permissive())
-        .layer(TraceLayer::new_for_http())
+        .layer(cors)
+        .layer(TraceLayer::new_for_http()))
 }
