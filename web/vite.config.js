@@ -8,6 +8,7 @@ export default defineConfig({
       '/data/portfolio-summary.json': 'http://127.0.0.1:8080',
       '/data/hermes-cron-status.json': 'http://127.0.0.1:8080',
       '/data/structured-products-enrichment.json': 'http://127.0.0.1:8080',
+      '/data/macro-analysis.json': 'http://127.0.0.1:8080',
       '/api': 'http://127.0.0.1:8080',
     },
   },
