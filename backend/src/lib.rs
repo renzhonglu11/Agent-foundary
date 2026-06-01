@@ -25,7 +25,9 @@ use crate::{
     },
     config::Settings,
     infrastructure::db::{
-        connection::connect, migrations::run_migrations, sqlite_fx_rate_cache::SqliteFxRateCache,
+        connection::connect, migrations::run_migrations,
+        sqlite_fred_macro_data_cache::SqliteFredMacroDataCache,
+        sqlite_fx_rate_cache::SqliteFxRateCache,
         sqlite_market_data_repository::SqliteMarketDataRepository,
         sqlite_transaction_repository::SqliteTransactionRepository,
         sqlite_upload_archive_repository::SqliteUploadArchiveRepository,
@@ -82,7 +84,9 @@ impl App {
             market_data_repository,
         );
         let hermes_cron_status_service = HermesCronStatusService::new();
-        let fred_service = FredService::new(settings.fred.clone());
+        let fred_macro_data_cache = Arc::new(SqliteFredMacroDataCache::new(pool.clone()));
+        let fred_service = FredService::new(settings.fred.clone(), fred_macro_data_cache);
+        fred_service.warm_cache_in_background();
         let upload_data_service = UploadDataService::new(
             portfolio_service.clone(),
             structured_products_service.clone(),

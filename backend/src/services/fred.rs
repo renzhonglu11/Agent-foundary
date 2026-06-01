@@ -1,14 +1,20 @@
 use std::{
     collections::HashMap,
     sync::{Arc, RwLock},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
-use chrono::Utc;
+use anyhow::{Context, bail};
+use chrono::{DateTime, Utc};
+use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
+use tokio::{sync::Mutex, time::sleep};
 use tracing::{info, warn};
 
-use crate::config::FredSettings;
+use crate::{
+    application::ports::fred_macro_data_cache::{FredMacroDataCache, FredMacroDataCacheEntry},
+    config::FredSettings,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -31,8 +37,8 @@ pub struct FredSeriesData {
 #[serde(rename_all = "camelCase")]
 pub struct FredMacroDataResponse {
     pub generated_at: String,
-    pub provider: &'static str,
-    pub status: &'static str, // "live" or "sandbox_mock"
+    pub provider: String,
+    pub status: String, // "live" or "sandbox_mock"
     pub cache_ttl_seconds: u64,
     pub series: Vec<FredSeriesData>,
     pub warnings: Vec<String>,
@@ -49,36 +55,66 @@ struct FredApiObservation {
     value: String,
 }
 
+struct FredSeriesRequest {
+    id: &'static str,
+    title: &'static str,
+    units: &'static str,
+    frequency: &'static str,
+    observation_start: &'static str,
+}
+
 #[derive(Clone)]
 pub struct FredService {
     settings: FredSettings,
+    persistent_cache: Arc<dyn FredMacroDataCache>,
     client: reqwest::Client,
-    cache: Arc<RwLock<Option<(Instant, FredMacroDataResponse)>>>,
+    cache: Arc<RwLock<Option<FredMacroDataCacheEntry>>>,
+    refresh_lock: Arc<Mutex<()>>,
 }
 
 impl FredService {
-    pub fn new(settings: FredSettings) -> Self {
+    pub fn new(settings: FredSettings, persistent_cache: Arc<dyn FredMacroDataCache>) -> Self {
         Self {
             settings,
+            persistent_cache,
             client: reqwest::Client::new(),
             cache: Arc::new(RwLock::new(None)),
+            refresh_lock: Arc::new(Mutex::new(())),
         }
     }
 
-    pub async fn get_macro_data(&self) -> FredMacroDataResponse {
-        let now = Instant::now();
-        let ttl = Duration::from_secs(self.settings.cache_ttl_seconds);
+    pub fn warm_cache_in_background(&self) {
+        let service = self.clone();
+        tokio::spawn(async move {
+            service.get_macro_data().await;
+        });
+    }
 
-        // Check cache first
-        if let Ok(cache) = self.cache.read() {
-            if let Some((fetched_at, cached_response)) = &*cache {
-                if now.duration_since(*fetched_at) <= ttl {
-                    info!("Using cached FRED macroeconomic data");
-                    return cached_response.clone();
-                }
-            }
+    pub async fn get_macro_data(&self) -> FredMacroDataResponse {
+        // Try to get data in RAM first
+        if let Some(response) = self.read_cached_response() {
+            return response;
         }
 
+        if let Some(response) = self.read_persistent_cached_response().await {
+            return response;
+        }
+
+        let _refresh_guard = self.refresh_lock.lock().await;
+        if let Some(response) = self.read_cached_response() {
+            return response;
+        }
+
+        if let Some(response) = self.read_persistent_cached_response().await {
+            return response;
+        }
+
+        let response = self.refresh_macro_data().await;
+        self.write_cached_response(response.clone()).await;
+        response
+    }
+
+    async fn refresh_macro_data(&self) -> FredMacroDataResponse {
         let mut warnings = Vec::new();
         let api_key = match &self.settings.api_key {
             Some(key) => key.clone(),
@@ -88,115 +124,154 @@ impl FredService {
                     "FRED_API_KEY is not configured in .env; displaying sandbox mock data."
                         .to_owned(),
                 );
-                let response = self.generate_mock_data(warnings);
-                return response;
+                return self.generate_mock_data(warnings);
             }
         };
 
         info!("Fetching live macroeconomic data from FRED API");
         match self.fetch_live_data(&api_key).await {
-            Ok(response) => {
-                // Store in cache
-                if let Ok(mut cache) = self.cache.write() {
-                    *cache = Some((Instant::now(), response.clone()));
-                }
-                response
-            }
+            Ok(response) => response,
             Err(error) => {
-                warn!(%error, "Failed to fetch live FRED macroeconomic data; falling back to sandbox mock data");
+                let redacted_error = redact_api_key(&error.to_string());
+                warn!(error = %redacted_error, "Failed to fetch live FRED macroeconomic data; falling back to sandbox mock data");
                 warnings.push(format!(
-                    "Failed to fetch live FRED data: {error}. Falling back to sandbox mock data."
+                    "Failed to fetch live FRED data: {redacted_error}. Falling back to sandbox mock data."
                 ));
                 self.generate_mock_data(warnings)
             }
         }
     }
 
+    fn read_cached_response(&self) -> Option<FredMacroDataResponse> {
+        let cache = self.cache.read().ok()?;
+        let entry = cache.as_ref()?;
+        let ttl = self.cache_ttl_for(&entry.response);
+
+        if cache_entry_age(entry.fetched_at) <= ttl {
+            info!(
+                status = %entry.response.status,
+                "Using in-memory cached FRED macroeconomic data"
+            );
+            Some(entry.response.clone())
+        } else {
+            None
+        }
+    }
+
+    async fn read_persistent_cached_response(&self) -> Option<FredMacroDataResponse> {
+        let entry = match self.persistent_cache.get_latest().await {
+            Ok(Some(entry)) => entry,
+            Ok(None) => return None,
+            Err(error) => {
+                warn!(%error, "failed to load cached FRED macroeconomic data from sqlite");
+                return None;
+            }
+        };
+        let ttl = self.cache_ttl_for(&entry.response);
+
+        if cache_entry_age(entry.fetched_at) > ttl {
+            return None;
+        }
+
+        info!(
+            status = %entry.response.status,
+            fetched_at = %entry.fetched_at,
+            "Using sqlite cached FRED macroeconomic data"
+        );
+
+        let response = entry.response.clone();
+        if let Ok(mut cache) = self.cache.write() {
+            *cache = Some(entry);
+        }
+
+        Some(response)
+    }
+
+    async fn write_cached_response(&self, response: FredMacroDataResponse) {
+        let entry = FredMacroDataCacheEntry {
+            response,
+            fetched_at: Utc::now(),
+        };
+
+        if let Ok(mut cache) = self.cache.write() {
+            *cache = Some(entry.clone());
+        }
+
+        if let Err(error) = self.persistent_cache.store(&entry).await {
+            warn!(%error, "failed to persist FRED macroeconomic data cache");
+        }
+    }
+
+    fn cache_ttl_for(&self, response: &FredMacroDataResponse) -> Duration {
+        let ttl = if response.status == "live" {
+            self.settings.cache_ttl_seconds
+        } else {
+            self.settings.fallback_cache_ttl_seconds
+        };
+
+        Duration::from_secs(ttl)
+    }
+
     async fn fetch_live_data(&self, api_key: &str) -> anyhow::Result<FredMacroDataResponse> {
         // Predefined list of FRED series to fetch
         // ID, Title, Units, Frequency, Start Date
         let series_to_fetch = vec![
-            (
-                "FEDFUNDS",
-                "Federal Funds Effective Rate",
-                "Percent",
-                "Monthly",
-                "2021-01-01",
-            ),
-            (
-                "T10Y2Y",
-                "10-Year vs 2-Year Treasury Yield Spread",
-                "Percent",
-                "Daily",
-                "2023-01-01",
-            ),
-            (
-                "CPIAUCSL",
-                "Consumer Price Index (CPI)",
-                "Index",
-                "Monthly",
-                "2020-01-01",
-            ), // Fetch 2020 to calculate YoY inflation from 2021
-            (
-                "UNRATE",
-                "Unemployment Rate",
-                "Percent",
-                "Monthly",
-                "2021-01-01",
-            ),
-            (
-                "DGS10",
-                "10-Year Treasury Yield",
-                "Percent",
-                "Daily",
-                "2023-01-01",
-            ),
-            (
-                "GDPC1",
-                "Real Gross Domestic Product",
-                "Billions of Chained 2017 USD",
-                "Quarterly",
-                "2021-01-01",
-            ),
+            FredSeriesRequest {
+                id: "FEDFUNDS",
+                title: "Federal Funds Effective Rate",
+                units: "Percent",
+                frequency: "Monthly",
+                observation_start: "2021-01-01",
+            },
+            FredSeriesRequest {
+                id: "T10Y2Y",
+                title: "10-Year vs 2-Year Treasury Yield Spread",
+                units: "Percent",
+                frequency: "Daily",
+                observation_start: "2023-01-01",
+            },
+            FredSeriesRequest {
+                id: "CPIAUCSL",
+                title: "Consumer Price Index (CPI)",
+                units: "Index",
+                frequency: "Monthly",
+                observation_start: "2020-01-01",
+            },
+            FredSeriesRequest {
+                id: "UNRATE",
+                title: "Unemployment Rate",
+                units: "Percent",
+                frequency: "Monthly",
+                observation_start: "2021-01-01",
+            },
+            FredSeriesRequest {
+                id: "DGS10",
+                title: "10-Year Treasury Yield",
+                units: "Percent",
+                frequency: "Daily",
+                observation_start: "2023-01-01",
+            },
+            FredSeriesRequest {
+                id: "GDPC1",
+                title: "Real Gross Domestic Product",
+                units: "Billions of Chained 2017 USD",
+                frequency: "Quarterly",
+                observation_start: "2021-01-01",
+            },
         ];
 
         let mut fetched_series = Vec::new();
         let mut cpi_series: Option<FredSeriesData> = None;
+        let request_delay = Duration::from_millis(self.settings.request_delay_ms);
 
-        for (id, title, units, freq, start) in series_to_fetch {
-            let url = format!(
-                "https://api.stlouisfed.org/fred/series/observations?series_id={}&api_key={}&file_type=json&observation_start={}",
-                id, api_key, start
-            );
-
-            let response = self
-                .client
-                .get(&url)
-                .send()
-                .await?
-                .error_for_status()?
-                .json::<FredApiResponse>()
-                .await?;
-
-            let mut observations = Vec::new();
-            for obs in response.observations {
-                if let Ok(value) = obs.value.trim().parse::<f64>() {
-                    observations.push(FredObservation {
-                        date: obs.date,
-                        value,
-                    });
-                }
+        for (index, series) in series_to_fetch.iter().enumerate() {
+            if index > 0 && !request_delay.is_zero() {
+                sleep(request_delay).await;
             }
 
-            let series_data = FredSeriesData {
-                id: id.to_owned(),
-                title: title.to_owned(),
-                units: units.to_owned(),
-                frequency: freq.to_owned(),
-                observations,
-            };
+            let series_data = self.fetch_series_with_retries(series, api_key).await?;
 
-            if id == "CPIAUCSL" {
+            if series.id == "CPIAUCSL" {
                 cpi_series = Some(series_data);
             } else {
                 fetched_series.push(series_data);
@@ -252,12 +327,103 @@ impl FredService {
 
         Ok(FredMacroDataResponse {
             generated_at: Utc::now().to_rfc3339(),
-            provider: "fred",
-            status: "live",
+            provider: "fred".to_owned(),
+            status: "live".to_owned(),
             cache_ttl_seconds: self.settings.cache_ttl_seconds,
             series: fetched_series,
             warnings: Vec::new(),
         })
+    }
+
+    async fn fetch_series_with_retries(
+        &self,
+        series: &FredSeriesRequest,
+        api_key: &str,
+    ) -> anyhow::Result<FredSeriesData> {
+        for attempt in 0..=self.settings.max_retries {
+            match self.fetch_series(series, api_key).await {
+                Ok(series_data) => return Ok(series_data),
+                Err(error)
+                    if is_rate_limit_error(&error) && attempt < self.settings.max_retries =>
+                {
+                    let delay = self.retry_delay(attempt);
+                    warn!(
+                        series_id = series.id,
+                        attempt = attempt + 1,
+                        retry_in_ms = delay.as_millis(),
+                        "FRED API rate limited; retrying"
+                    );
+                    sleep(delay).await;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+
+        bail!("FRED API retry loop exited unexpectedly for {}", series.id)
+    }
+
+    async fn fetch_series(
+        &self,
+        series: &FredSeriesRequest,
+        api_key: &str,
+    ) -> anyhow::Result<FredSeriesData> {
+        let response = self
+            .client
+            .get("https://api.stlouisfed.org/fred/series/observations")
+            .query(&[
+                ("series_id", series.id),
+                ("api_key", api_key),
+                ("file_type", "json"),
+                ("observation_start", series.observation_start),
+            ])
+            .send()
+            .await
+            .with_context(|| format!("failed to request FRED series {}", series.id))?;
+
+        let status = response.status();
+        if status == StatusCode::TOO_MANY_REQUESTS {
+            bail!(
+                "FRED API returned 429 Too Many Requests while fetching {}",
+                series.id
+            );
+        }
+
+        if !status.is_success() {
+            bail!(
+                "FRED API returned HTTP {status} while fetching {}",
+                series.id
+            );
+        }
+
+        let response = response
+            .json::<FredApiResponse>()
+            .await
+            .with_context(|| format!("failed to decode FRED series {}", series.id))?;
+
+        let mut observations = Vec::new();
+        for obs in response.observations {
+            if let Ok(value) = obs.value.trim().parse::<f64>() {
+                observations.push(FredObservation {
+                    date: obs.date,
+                    value,
+                });
+            }
+        }
+
+        Ok(FredSeriesData {
+            id: series.id.to_owned(),
+            title: series.title.to_owned(),
+            units: series.units.to_owned(),
+            frequency: series.frequency.to_owned(),
+            observations,
+        })
+    }
+
+    fn retry_delay(&self, attempt: u32) -> Duration {
+        let multiplier = 1_u64.checked_shl(attempt).unwrap_or(u64::MAX);
+        let millis = self.settings.retry_base_delay_ms.saturating_mul(multiplier);
+
+        Duration::from_millis(millis)
     }
 
     fn generate_mock_data(&self, warnings: Vec<String>) -> FredMacroDataResponse {
@@ -568,13 +734,43 @@ impl FredService {
 
         FredMacroDataResponse {
             generated_at: Utc::now().to_rfc3339(),
-            provider: "fred",
-            status: "sandbox_mock",
-            cache_ttl_seconds: self.settings.cache_ttl_seconds,
+            provider: "fred".to_owned(),
+            status: "sandbox_mock".to_owned(),
+            cache_ttl_seconds: self.settings.fallback_cache_ttl_seconds,
             series,
             warnings,
         }
     }
+}
+
+fn is_rate_limit_error(error: &anyhow::Error) -> bool {
+    error.to_string().contains("429 Too Many Requests")
+}
+
+fn redact_api_key(message: &str) -> String {
+    let Some(key_start) = message.find("api_key=") else {
+        return message.to_owned();
+    };
+    let value_start = key_start + "api_key=".len();
+    let value_end = message[value_start..]
+        .find('&')
+        .map(|offset| value_start + offset)
+        .unwrap_or(message.len());
+
+    format!(
+        "{}api_key=<redacted>{}",
+        &message[..key_start],
+        &message[value_end..]
+    )
+}
+
+fn cache_entry_age(fetched_at: DateTime<Utc>) -> Duration {
+    let age_seconds = Utc::now()
+        .signed_duration_since(fetched_at)
+        .num_seconds()
+        .max(0) as u64;
+
+    Duration::from_secs(age_seconds)
 }
 
 // Helper to compute a date 12 months prior.
@@ -592,5 +788,29 @@ fn get_12_months_prior(date_str: &str) -> Option<String> {
     let day_str = parts[2];
 
     let prior_year = year - 1;
-    Some(format!("{:04}-{}-{}", prior_year, month_str, day_str))
+    Some(format!("{prior_year:04}-{month_str}-{day_str}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{get_12_months_prior, redact_api_key};
+
+    #[test]
+    fn redacts_fred_api_key_from_error_url() {
+        let message = "HTTP status client error (429 Too Many Requests) for url (https://api.stlouisfed.org/fred/series/observations?series_id=CPIAUCSL&api_key=secret123&file_type=json)";
+
+        let redacted = redact_api_key(message);
+
+        assert!(!redacted.contains("secret123"));
+        assert!(redacted.contains("api_key=<redacted>"));
+        assert!(redacted.contains("series_id=CPIAUCSL"));
+    }
+
+    #[test]
+    fn computes_prior_year_date_for_fred_monthly_observation() {
+        assert_eq!(
+            get_12_months_prior("2026-05-01").as_deref(),
+            Some("2025-05-01")
+        );
+    }
 }
