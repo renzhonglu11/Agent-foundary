@@ -53,6 +53,11 @@ pub fn build(state: Arc<AppState>, frontend_origin: &str) -> anyhow::Result<Rout
             get(handlers::stock_analysis_alpaca_quotes),
         )
         .route("/api/fred/macro-data", get(handlers::fred_macro_data))
+        .route("/data/macro-analysis.json", get(handlers::get_macro_analysis))
+        .route(
+            "/api/macro-analysis/refresh",
+            post(handlers::refresh_macro_analysis),
+        )
         .with_state(state)
         .layer(cors)
         .layer(TraceLayer::new_for_http()))
