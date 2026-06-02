@@ -66,7 +66,7 @@ pub async fn refresh_macro_analysis(
 
         // Then trigger python generator
         let mut command = Command::new("python3");
-        command.arg("/home/rz/Agent-Foundry/scripts/generate_macro_analysis.py");
+        command.arg("/home/rz/Agent-Foundry/backend/scripts/generate_macro_analysis.py");
         
         match command.spawn() {
             Ok(mut child) => {
