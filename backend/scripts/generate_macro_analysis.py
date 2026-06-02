@@ -5,13 +5,16 @@ import json
 import sqlite3
 import subprocess
 import urllib.parse
-from datetime import datetime
+from datetime import datetime, timezone
 
-# Define workspace directories
-REPOS_DIR = "/home/rz/Agent-Foundry"
+# Define workspace directories relative to this script location
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+# The script is located in backend/scripts/, so two levels up is the repo root
+REPOS_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
 DB_PATH = os.path.join(REPOS_DIR, "data/agent_foundry.db")
 OUTPUT_PATH = os.path.join(REPOS_DIR, "data/macro-analysis.json")
-HERMES_PATH = "/home/rz/.local/bin/hermes"
+# Use environment variable or default system path for hermes
+HERMES_PATH = os.environ.get("HERMES_PATH", os.path.expanduser("~/.local/bin/hermes"))
 
 # Import requests (we will run in python env)
 try:
@@ -215,22 +218,22 @@ def main():
         print("Using cached AI analysis...")
         summary_commentary = previous_data["summary_commentary"]
         sectors = previous_data["sectors"]
-        analysis_date = previous_data.get("analysis_date", datetime.utcnow().isoformat() + "Z")
+        analysis_date = previous_data.get("analysis_date", datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"))
     else:
         ai_payload = run_hermes_analysis(indicators)
         if ai_payload:
             summary_commentary = ai_payload["summary_commentary"]
             sectors = ai_payload["sectors"]
-            analysis_date = datetime.utcnow().isoformat() + "Z"
+            analysis_date = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         else:
             # Fallback to hardcoded/previous
             print("Warning: Falling back to previous or hardcoded baseline analysis due to LLM call failure.")
             if previous_data and "sectors" in previous_data:
                 summary_commentary = previous_data["summary_commentary"]
                 sectors = previous_data["sectors"]
-                analysis_date = previous_data.get("analysis_date", datetime.utcnow().isoformat() + "Z")
+                analysis_date = previous_data.get("analysis_date", datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"))
             else:
-                analysis_date = datetime.utcnow().isoformat() + "Z"
+                analysis_date = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
                 summary_commentary = "当前宏观经济环境处于关键转换期，通胀指标和就业市场出现分化，使得美联储在后续利率政策上将秉持‘数据驱动’的态度。高利率对成长板块的压制有所减弱，但高杠杆与公用事业板块仍承受一定流动性折价。"
                 sectors = [
                     {
