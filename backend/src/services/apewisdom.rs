@@ -15,13 +15,21 @@ pub struct RedditTicker {
     pub ticker: String,
     pub name: String,
     pub mentions: i32,
-    pub mentions_change_pct: f64,
+    #[serde(default)]
+    pub upvotes: i32,
+    #[serde(default)]
+    pub rank_24h_ago: Option<i32>,
+    #[serde(default)]
+    pub mentions_24h_ago: Option<i32>,
+    #[serde(default)]
+    pub mentions_change_pct: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RedditTrendingPayload {
     pub stocks: Vec<RedditTicker>,
-    pub wallstreetbetsnew: Vec<RedditTicker>,
+    #[serde(default, alias = "wallstreetbetsnew")]
+    pub wallstreetbets: Vec<RedditTicker>,
     pub updated_at: String,
 }
 
@@ -36,6 +44,9 @@ struct ApeWisdomApiTicker {
     ticker: String,
     name: String,
     mentions: i32,
+    #[serde(default)]
+    upvotes: i32,
+    rank_24h_ago: Option<i32>,
     mentions_24h_ago: Option<i32>,
 }
 
@@ -110,14 +121,14 @@ impl ApeWisdomService {
         // Small delay to prevent hitting the API too aggressively
         sleep(Duration::from_millis(500)).await;
 
-        let wallstreetbetsnew = self
-            .fetch_subreddit("wallstreetbetsnew")
+        let wallstreetbets = self
+            .fetch_subreddit("wallstreetbets")
             .await
-            .context("failed to fetch r/wallstreetbetsnew trends from ApeWisdom")?;
+            .context("failed to fetch r/wallstreetbets trends from ApeWisdom")?;
 
         let payload = RedditTrendingPayload {
             stocks,
-            wallstreetbetsnew,
+            wallstreetbets,
             updated_at: chrono::Utc::now().to_rfc3339(),
         };
 
@@ -166,6 +177,9 @@ impl ApeWisdomService {
                 ticker: r.ticker,
                 name: r.name,
                 mentions: r.mentions,
+                upvotes: r.upvotes,
+                rank_24h_ago: r.rank_24h_ago,
+                mentions_24h_ago: r.mentions_24h_ago,
                 mentions_change_pct: mentions_change_pct(r.mentions, r.mentions_24h_ago),
             });
         }
@@ -189,39 +203,76 @@ impl Default for ApeWisdomService {
     }
 }
 
-fn mentions_change_pct(current_mentions: i32, mentions_24h_ago: Option<i32>) -> f64 {
-    let Some(previous_mentions) = mentions_24h_ago else {
-        return 0.0;
-    };
+fn mentions_change_pct(current_mentions: i32, mentions_24h_ago: Option<i32>) -> Option<f64> {
+    let previous_mentions = mentions_24h_ago?;
 
     if previous_mentions <= 0 {
-        return 0.0;
+        return None;
     }
 
-    ((current_mentions - previous_mentions) as f64 / previous_mentions as f64) * 100.0
+    Some(((current_mentions - previous_mentions) as f64 / previous_mentions as f64) * 100.0)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::mentions_change_pct;
+    use super::{RedditTrendingPayload, mentions_change_pct};
 
     #[test]
     fn calculates_positive_mentions_change_pct() {
-        assert!((mentions_change_pct(32, Some(19)) - 68.421_052_631_578_95).abs() < f64::EPSILON);
+        let Some(change_pct) = mentions_change_pct(32, Some(19)) else {
+            panic!("expected available mentions change percentage");
+        };
+
+        assert!((change_pct - 68.421_052_631_578_95).abs() < f64::EPSILON);
     }
 
     #[test]
     fn calculates_negative_mentions_change_pct() {
-        assert!((mentions_change_pct(14, Some(19)) + 26.315_789_473_684_21).abs() < f64::EPSILON);
+        let Some(change_pct) = mentions_change_pct(14, Some(19)) else {
+            panic!("expected available mentions change percentage");
+        };
+
+        assert!((change_pct + 26.315_789_473_684_21).abs() < f64::EPSILON);
     }
 
     #[test]
-    fn treats_missing_previous_mentions_as_zero_change() {
-        assert_eq!(mentions_change_pct(10, None), 0.0);
+    fn treats_matching_previous_mentions_as_zero_change() {
+        assert_eq!(mentions_change_pct(1, Some(1)), Some(0.0));
     }
 
     #[test]
-    fn treats_zero_previous_mentions_as_zero_change() {
-        assert_eq!(mentions_change_pct(10, Some(0)), 0.0);
+    fn treats_missing_previous_mentions_as_unavailable_change() {
+        assert_eq!(mentions_change_pct(10, None), None);
+    }
+
+    #[test]
+    fn treats_zero_previous_mentions_as_unavailable_change() {
+        assert_eq!(mentions_change_pct(10, Some(0)), None);
+    }
+
+    #[test]
+    fn reads_legacy_wallstreetbetsnew_cache_key_as_wallstreetbets() {
+        let payload = serde_json::from_str::<RedditTrendingPayload>(
+            r#"{
+                "stocks": [],
+                "wallstreetbetsnew": [
+                    {
+                        "rank": 1,
+                        "ticker": "MSFT",
+                        "name": "Microsoft",
+                        "mentions": 1,
+                        "mentions_change_pct": null
+                    }
+                ],
+                "updated_at": "2026-06-03T00:00:00Z"
+            }"#,
+        );
+
+        let Ok(payload) = payload else {
+            panic!("expected legacy reddit trends cache to deserialize");
+        };
+
+        assert_eq!(payload.wallstreetbets.len(), 1);
+        assert_eq!(payload.wallstreetbets[0].ticker, "MSFT");
     }
 }

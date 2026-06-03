@@ -44,11 +44,12 @@ import {
 
 import { useFredMacroData } from '../hooks/useFredMacroData.js'
 import { useMacroAnalysis } from '../hooks/useMacroAnalysis.js'
+import { dateTime } from '../utils/formatters.js'
 
 export default function EventsTab() {
     const theme = useTheme()
     const { loading, error, data } = useFredMacroData()
-    const { loading: analysisLoading, data: analysisData, refresh: refreshAnalysis, refreshing: analysisRefreshing } = useMacroAnalysis()
+    const { loading: analysisLoading, data: analysisData, refresh: refreshAnalysis, refreshing: analysisRefreshing } = useMacroAnalysis({ refreshMs: 60_000 })
     const [activeChartTab, setActiveChartTab] = useState(0)
 
     if (loading) {
@@ -113,6 +114,52 @@ export default function EventsTab() {
     const unrateChange = getChange('UNRATE')
     const dgs10Change = getChange('DGS10')
 
+    const getRedditTrendBadge = (item) => {
+        const value = item?.mentions_change_pct
+        if (!Number.isFinite(value)) {
+            return {
+                label: '新上榜',
+                bgcolor: '#f1f5f9',
+                color: '#64748b'
+            }
+        }
+
+        return {
+            label: value >= 0 ? `+${value.toFixed(1)}%` : `${value.toFixed(1)}%`,
+            bgcolor: value >= 0 ? '#dcfce7' : '#fee2e2',
+            color: value >= 0 ? '#15803d' : '#b91c1c'
+        }
+    }
+
+    const RedditTrendBadge = ({ item }) => {
+        const badge = getRedditTrendBadge(item)
+
+        return (
+            <Box
+                sx={{
+                    px: 1,
+                    py: 0.3,
+                    borderRadius: 1,
+                    bgcolor: badge.bgcolor,
+                    color: badge.color,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    minWidth: 66
+                }}
+            >
+                <Typography variant="caption" sx={{ fontWeight: 700 }}>
+                    {badge.label}
+                </Typography>
+            </Box>
+        )
+    }
+
+    const redditTrending = analysisData?.reddit_trending || {}
+    const stocksTrends = redditTrending.stocks || []
+    const wallstreetbetsTrends = redditTrending.wallstreetbets || redditTrending.wallstreetbetsnew || []
+    const redditTrendsUpdatedAt = redditTrending.updated_at ? dateTime(redditTrending.updated_at) : '等待数据更新'
+
     // Prepare overlay dataset for Interest Rates & Yields (FEDFUNDS + DGS10)
     const getOverlayData = () => {
         const fed = seriesMap['FEDFUNDS']?.observations || []
@@ -135,11 +182,11 @@ export default function EventsTab() {
         fed.forEach(fObs => {
             const tVals = monthlyTreasury[fObs.date] || []
             let tAvg = tVals.length > 0 ? (tVals.reduce((a, b) => a + b, 0) / tVals.length) : null
-            
+
             if (tAvg !== null) {
                 lastKnownTreasury = parseFloat(tAvg.toFixed(2))
             }
-            
+
             combined.push({
                 date: fObs.date.substring(0, 7),
                 '联邦基金利率 (Fed Funds)': fObs.value,
@@ -149,35 +196,35 @@ export default function EventsTab() {
         return combined.slice(-24) // Show last 24 months
     }
 
-    // Sector impact config based on macro environment
-    const sectorsImpact = [
-        {
-            title: "🚀 高科技 & 成长板块 (Tech & Growth)",
-            impact: "负面 / 压制估值",
-            reason: "成长股的估值大部分基于远期现金流。高利率和美债收益率上升会拉高折现率（WACC），从而显著压缩其合理估值倍数（PE/PS）。此外，初创科技企业融资成本显著抬升。",
-            suggestion: "在降息周期（利率下行）中，该板块往往最为受益，弹性最大。"
-        },
-        {
-            title: "🏦 银行 & 金融板块 (Financials)",
-            impact: "中性偏正面",
-            reason: "利率高企和美债收益率上行通常能够拓宽银行的净利息差（NIM），提升核心贷款利差收益。但需要注意，如果收益率曲线深度倒挂，可能压制期限利差，且过度高息会导致信用违约风险抬升。",
-            suggestion: "高息环境初期利好零售银行，加息尾声可转为布局高股息险资。"
-        },
-        {
-            title: "🔌 公用事业 & 房托地产 (Utilities & REITs)",
-            impact: "负面 / 资金分流",
-            reason: "公用事业和房地产板块是典型的高负债、高股息板块。利率上升直接拉高其财务利息开支。同时，当无风险收益率（10Y美债）达到4%-5%时，其3%-5%的股息收益率便失去吸引力，导致资金分流。",
-            suggestion: "避险降息通道（利率走弱）中公用事业和REITs会迎来价值重估。"
-        },
-        {
-            title: "🛢️ 能源 & 大宗商品 (Energy & Materials)",
-            impact: "正面 (抗通胀)",
-            reason: "通胀走高（CPI上升）通常伴随着能源与大宗商品价格的上涨。该板块具有强定价权和天然的通胀对冲属性。在高通胀、加息中早期，能源股往往一枝独秀。",
-            suggestion: "在通胀拐点前是极佳的对冲工具，但在经济陷入衰退（GDP走弱）时需警惕需求下行。"
-        }
-    ]
+    const getLaborEconomyData = () => {
+        const unemployment = seriesMap['UNRATE']?.observations || []
+        const gdp = seriesMap['GDPC1']?.observations || []
+        const sortedGdp = [...gdp].sort((a, b) => new Date(a.date) - new Date(b.date))
+        let gdpIndex = 0
+        let lastKnownGdp = null
 
-    const sectors = (analysisData && analysisData.sectors && analysisData.sectors.length > 0) ? analysisData.sectors : sectorsImpact;
+        return unemployment.map((uObs) => {
+            const unemploymentDate = new Date(uObs.date)
+
+            while (
+                gdpIndex < sortedGdp.length
+                && new Date(sortedGdp[gdpIndex].date) <= unemploymentDate
+            ) {
+                lastKnownGdp = sortedGdp[gdpIndex].value
+                gdpIndex += 1
+            }
+
+            return {
+                date: uObs.date.substring(0, 7),
+                '失业率 (Unemployment Rate)': uObs.value,
+                '实际GDP (Real GDP)': lastKnownGdp ?? undefined
+            }
+        }).slice(-36)
+    }
+
+    const aiCommentaryAvailable = analysisData?.ai_commentary_available !== false
+    const hasAiCommentary = Boolean(aiCommentaryAvailable && analysisData?.summary_commentary)
+    const sectors = aiCommentaryAvailable && Array.isArray(analysisData?.sectors) ? analysisData.sectors : []
 
     const getImpactColor = (impact) => {
         if (!impact) return { bgcolor: '#f1f5f9', color: '#475569' };
@@ -194,7 +241,7 @@ export default function EventsTab() {
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3, p: { xs: 2, md: 3 } }}>
 
             {/* AI Macro Commentary Card */}
-            {analysisData && analysisData.summary_commentary && (
+            {hasAiCommentary && (
                 <Card
                     sx={{
                         borderRadius: 4,
@@ -659,75 +706,107 @@ export default function EventsTab() {
                             </ResponsiveContainer>
                         )}
 
+                        {/* Chart Tab 3: Unemployment vs Real GDP */}
+                        {activeChartTab === 3 && (
+                            <ResponsiveContainer width="100%" height="100%">
+                                <ComposedChart data={getLaborEconomyData()}>
+                                    <defs>
+                                        <linearGradient id="colorUnrate" x1="0" y1="0" x2="0" y2="1">
+                                            <stop offset="5%" stopColor="#2563eb" stopOpacity={0.2} />
+                                            <stop offset="95%" stopColor="#2563eb" stopOpacity={0.01} />
+                                        </linearGradient>
+                                    </defs>
+                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                                    <XAxis dataKey="date" stroke="#94a3b8" fontSize={11} tickLine={false} />
+                                    <YAxis yAxisId="left" unit="%" stroke="#2563eb" fontSize={12} domain={['auto', 'auto']} tickLine={false} axisLine={false} />
+                                    <YAxis yAxisId="right" orientation="right" stroke="#16a34a" fontSize={12} domain={['auto', 'auto']} tickLine={false} axisLine={false} tickFormatter={(value) => `${Math.round(value / 1000)}T`} />
+                                    <Tooltip
+                                        contentStyle={{ border: 'none', borderRadius: 12, boxShadow: '0 8px 30px rgba(0,0,0,0.08)' }}
+                                        formatter={(value, name) => {
+                                            if (name === '实际GDP (Real GDP)') {
+                                                return [`$${Math.round(value).toLocaleString()}B`, name]
+                                            }
+                                            return [`${value}%`, name]
+                                        }}
+                                    />
+                                    <Legend verticalAlign="top" height={36} />
+                                    <Area yAxisId="left" type="monotone" name="失业率 (Unemployment Rate)" dataKey="失业率 (Unemployment Rate)" stroke="#2563eb" strokeWidth={3} fillOpacity={1} fill="url(#colorUnrate)" connectNulls={true} />
+                                    <Line yAxisId="right" type="monotone" name="实际GDP (Real GDP)" dataKey="实际GDP (Real GDP)" stroke="#16a34a" strokeWidth={3} dot={{ r: 3 }} activeDot={{ r: 6 }} connectNulls={true} />
+                                </ComposedChart>
+                            </ResponsiveContainer>
+                        )}
+
                     </Box>
                 </CardContent>
             </Card>
 
             {/* Sector Impact Analysis Section */}
-            <Stack spacing={2.5}>
-                <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-                    <InfoOutlinedIcon color="primary" />
-                    <Typography variant="h6" sx={{ fontWeight: 700 }}>
-                        美股行业板块的宏观因果链分析 (Sector Valuation Impact Guide)
-                    </Typography>
-                </Stack>
+            {sectors.length > 0 && (
+                <Stack spacing={2.5}>
+                    <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+                        <InfoOutlinedIcon color="primary" />
+                        <Typography variant="h6" sx={{ fontWeight: 700 }}>
+                            美股行业板块的宏观因果链分析 (Sector Valuation Impact Guide)
+                        </Typography>
+                    </Stack>
 
-                <Grid container spacing={2}>
-                    {sectors.map((item, index) => {
-                        const colors = getImpactColor(item.impact);
-                        return (
-                            <Grid item xs={12} md={6} key={index}>
-                                <Card
-                                    sx={{
-                                        borderRadius: 3.5,
-                                        boxShadow: '0 4px 20px rgba(0,0,0,0.01)',
-                                        border: '1px solid #f1f5f9',
-                                        height: '100%',
-                                        display: 'flex',
-                                        flexDirection: 'column',
-                                        '&:hover': {
-                                            boxShadow: '0 10px 30px rgba(0,0,0,0.04)',
-                                            borderColor: 'primary.light'
-                                        }
-                                    }}
-                                >
-                                    <CardContent sx={{ p: 3, display: 'flex', flexDirection: 'column', gap: 1.5, height: '100%' }}>
-                                        <Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'center' }}>
-                                            <Typography variant="subtitle1" sx={{ fontWeight: 700, color: 'text.primary' }}>
-                                                {item.title}
-                                            </Typography>
-                                            <Box sx={{ px: 1.5, py: 0.5, borderRadius: 1.5, bgcolor: colors.bgcolor, color: colors.color }}>
-                                                <Typography variant="caption" sx={{ fontWeight: 700 }}>
-                                                    {item.impact}
+                    <Grid container spacing={2}>
+                        {sectors.map((item, index) => {
+                            const colors = getImpactColor(item.impact);
+                            return (
+                                <Grid item xs={12} md={6} key={index}>
+                                    <Card
+                                        sx={{
+                                            borderRadius: 3.5,
+                                            boxShadow: '0 4px 20px rgba(0,0,0,0.01)',
+                                            border: '1px solid #f1f5f9',
+                                            height: '100%',
+                                            display: 'flex',
+                                            flexDirection: 'column',
+                                            '&:hover': {
+                                                boxShadow: '0 10px 30px rgba(0,0,0,0.04)',
+                                                borderColor: 'primary.light'
+                                            }
+                                        }}
+                                    >
+                                        <CardContent sx={{ p: 3, display: 'flex', flexDirection: 'column', gap: 1.5, height: '100%' }}>
+                                            <Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'center' }}>
+                                                <Typography variant="subtitle1" sx={{ fontWeight: 700, color: 'text.primary' }}>
+                                                    {item.title}
                                                 </Typography>
-                                            </Box>
-                                        </Stack>
-                                        <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.6, flexGrow: 1 }}>
-                                            {item.reason}
-                                        </Typography>
-                                        <Box
-                                            sx={{
-                                                p: 1.5,
-                                                borderRadius: 2,
-                                                bgcolor: '#f8fafc',
-                                                borderLeft: '3px solid #3b82f6',
-                                                mt: 1
-                                            }}
-                                        >
-                                            <Stack direction="row" spacing={1} sx={{ alignItems: 'flex-start' }}>
-                                                <HelpOutlineRoundedIcon sx={{ fontSize: 16, color: '#3b82f6', mt: 0.2 }} />
-                                                <Typography variant="caption" sx={{ color: '#475569', lineHeight: 1.5, fontWeight: 550 }}>
-                                                    <strong>配置建议:</strong> {item.suggestion}
-                                                </Typography>
+                                                <Box sx={{ px: 1.5, py: 0.5, borderRadius: 1.5, bgcolor: colors.bgcolor, color: colors.color }}>
+                                                    <Typography variant="caption" sx={{ fontWeight: 700 }}>
+                                                        {item.impact}
+                                                    </Typography>
+                                                </Box>
                                             </Stack>
-                                        </Box>
-                                    </CardContent>
-                                </Card>
-                            </Grid>
-                        )
-                    })}
-                </Grid>
-            </Stack>
+                                            <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.6, flexGrow: 1 }}>
+                                                {item.reason}
+                                            </Typography>
+                                            <Box
+                                                sx={{
+                                                    p: 1.5,
+                                                    borderRadius: 2,
+                                                    bgcolor: '#f8fafc',
+                                                    borderLeft: '3px solid #3b82f6',
+                                                    mt: 1
+                                                }}
+                                            >
+                                                <Stack direction="row" spacing={1} sx={{ alignItems: 'flex-start' }}>
+                                                    <HelpOutlineRoundedIcon sx={{ fontSize: 16, color: '#3b82f6', mt: 0.2 }} />
+                                                    <Typography variant="caption" sx={{ color: '#475569', lineHeight: 1.5, fontWeight: 550 }}>
+                                                        <strong>配置建议:</strong> {item.suggestion}
+                                                    </Typography>
+                                                </Stack>
+                                            </Box>
+                                        </CardContent>
+                                    </Card>
+                                </Grid>
+                            )
+                        })}
+                    </Grid>
+                </Stack>
+            )}
 
             {/* Reddit Trending Section from ApeWisdom */}
             {analysisData && analysisData.reddit_trending && (
@@ -735,13 +814,13 @@ export default function EventsTab() {
                     <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
                         <ForumRoundedIcon color="primary" />
                         <Typography variant="h6" sx={{ fontWeight: 700 }}>
-                            🔥 Reddit 社区热门讨论标的 (ApeWisdom Reddit Trends)
+                            🔥 ApeWisdom Reddit Trends
                         </Typography>
                         <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>
-                            (自动每24h更新，分析 r/stocks 和 r/Wallstreetbetsnew 提及度)
+                            更新于: {redditTrendsUpdatedAt} · 数据源: r/stocks 和 r/wallstreetbets
                         </Typography>
                     </Stack>
-                    
+
                     <Grid container spacing={3}>
                         {/* r/stocks */}
                         <Grid item xs={12} md={6}>
@@ -756,43 +835,27 @@ export default function EventsTab() {
                                 </Box>
                                 <CardContent sx={{ p: 0 }}>
                                     <Stack divider={<Divider />}>
-                                        {analysisData.reddit_trending.stocks && analysisData.reddit_trending.stocks.length > 0 ? (
-                                            analysisData.reddit_trending.stocks.map((item, idx) => (
-                                                <Box key={idx} sx={{ px: 2.5, py: 1.5, display: 'flex', justifyContent: 'space-between', alignItems: 'center', '&:hover': { bgcolor: '#f8fafc' } }}>
-                                                    <Stack direction="row" spacing={2} sx={{ alignItems: 'center' }}>
-                                                        <Typography variant="body2" sx={{ fontWeight: 700, color: 'text.secondary', width: 20 }}>
+                                        {stocksTrends.length > 0 ? (
+                                            stocksTrends.map((item, idx) => (
+                                                <Box key={idx} sx={{ px: 2.5, py: 1.5, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) max-content', columnGap: 3, alignItems: 'center', '&:hover': { bgcolor: '#f8fafc' } }}>
+                                                    <Stack direction="row" spacing={2} sx={{ alignItems: 'center', minWidth: 0 }}>
+                                                        <Typography variant="body2" sx={{ fontWeight: 700, color: 'text.secondary', width: 20, flexShrink: 0 }}>
                                                             {idx + 1}
                                                         </Typography>
-                                                        <Box sx={{ px: 1.2, py: 0.4, borderRadius: 1.5, bgcolor: '#eff6ff', border: '1px solid #dbeafe' }}>
+                                                        <Box sx={{ px: 1.2, py: 0.4, borderRadius: 1.5, bgcolor: '#eff6ff', border: '1px solid #dbeafe', flexShrink: 0 }}>
                                                             <Typography variant="body2" sx={{ fontWeight: 700, color: '#1d4ed8' }}>
                                                                 {item.ticker}
                                                             </Typography>
                                                         </Box>
-                                                        <Typography variant="body2" sx={{ fontWeight: 550, color: 'text.primary', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                        <Typography variant="body2" sx={{ fontWeight: 550, color: 'text.primary', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                                             {item.name}
                                                         </Typography>
                                                     </Stack>
-                                                    <Stack direction="row" spacing={3} sx={{ alignItems: 'center' }}>
-                                                        <Typography variant="body2" sx={{ fontWeight: 600, mr: 1 }}>
+                                                    <Stack direction="row" spacing={2.5} sx={{ alignItems: 'center', flexShrink: 0 }}>
+                                                        <Typography variant="body2" sx={{ fontWeight: 600, minWidth: 82, textAlign: 'right' }}>
                                                             {item.mentions} 提及
                                                         </Typography>
-                                                        <Box 
-                                                            sx={{ 
-                                                                px: 1, 
-                                                                py: 0.3, 
-                                                                borderRadius: 1, 
-                                                                bgcolor: item.mentions_change_pct >= 0 ? '#dcfce7' : '#fee2e2', 
-                                                                color: item.mentions_change_pct >= 0 ? '#15803d' : '#b91c1c',
-                                                                display: 'flex',
-                                                                alignItems: 'center',
-                                                                justifyContent: 'center',
-                                                                minWidth: 60
-                                                            }}
-                                                        >
-                                                            <Typography variant="caption" sx={{ fontWeight: 700 }}>
-                                                                {item.mentions_change_pct >= 0 ? `+${item.mentions_change_pct.toFixed(1)}%` : `${item.mentions_change_pct.toFixed(1)}%`}
-                                                            </Typography>
-                                                        </Box>
+                                                        <RedditTrendBadge item={item} />
                                                     </Stack>
                                                 </Box>
                                             ))
@@ -806,12 +869,12 @@ export default function EventsTab() {
                             </Card>
                         </Grid>
 
-                        {/* r/wallstreetbetsnew */}
+                        {/* r/wallstreetbets */}
                         <Grid item xs={12} md={6}>
                             <Card sx={{ borderRadius: 3.5, border: '1px solid #f1f5f9', boxShadow: '0 4px 20px rgba(0,0,0,0.01)' }}>
                                 <Box sx={{ p: 2, bgcolor: '#f8fafc', borderBottom: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                     <Typography variant="subtitle2" sx={{ fontWeight: 700, color: '#334155' }}>
-                                        🦍 r/Wallstreetbetsnew 热门讨论标的
+                                        🦍 r/wallstreetbets 热门讨论标的
                                     </Typography>
                                     <Typography variant="caption" color="text.secondary">
                                         WSB 散户大本营
@@ -819,43 +882,27 @@ export default function EventsTab() {
                                 </Box>
                                 <CardContent sx={{ p: 0 }}>
                                     <Stack divider={<Divider />}>
-                                        {analysisData.reddit_trending.wallstreetbetsnew && analysisData.reddit_trending.wallstreetbetsnew.length > 0 ? (
-                                            analysisData.reddit_trending.wallstreetbetsnew.map((item, idx) => (
-                                                <Box key={idx} sx={{ px: 2.5, py: 1.5, display: 'flex', justifyContent: 'space-between', alignItems: 'center', '&:hover': { bgcolor: '#f8fafc' } }}>
-                                                    <Stack direction="row" spacing={2} sx={{ alignItems: 'center' }}>
-                                                        <Typography variant="body2" sx={{ fontWeight: 700, color: 'text.secondary', width: 20 }}>
+                                        {wallstreetbetsTrends.length > 0 ? (
+                                            wallstreetbetsTrends.map((item, idx) => (
+                                                <Box key={idx} sx={{ px: 2.5, py: 1.5, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) max-content', columnGap: 3, alignItems: 'center', '&:hover': { bgcolor: '#f8fafc' } }}>
+                                                    <Stack direction="row" spacing={2} sx={{ alignItems: 'center', minWidth: 0 }}>
+                                                        <Typography variant="body2" sx={{ fontWeight: 700, color: 'text.secondary', width: 20, flexShrink: 0 }}>
                                                             {idx + 1}
                                                         </Typography>
-                                                        <Box sx={{ px: 1.2, py: 0.4, borderRadius: 1.5, bgcolor: '#fdf2f8', border: '1px solid #fce7f3' }}>
+                                                        <Box sx={{ px: 1.2, py: 0.4, borderRadius: 1.5, bgcolor: '#fdf2f8', border: '1px solid #fce7f3', flexShrink: 0 }}>
                                                             <Typography variant="body2" sx={{ fontWeight: 700, color: '#be185d' }}>
                                                                 {item.ticker}
                                                             </Typography>
                                                         </Box>
-                                                        <Typography variant="body2" sx={{ fontWeight: 550, color: 'text.primary', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                        <Typography variant="body2" sx={{ fontWeight: 550, color: 'text.primary', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                                             {item.name}
                                                         </Typography>
                                                     </Stack>
-                                                    <Stack direction="row" spacing={3} sx={{ alignItems: 'center' }}>
-                                                        <Typography variant="body2" sx={{ fontWeight: 600, mr: 1 }}>
+                                                    <Stack direction="row" spacing={2.5} sx={{ alignItems: 'center', flexShrink: 0 }}>
+                                                        <Typography variant="body2" sx={{ fontWeight: 600, minWidth: 82, textAlign: 'right' }}>
                                                             {item.mentions} 提及
                                                         </Typography>
-                                                        <Box 
-                                                            sx={{ 
-                                                                px: 1, 
-                                                                py: 0.3, 
-                                                                borderRadius: 1, 
-                                                                bgcolor: item.mentions_change_pct >= 0 ? '#dcfce7' : '#fee2e2', 
-                                                                color: item.mentions_change_pct >= 0 ? '#15803d' : '#b91c1c',
-                                                                display: 'flex',
-                                                                alignItems: 'center',
-                                                                justifyContent: 'center',
-                                                                minWidth: 60
-                                                            }}
-                                                        >
-                                                            <Typography variant="caption" sx={{ fontWeight: 700 }}>
-                                                                {item.mentions_change_pct >= 0 ? `+${item.mentions_change_pct.toFixed(1)}%` : `${item.mentions_change_pct.toFixed(1)}%`}
-                                                            </Typography>
-                                                        </Box>
+                                                        <RedditTrendBadge item={item} />
                                                     </Stack>
                                                 </Box>
                                             ))
