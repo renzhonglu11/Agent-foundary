@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import sqlite3
 import subprocess
+import shutil
 from datetime import datetime, timezone
 
 REPOS_DIR = Path(os.environ.get("AGENT_FOUNDRY_ROOT", Path(__file__).resolve().parents[4]))
@@ -12,14 +13,6 @@ DB_PATH = REPOS_DIR / "data/agent_foundry.db"
 OUTPUT_PATH = REPOS_DIR / "data/macro-analysis.json"
 # Use environment variable or default system path for hermes
 HERMES_PATH = os.environ.get("HERMES_PATH", os.path.expanduser("~/.local/bin/hermes"))
-
-# Import requests (we will run in python env)
-try:
-    import requests
-except ImportError:
-    print("Error: requests package not found. Installing now...")
-    subprocess.run([sys.executable, "-m", "pip", "install", "requests"], check=True)
-    import requests
 
 def get_latest_macro_data():
     """Reads FRED data cache from SQLite."""
@@ -45,6 +38,22 @@ def get_latest_macro_data():
     except Exception as e:
         print(f"Error querying SQLite database: {e}")
         return None
+
+def hermes_available():
+    if os.path.sep in HERMES_PATH:
+        return os.path.isfile(HERMES_PATH) and os.access(HERMES_PATH, os.X_OK)
+    return shutil.which(HERMES_PATH) is not None
+
+def write_output(final_output):
+    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        with OUTPUT_PATH.open("w", encoding="utf-8") as f:
+            json.dump(final_output, f, ensure_ascii=False, indent=2)
+        print(f"Successfully generated and wrote final payload to: {OUTPUT_PATH}")
+    except Exception as e:
+        print(f"Error writing output file: {e}")
+        sys.exit(1)
 
 def extract_key_indicators(payload):
     """Extracts key FRED macroeconomic observations."""
@@ -182,6 +191,17 @@ def main():
         print("Failed to parse essential macroeconomic indicators. Aborting.")
         sys.exit(1)
 
+    if not hermes_available():
+        print(f"Hermes executable not available at {HERMES_PATH}. Writing macro payload without AI commentary.")
+        write_output({
+            "analysis_date": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "ai_commentary_available": False,
+            "ai_commentary_unavailable_reason": "Hermes executable is not available in this environment",
+            "raw_indicators": indicators
+        })
+        print("--- Macro economic generator run completed without AI commentary ---")
+        return
+
     # 2. Check for difference against last generated results
     skip_llm = False
     previous_data = None
@@ -223,55 +243,26 @@ def main():
             sectors = ai_payload["sectors"]
             analysis_date = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         else:
-            print("Warning: LLM call failed. Returning unavailable AI analysis payload.")
-            analysis_date = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-            summary_commentary = "当前系统无法生成 AI 内容，请确认 Hermes 已安装并可用后重新触发刷新。"
-            sectors = [
-                {
-                    "title": "🚀 高科技 & 成长板块 (Tech & Growth)",
-                    "impact": "暂不可用",
-                    "reason": "当前系统无法生成 AI 内容。",
-                    "suggestion": "请确认 Hermes 已安装并可用后重新触发刷新。"
-                },
-                {
-                    "title": "🏦 银行 & 金融板块 (Financials)",
-                    "impact": "暂不可用",
-                    "reason": "当前系统无法生成 AI 内容。",
-                    "suggestion": "请确认 Hermes 已安装并可用后重新触发刷新。"
-                },
-                {
-                    "title": "🔌 公用事业 & 房托地产 (Utilities & REITs)",
-                    "impact": "暂不可用",
-                    "reason": "当前系统无法生成 AI 内容。",
-                    "suggestion": "请确认 Hermes 已安装并可用后重新触发刷新。"
-                },
-                {
-                    "title": "🛢️ 能源 & 大宗商品 (Energy & Materials)",
-                    "impact": "暂不可用",
-                    "reason": "当前系统无法生成 AI 内容。",
-                    "suggestion": "请确认 Hermes 已安装并可用后重新触发刷新。"
-                }
-            ]
+            print("Warning: LLM call failed. Writing macro payload without AI commentary.")
+            write_output({
+                "analysis_date": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                "ai_commentary_available": False,
+                "ai_commentary_unavailable_reason": "Hermes LLM invocation failed",
+                "raw_indicators": indicators
+            })
+            print("--- Macro economic generator run completed without AI commentary ---")
+            return
 
     # 5. Build combined JSON output
     final_output = {
         "analysis_date": analysis_date,
+        "ai_commentary_available": True,
         "summary_commentary": summary_commentary,
         "sectors": sectors,
         "raw_indicators": indicators
     }
 
-    # Ensure output directory exists
-    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    
-    # Save output
-    try:
-        with OUTPUT_PATH.open("w", encoding="utf-8") as f:
-            json.dump(final_output, f, ensure_ascii=False, indent=2)
-        print(f"Successfully generated and wrote final payload to: {OUTPUT_PATH}")
-    except Exception as e:
-        print(f"Error writing output file: {e}")
-        sys.exit(1)
+    write_output(final_output)
 
     print("--- Macro economic generator run successfully completed ---")
 
