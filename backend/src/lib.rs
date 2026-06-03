@@ -33,8 +33,8 @@ use crate::{
         sqlite_upload_archive_repository::SqliteUploadArchiveRepository,
     },
     services::{
-        alpaca_market_data::AlpacaMarketDataService, apewisdom::ApeWisdomService, fred::FredService,
-        hermes_cron_status::HermesCronStatusService,
+        alpaca_market_data::AlpacaMarketDataService, apewisdom::ApeWisdomService,
+        fred::FredService, hermes_cron_status::HermesCronStatusService,
         structured_products_service::StructuredProductsService,
     },
 };
@@ -89,7 +89,7 @@ impl App {
             tracing::warn!(error = %e, "Failed to load pre-existing ApeWisdom cache from file on startup");
         }
         ape_wisdom_service.start_polling_in_background();
-        
+
         let fred_macro_data_cache = Arc::new(SqliteFredMacroDataCache::new(pool.clone()));
         let fred_service = FredService::new(settings.fred.clone(), fred_macro_data_cache);
         fred_service.warm_cache_in_background();

@@ -111,10 +111,10 @@ impl StructuredProductsSettings {
     fn from_env() -> Self {
         Self {
             enabled: env_bool("STRUCTURED_PRODUCTS_ENRICHMENT_ENABLED", true),
-            command: env_or("STRUCTURED_PRODUCTS_ENRICHMENT_COMMAND", "uv"),
+            command: env_or("STRUCTURED_PRODUCTS_ENRICHMENT_COMMAND", ".venv/bin/python"),
             working_dir: PathBuf::from(env_or(
                 "STRUCTURED_PRODUCTS_ENRICHMENT_WORKDIR",
-                "tools/tr-structured-products",
+                "backend/python",
             )),
             script_path: PathBuf::from(env_or(
                 "STRUCTURED_PRODUCTS_ENRICHMENT_SCRIPT",

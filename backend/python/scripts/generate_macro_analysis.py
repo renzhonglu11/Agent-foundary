@@ -9,8 +9,8 @@ from datetime import datetime, timezone
 
 # Define workspace directories relative to this script location
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-# The script is located in backend/scripts/, so two levels up is the repo root
-REPOS_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
+# The script is located in backend/python/scripts/, so three levels up is the repo root.
+REPOS_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "..", "..", ".."))
 DB_PATH = os.path.join(REPOS_DIR, "data/agent_foundry.db")
 OUTPUT_PATH = os.path.join(REPOS_DIR, "data/macro-analysis.json")
 # Use environment variable or default system path for hermes
@@ -226,29 +226,35 @@ def main():
             sectors = ai_payload["sectors"]
             analysis_date = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         else:
-            # Fallback to hardcoded/previous
-            print("Warning: Falling back to previous or hardcoded baseline analysis due to LLM call failure.")
-            if previous_data and "sectors" in previous_data:
-                summary_commentary = previous_data["summary_commentary"]
-                sectors = previous_data["sectors"]
-                analysis_date = previous_data.get("analysis_date", datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"))
-            else:
-                analysis_date = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-                summary_commentary = "当前宏观经济环境处于关键转换期，通胀指标和就业市场出现分化，使得美联储在后续利率政策上将秉持‘数据驱动’的态度。高利率对成长板块的压制有所减弱，但高杠杆与公用事业板块仍承受一定流动性折价。"
-                sectors = [
-                    {
-                        "title": "🚀 高科技 & 成长板块 (Tech & Growth)",
-                        "impact": "负面 / 压制估值",
-                        "reason": "成长股估值大部分基于远期折现。在目前利率高企的环境下，折现率压制了PE倍数，且高借贷成本利空中小科技企业融资。",
-                        "suggestion": "低吸大市值、具备强自由现金流流的高科技龙头，回避高负债高成长初创企业。"
-                    },
-                    {
-                        "title": "🏦 银行 & 金融板块 (Financials)",
-                        "impact": "中性偏正面",
-                        "reason": "高利率展宽了银行的净利息差，但也伴随收益率倒挂导致的期限利差收窄，以及潜在的坏账压力上升。",
-                        "suggestion": "优先布局抗风险能力强的大型商业银行，防范高息中后期的中小银行信用利差波动。"
-                    }
-                ]
+            print("Warning: LLM call failed. Returning unavailable AI analysis payload.")
+            analysis_date = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            summary_commentary = "当前系统无法生成 AI 内容，请确认 Hermes 已安装并可用后重新触发刷新。"
+            sectors = [
+                {
+                    "title": "🚀 高科技 & 成长板块 (Tech & Growth)",
+                    "impact": "暂不可用",
+                    "reason": "当前系统无法生成 AI 内容。",
+                    "suggestion": "请确认 Hermes 已安装并可用后重新触发刷新。"
+                },
+                {
+                    "title": "🏦 银行 & 金融板块 (Financials)",
+                    "impact": "暂不可用",
+                    "reason": "当前系统无法生成 AI 内容。",
+                    "suggestion": "请确认 Hermes 已安装并可用后重新触发刷新。"
+                },
+                {
+                    "title": "🔌 公用事业 & 房托地产 (Utilities & REITs)",
+                    "impact": "暂不可用",
+                    "reason": "当前系统无法生成 AI 内容。",
+                    "suggestion": "请确认 Hermes 已安装并可用后重新触发刷新。"
+                },
+                {
+                    "title": "🛢️ 能源 & 大宗商品 (Energy & Materials)",
+                    "impact": "暂不可用",
+                    "reason": "当前系统无法生成 AI 内容。",
+                    "suggestion": "请确认 Hermes 已安装并可用后重新触发刷新。"
+                }
+            ]
 
     # 5. Build combined JSON output
     final_output = {

@@ -1,9 +1,9 @@
+use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
 use std::{
     sync::{Arc, RwLock},
     time::Duration,
 };
-use anyhow::{Context, Result};
-use serde::{Deserialize, Serialize};
 use tokio::time::sleep;
 use tracing::{info, warn};
 
@@ -36,8 +36,7 @@ struct ApeWisdomApiTicker {
     ticker: String,
     name: String,
     mentions: i32,
-    #[serde(rename = "mentions_24h_ago_percent")]
-    mentions_24h_ago_percent: Option<f64>,
+    mentions_24h_ago: Option<i32>,
 }
 
 #[derive(Clone)]
@@ -68,7 +67,9 @@ impl ApeWisdomService {
                 info!("ApeWisdom cache successfully loaded and warmed from local file");
             }
         } else {
-            info!("No pre-existing ApeWisdom cache file found, cache will be warmed on first API poll");
+            info!(
+                "No pre-existing ApeWisdom cache file found, cache will be warmed on first API poll"
+            );
         }
         Ok(())
     }
@@ -78,10 +79,10 @@ impl ApeWisdomService {
         let service = self.clone();
         tokio::spawn(async move {
             info!("Starting background ApeWisdom polling loop...");
-            
+
             // Wait 2 seconds on startup before first poll to avoid blocking main thread initialization
             sleep(Duration::from_secs(2)).await;
-            
+
             loop {
                 info!("Polling ApeWisdom Reddit trends from API in background...");
                 match service.fetch_and_update_cache().await {
@@ -92,7 +93,7 @@ impl ApeWisdomService {
                         warn!(%error, "Failed to poll ApeWisdom background data");
                     }
                 }
-                
+
                 // Sleep for 5 minutes
                 sleep(Duration::from_secs(300)).await;
             }
@@ -101,13 +102,17 @@ impl ApeWisdomService {
 
     /// Fetches live data from ApeWisdom for both subreddits and updates the cache & JSON file.
     pub async fn fetch_and_update_cache(&self) -> Result<RedditTrendingPayload> {
-        let stocks = self.fetch_subreddit("stocks").await
+        let stocks = self
+            .fetch_subreddit("stocks")
+            .await
             .context("failed to fetch r/stocks trends from ApeWisdom")?;
-            
+
         // Small delay to prevent hitting the API too aggressively
         sleep(Duration::from_millis(500)).await;
-        
-        let wallstreetbetsnew = self.fetch_subreddit("wallstreetbetsnew").await
+
+        let wallstreetbetsnew = self
+            .fetch_subreddit("wallstreetbetsnew")
+            .await
             .context("failed to fetch r/wallstreetbetsnew trends from ApeWisdom")?;
 
         let payload = RedditTrendingPayload {
@@ -142,13 +147,17 @@ impl ApeWisdomService {
     async fn fetch_subreddit(&self, subreddit: &str) -> Result<Vec<RedditTicker>> {
         let url = format!("https://apewisdom.io/api/v1.0/filter/{subreddit}");
         let response = self.client.get(&url).send().await?;
-        
+
         if !response.status().is_success() {
-            anyhow::bail!("ApeWisdom returned HTTP {} for filter {}", response.status(), subreddit);
+            anyhow::bail!(
+                "ApeWisdom returned HTTP {} for filter {}",
+                response.status(),
+                subreddit
+            );
         }
 
         let api_data: ApeWisdomApiResponse = response.json().await?;
-        
+
         // Take top 10 tickers
         let mut tickers = Vec::new();
         for r in api_data.results.into_iter().take(10) {
@@ -157,7 +166,7 @@ impl ApeWisdomService {
                 ticker: r.ticker,
                 name: r.name,
                 mentions: r.mentions,
-                mentions_change_pct: r.mentions_24h_ago_percent.unwrap_or(0.0),
+                mentions_change_pct: mentions_change_pct(r.mentions, r.mentions_24h_ago),
             });
         }
 
@@ -171,5 +180,48 @@ impl ApeWisdomService {
         }
         tokio::fs::write(REDDIT_TRENDS_PATH, json_str).await?;
         Ok(())
+    }
+}
+
+impl Default for ApeWisdomService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn mentions_change_pct(current_mentions: i32, mentions_24h_ago: Option<i32>) -> f64 {
+    let Some(previous_mentions) = mentions_24h_ago else {
+        return 0.0;
+    };
+
+    if previous_mentions <= 0 {
+        return 0.0;
+    }
+
+    ((current_mentions - previous_mentions) as f64 / previous_mentions as f64) * 100.0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::mentions_change_pct;
+
+    #[test]
+    fn calculates_positive_mentions_change_pct() {
+        assert!((mentions_change_pct(32, Some(19)) - 68.421_052_631_578_95).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn calculates_negative_mentions_change_pct() {
+        assert!((mentions_change_pct(14, Some(19)) + 26.315_789_473_684_21).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn treats_missing_previous_mentions_as_zero_change() {
+        assert_eq!(mentions_change_pct(10, None), 0.0);
+    }
+
+    #[test]
+    fn treats_zero_previous_mentions_as_zero_change() {
+        assert_eq!(mentions_change_pct(10, Some(0)), 0.0);
     }
 }

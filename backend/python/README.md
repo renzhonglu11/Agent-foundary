@@ -1,6 +1,14 @@
-# Trade Republic Structured Products Enrichment
+# Agent Foundry Python Backend Utilities
 
-Lightweight Python subproject for enriching structured products already parsed by the Rust Agent-Foundry backend. Rust remains the source of truth for Trade Republic CSV/PDF ingestion; Python does not re-parse those files in the production path.
+Unified Python project for scripts invoked by the Rust Agent Foundry backend.
+
+It contains:
+
+- PDF text extraction (`scripts/extractPdfText.py`)
+- macro analysis JSON generation (`scripts/generate_macro_analysis.py`)
+- structured products enrichment (`scripts/generate_agent_foundry_outputs.py`)
+
+Rust remains the source of truth for Trade Republic CSV/PDF ingestion; Python does not re-parse portfolio files in the structured-products production path.
 
 ## Scope
 
@@ -29,8 +37,8 @@ Supported structured product keywords detected from Rust position fields:
 Generate current outputs from the running Rust backend:
 
 ```bash
-uv run --with httpx --with beautifulsoup4 --with lxml --with pydantic \
-  python scripts/generate_agent_foundry_outputs.py
+uv sync
+.venv/bin/python scripts/generate_agent_foundry_outputs.py
 ```
 
 Default behavior uses tiered live enrichment:
@@ -43,8 +51,7 @@ Default behavior uses tiered live enrichment:
 For cautious smoke runs, limit the number of products and slow the request rate:
 
 ```bash
-uv run --with httpx --with beautifulsoup4 --with lxml --with pydantic \
-  python scripts/generate_agent_foundry_outputs.py \
+.venv/bin/python scripts/generate_agent_foundry_outputs.py \
   --limit 10 \
   --tier1-limit 20 \
   --request-delay 3 \
@@ -64,8 +71,9 @@ Default outputs:
 From this directory:
 
 ```bash
-uv run --with pytest --with pytest-asyncio --with httpx --with beautifulsoup4 --with lxml --with pydantic pytest -q
-uv run --with pytest --with pytest-asyncio --with httpx --with beautifulsoup4 --with lxml --with pydantic python -m compileall -q src tests
+uv sync --dev
+.venv/bin/python -m pytest -q
+.venv/bin/python -m compileall -q src scripts tests
 ```
 
 ## Design Notes

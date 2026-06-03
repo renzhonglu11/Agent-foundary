@@ -3,8 +3,8 @@ use crate::{
         portfolio_service::PortfolioService, upload_data_service::UploadDataService,
     },
     services::{
-        alpaca_market_data::AlpacaMarketDataService, apewisdom::ApeWisdomService, fred::FredService,
-        hermes_cron_status::HermesCronStatusService,
+        alpaca_market_data::AlpacaMarketDataService, apewisdom::ApeWisdomService,
+        fred::FredService, hermes_cron_status::HermesCronStatusService,
         structured_products_service::StructuredProductsService,
     },
 };

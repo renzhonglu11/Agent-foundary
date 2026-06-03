@@ -9,6 +9,7 @@ User=rz
 Group=rz
 WorkingDirectory=/home/rz/Agent-Foundry
 EnvironmentFile=/home/rz/Agent-Foundry/.env
+Environment=PYTHONDONTWRITEBYTECODE=1
 ExecStart=/home/rz/Agent-Foundry/bin/agent-foundry-backend
 Restart=on-failure
 RestartSec=5

@@ -9,6 +9,7 @@ REMOTE_GROUP="${REMOTE_GROUP:-rz}"
 SYNC_USER="${SYNC_USER:-rz}"
 SERVICE_NAME="${SERVICE_NAME:-agent-foundry-backend}"
 SYNC_SERVICE_NAME="${SYNC_SERVICE_NAME:-agent-foundry-hermes-cron-sync}"
+REMOTE_UV_BIN="${REMOTE_UV_BIN:-/home/rz/.local/bin/uv}"
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
@@ -23,9 +24,7 @@ SERVICE_FILE="${REPO_ROOT}/deploy/agent-foundry-backend.service"
 SYNC_SCRIPT="${REPO_ROOT}/deploy/sync-hermes-cron-jobs.sh"
 SYNC_SERVICE_FILE="${REPO_ROOT}/deploy/agent-foundry-hermes-cron-sync.service"
 SYNC_PATH_FILE="${REPO_ROOT}/deploy/agent-foundry-hermes-cron-sync.path"
-PDF_EXTRACT_SCRIPT="${REPO_ROOT}/backend/scripts/extractPdfText.py"
-PDF_EXTRACT_REQUIREMENTS="${REPO_ROOT}/backend/scripts/requirements.txt"
-STRUCTURED_PRODUCTS_TOOL_DIR="${REPO_ROOT}/tools/tr-structured-products"
+PYTHON_PROJECT_DIR="${REPO_ROOT}/backend/python"
 
 if [[ ! -f "${ENV_SOURCE}" ]]; then
   echo "Missing ${ENV_SOURCE}; create .env.remote for VPS deploys or .env for local defaults." >&2
@@ -45,15 +44,13 @@ cleanup() {
 trap cleanup EXIT
 
 echo "Uploading files to ${SSH_HOST}:${TMP_DIR}..."
-ssh "${SSH_HOST}" "mkdir -p '${TMP_DIR}/tr-structured-products'"
+ssh "${SSH_HOST}" "mkdir -p '${TMP_DIR}/backend-python'"
 scp "${BINARY}" "${SSH_HOST}:${TMP_DIR}/agent-foundry-backend"
 scp "${ENV_FILE}" "${SSH_HOST}:${TMP_DIR}/agent-foundry.env"
 scp "${SERVICE_FILE}" "${SSH_HOST}:${TMP_DIR}/agent-foundry-backend.service"
 scp "${SYNC_SCRIPT}" "${SSH_HOST}:${TMP_DIR}/sync-hermes-cron-jobs.sh"
 scp "${SYNC_SERVICE_FILE}" "${SSH_HOST}:${TMP_DIR}/agent-foundry-hermes-cron-sync.service"
 scp "${SYNC_PATH_FILE}" "${SSH_HOST}:${TMP_DIR}/agent-foundry-hermes-cron-sync.path"
-scp "${PDF_EXTRACT_SCRIPT}" "${SSH_HOST}:${TMP_DIR}/extractPdfText.py"
-scp "${PDF_EXTRACT_REQUIREMENTS}" "${SSH_HOST}:${TMP_DIR}/requirements.txt"
 rsync -az --delete \
   --exclude '.venv/' \
   --exclude '__pycache__/' \
@@ -66,13 +63,13 @@ rsync -az --delete \
   --exclude 'dist/' \
   --exclude 'build/' \
   --exclude '*.egg-info/' \
-  "${STRUCTURED_PRODUCTS_TOOL_DIR}/" \
-  "${SSH_HOST}:${TMP_DIR}/tr-structured-products/"
+  "${PYTHON_PROJECT_DIR}/" \
+  "${SSH_HOST}:${TMP_DIR}/backend-python/"
 
 echo "Installing on VPS..."
 ssh -tt "${SSH_HOST}" "
   set -euo pipefail
-  sudo mkdir -p '${REMOTE_ROOT}/bin' '${REMOTE_ROOT}/data/uploads' '${REMOTE_ROOT}/scripts' '${REMOTE_ROOT}/tools'
+  sudo mkdir -p '${REMOTE_ROOT}/bin' '${REMOTE_ROOT}/data/uploads' '${REMOTE_ROOT}/backend'
   if [ -d '${LEGACY_REMOTE_ROOT}/data' ] && ! find '${REMOTE_ROOT}/data' -mindepth 1 -print -quit | grep -q .; then
     sudo cp -a '${LEGACY_REMOTE_ROOT}/data/.' '${REMOTE_ROOT}/data/'
   fi
@@ -81,23 +78,22 @@ ssh -tt "${SSH_HOST}" "
   fi
   sudo mv '${TMP_DIR}/agent-foundry-backend' '${REMOTE_ROOT}/bin/agent-foundry-backend'
   sudo mv '${TMP_DIR}/agent-foundry.env' '${REMOTE_ROOT}/.env'
-  sudo mv '${TMP_DIR}/extractPdfText.py' '${REMOTE_ROOT}/scripts/extractPdfText.py'
-  sudo mv '${TMP_DIR}/requirements.txt' '${REMOTE_ROOT}/scripts/requirements.txt'
+  sudo rm -rf '${REMOTE_ROOT}/backend/python'
+  sudo mkdir -p '${REMOTE_ROOT}/backend/python'
+  sudo cp -a '${TMP_DIR}/backend-python/.' '${REMOTE_ROOT}/backend/python/'
   sudo rm -rf '${REMOTE_ROOT}/tools/tr-structured-products'
-  sudo mkdir -p '${REMOTE_ROOT}/tools/tr-structured-products'
-  sudo cp -a '${TMP_DIR}/tr-structured-products/.' '${REMOTE_ROOT}/tools/tr-structured-products/'
-  sudo find '${REMOTE_ROOT}/tools/tr-structured-products' \
+  sudo find '${REMOTE_ROOT}/backend/python' \
     \( -name '.venv' -o -name '__pycache__' -o -name '.pytest_cache' -o -name '.mypy_cache' -o -name '.ruff_cache' -o -name 'htmlcov' -o -name 'dist' -o -name 'build' -o -name '*.egg-info' \) \
     -prune -exec rm -rf {} +
-  sudo find '${REMOTE_ROOT}/tools/tr-structured-products' \
+  sudo find '${REMOTE_ROOT}/backend/python' \
     \( -name '*.pyc' -o -name '.coverage' \) \
     -type f -delete
   sudo mv '${TMP_DIR}/sync-hermes-cron-jobs.sh' '${REMOTE_ROOT}/bin/sync-hermes-cron-jobs.sh'
   sudo mv '${TMP_DIR}/agent-foundry-backend.service' '/etc/systemd/system/${SERVICE_NAME}.service'
   sudo mv '${TMP_DIR}/agent-foundry-hermes-cron-sync.service' '/etc/systemd/system/${SYNC_SERVICE_NAME}.service'
   sudo mv '${TMP_DIR}/agent-foundry-hermes-cron-sync.path' '/etc/systemd/system/${SYNC_SERVICE_NAME}.path'
-  sudo python3 -m venv '${REMOTE_ROOT}/.venv'
-  sudo '${REMOTE_ROOT}/.venv/bin/python' -m pip install -r '${REMOTE_ROOT}/scripts/requirements.txt'
+  sudo install -d -o '${REMOTE_USER}' -g '${REMOTE_GROUP}' -m 2750 '${REMOTE_ROOT}/data/uv-cache'
+  sudo env UV_CACHE_DIR='${REMOTE_ROOT}/data/uv-cache' '${REMOTE_UV_BIN}' sync --directory '${REMOTE_ROOT}/backend/python' --frozen --no-dev
   sudo chown -R '${REMOTE_USER}:${REMOTE_GROUP}' '${REMOTE_ROOT}'
   sudo install -d -o '${SYNC_USER}' -g '${REMOTE_GROUP}' -m 2750 '${REMOTE_ROOT}/data/hermes-cron'
   sudo chmod +x '${REMOTE_ROOT}/bin/agent-foundry-backend' '${REMOTE_ROOT}/bin/sync-hermes-cron-jobs.sh'

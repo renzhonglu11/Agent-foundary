@@ -226,7 +226,9 @@ impl StructuredProductsService {
         }
         tokio::fs::create_dir_all(&self.uv_cache_path).await?;
 
-        let mut command = Command::new(&self.settings.command);
+        let command_path =
+            resolve_command_path(&self.settings.command, &self.settings.working_dir)?;
+        let mut command = Command::new(&command_path);
         command.current_dir(&self.settings.working_dir);
         if command_uses_uv(&self.settings.command) {
             command
@@ -438,4 +440,13 @@ fn command_uses_uv(command: &str) -> bool {
         .file_name()
         .and_then(|value| value.to_str())
         .is_some_and(|name| name == "uv")
+}
+
+fn resolve_command_path(command: &str, working_dir: &Path) -> anyhow::Result<PathBuf> {
+    let path = Path::new(command);
+    if path.is_absolute() || path.components().count() == 1 {
+        return Ok(path.to_path_buf());
+    }
+
+    absolute_path(&working_dir.join(path))
 }

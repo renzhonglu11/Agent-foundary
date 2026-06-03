@@ -1,17 +1,33 @@
-use std::sync::Arc;
 use axum::{Json, extract::State};
 use serde_json::{Value, json};
+use std::{path::PathBuf, sync::Arc};
 use tokio::process::Command;
 use tracing::{info, warn};
 
 use crate::{api::error::ApiError, app_state::AppState};
 
-const MACRO_ANALYSIS_PATH: &str = "data/macro-analysis.json";
+fn macro_analysis_path() -> PathBuf {
+    std::env::var("MACRO_ANALYSIS_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("data/macro-analysis.json"))
+}
+
+fn macro_analysis_script_path() -> PathBuf {
+    std::env::var("MACRO_ANALYSIS_SCRIPT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("backend/python/scripts/generate_macro_analysis.py"))
+}
+
+fn macro_analysis_python() -> String {
+    std::env::var("MACRO_ANALYSIS_PYTHON")
+        .or_else(|_| std::env::var("PYTHON_BIN"))
+        .unwrap_or_else(|_| "backend/python/.venv/bin/python".to_owned())
+}
 
 /// Serves the pre-generated macroeconomic analysis and dynamic Reddit trending tickers JSON.
 pub async fn get_macro_analysis(State(state): State<Arc<AppState>>) -> Json<Value> {
     // 1. Read the pre-generated macroeconomic commentary JSON cache from disk
-    let mut macro_payload = match tokio::fs::read_to_string(MACRO_ANALYSIS_PATH).await {
+    let mut macro_payload = match tokio::fs::read_to_string(macro_analysis_path()).await {
         Ok(content) => match serde_json::from_str::<Value>(&content) {
             Ok(payload) => payload,
             Err(error) => {
@@ -58,31 +74,36 @@ pub async fn refresh_macro_analysis(
     tokio::spawn(async move {
         // First trigger an immediate ApeWisdom fetch concurrently
         info!("Concurrently triggering manual ApeWisdom fetch");
-        if let Err(error) = state_clone.ape_wisdom_service.fetch_and_update_cache().await {
+        if let Err(error) = state_clone
+            .ape_wisdom_service
+            .fetch_and_update_cache()
+            .await
+        {
             warn!(%error, "Failed to manually fetch ApeWisdom trends");
         } else {
             info!("Manual ApeWisdom fetch completed successfully");
         }
 
         // Then trigger python generator
-        let mut command = Command::new("python3");
-        command.arg("/home/rz/Agent-Foundry/backend/scripts/generate_macro_analysis.py");
-        
+        let mut command = Command::new(macro_analysis_python());
+        command.arg(macro_analysis_script_path());
+
         match command.spawn() {
-            Ok(mut child) => {
-                match child.wait().await {
-                    Ok(status) => {
-                        if status.success() {
-                            info!("Manual macroeconomic analysis refresh completed successfully");
-                        } else {
-                            warn!("Manual macroeconomic analysis refresh failed with exit code: {:?}", status.code());
-                        }
-                    }
-                    Err(error) => {
-                        warn!(%error, "Error waiting for macroeconomic analysis generator child process");
+            Ok(mut child) => match child.wait().await {
+                Ok(status) => {
+                    if status.success() {
+                        info!("Manual macroeconomic analysis refresh completed successfully");
+                    } else {
+                        warn!(
+                            "Manual macroeconomic analysis refresh failed with exit code: {:?}",
+                            status.code()
+                        );
                     }
                 }
-            }
+                Err(error) => {
+                    warn!(%error, "Error waiting for macroeconomic analysis generator child process");
+                }
+            },
             Err(error) => {
                 warn!(%error, "Failed to spawn macroeconomic analysis generator process");
             }

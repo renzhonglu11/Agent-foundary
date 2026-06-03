@@ -334,7 +334,7 @@ fn run_pdf_text_extractor(pdf_path: &Path, text_path: &Path) -> anyhow::Result<(
         .output()
         .map_err(|error| {
             anyhow::anyhow!(
-                "failed to run PDF text extractor. Install dependencies with `python3 -m venv .venv` and `.venv/bin/python -m pip install -r backend/scripts/requirements.txt`, or set PDF_EXTRACT_PYTHON to a Python with PyMuPDF installed: {error}"
+                "failed to run PDF text extractor. Install dependencies with `uv sync --directory backend/python`, or set PDF_EXTRACT_PYTHON to a Python with PyMuPDF installed: {error}"
             )
         })?;
 
@@ -345,7 +345,7 @@ fn run_pdf_text_extractor(pdf_path: &Path, text_path: &Path) -> anyhow::Result<(
         if stderr.contains("No module named 'pymupdf'") || stderr.contains("No module named 'fitz'")
         {
             anyhow::bail!(
-                "PDF text extraction failed because PyMuPDF is not installed. Run `.venv/bin/python -m pip install -r backend/scripts/requirements.txt` or set PDF_EXTRACT_PYTHON to a Python with PyMuPDF installed."
+                "PDF text extraction failed because PyMuPDF is not installed. Run `uv sync --directory backend/python` or set PDF_EXTRACT_PYTHON to a Python with PyMuPDF installed."
             );
         }
 
@@ -362,7 +362,7 @@ fn pdf_text_extractor_script() -> anyhow::Result<PathBuf> {
     }
 
     for candidate in [
-        PathBuf::from("backend/scripts/extractPdfText.py"),
+        PathBuf::from("backend/python/scripts/extractPdfText.py"),
         PathBuf::from("scripts/extractPdfText.py"),
     ] {
         if candidate.exists() {
