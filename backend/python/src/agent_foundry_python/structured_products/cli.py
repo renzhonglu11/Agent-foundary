@@ -4,24 +4,18 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import sys
 import urllib.request
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-SRC_DIR = PROJECT_ROOT / "src"
-if str(SRC_DIR) not in sys.path:
-    sys.path.insert(0, str(SRC_DIR))
-
-from tr_structured_products.agent_foundry import (
+from agent_foundry_python.structured_products.agent_foundry import (
     AgentFoundryPortfolioAdapter,
     assign_enrichment_tiers,
     write_structured_product_rows_outputs,
 )
-from tr_structured_products.enrichment import enrich_structured_product_rows
-from tr_structured_products.providers.boerse_frankfurt import BoerseFrankfurtQuoteProvider
-from tr_structured_products.providers.gs_de import GsDeProductProvider
-from tr_structured_products.providers.onvista import OnvistaProductProvider
+from agent_foundry_python.structured_products.enrichment import enrich_structured_product_rows
+from agent_foundry_python.structured_products.providers.boerse_frankfurt import BoerseFrankfurtQuoteProvider
+from agent_foundry_python.structured_products.providers.gs_de import GsDeProductProvider
+from agent_foundry_python.structured_products.providers.onvista import OnvistaProductProvider
 
 
 def load_summary(*, summary_json: Path | None, summary_url: str | None) -> dict:

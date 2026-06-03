@@ -33,5 +33,5 @@ These instructions apply to work under `backend/`.
 
 ## Python Helper
 
-- `backend/python/scripts/extractPdfText.py` is used for PDF text extraction. Keep Python dependencies listed in `backend/python/pyproject.toml`.
+- `backend/python` installs backend-only Python CLI tools such as `agent-foundry-extract-pdf`. Keep Python dependencies listed in `backend/python/pyproject.toml`.
 - If this helper changes, verify the upload/extraction path still refreshes the portfolio summary cache.

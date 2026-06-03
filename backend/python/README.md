@@ -4,9 +4,9 @@ Unified Python project for scripts invoked by the Rust Agent Foundry backend.
 
 It contains:
 
-- PDF text extraction (`scripts/extractPdfText.py`)
-- macro analysis JSON generation (`scripts/generate_macro_analysis.py`)
-- structured products enrichment (`scripts/generate_agent_foundry_outputs.py`)
+- PDF text extraction (`agent-foundry-extract-pdf`)
+- macro analysis JSON generation (`agent-foundry-macro-analysis`)
+- structured products enrichment (`agent-foundry-structured-products`)
 
 Rust remains the source of truth for Trade Republic CSV/PDF ingestion; Python does not re-parse portfolio files in the structured-products production path.
 
@@ -38,7 +38,7 @@ Generate current outputs from the running Rust backend:
 
 ```bash
 uv sync
-.venv/bin/python scripts/generate_agent_foundry_outputs.py
+.venv/bin/agent-foundry-structured-products
 ```
 
 Default behavior uses tiered live enrichment:
@@ -51,7 +51,7 @@ Default behavior uses tiered live enrichment:
 For cautious smoke runs, limit the number of products and slow the request rate:
 
 ```bash
-.venv/bin/python scripts/generate_agent_foundry_outputs.py \
+.venv/bin/agent-foundry-structured-products \
   --limit 10 \
   --tier1-limit 20 \
   --request-delay 3 \

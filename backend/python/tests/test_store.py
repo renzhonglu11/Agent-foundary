@@ -1,7 +1,7 @@
 import sqlite3
 
-from tr_structured_products.models import Greek, InstrumentMetadata, Position, Quote
-from tr_structured_products.storage import StructuredProductStore, initialize_schema
+from agent_foundry_python.structured_products.models import Greek, InstrumentMetadata, Position, Quote
+from agent_foundry_python.structured_products.storage import StructuredProductStore, initialize_schema
 
 
 def test_store_upserts_positions_metadata_and_quotes(tmp_path):

@@ -2,7 +2,7 @@ import csv
 import json
 import sqlite3
 
-from tr_structured_products.agent_foundry import (
+from agent_foundry_python.structured_products.agent_foundry import (
     AgentFoundryPortfolioAdapter,
     write_structured_products_outputs,
 )

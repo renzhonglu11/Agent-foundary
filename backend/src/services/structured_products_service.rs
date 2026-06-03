@@ -246,7 +246,6 @@ impl StructuredProductsService {
         }
 
         command
-            .arg(&self.settings.script_path)
             .arg("--summary-json")
             .arg(summary_path)
             .arg("--csv")

@@ -1,7 +1,7 @@
 import pytest
 
-from tr_structured_products.enrichment import ProductData, enrich_structured_product_rows
-from tr_structured_products.models import Greek, InstrumentMetadata, Quote
+from agent_foundry_python.structured_products.enrichment import ProductData, enrich_structured_product_rows
+from agent_foundry_python.structured_products.models import Greek, InstrumentMetadata, Quote
 
 
 class FakeQuoteProvider:

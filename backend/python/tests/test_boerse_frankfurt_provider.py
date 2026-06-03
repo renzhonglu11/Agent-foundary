@@ -1,7 +1,7 @@
 import httpx
 import pytest
 
-from tr_structured_products.providers.boerse_frankfurt import BoerseFrankfurtQuoteProvider
+from agent_foundry_python.structured_products.providers.boerse_frankfurt import BoerseFrankfurtQuoteProvider
 
 
 @pytest.mark.asyncio

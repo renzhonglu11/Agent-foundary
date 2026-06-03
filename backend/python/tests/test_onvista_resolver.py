@@ -1,7 +1,7 @@
 import httpx
 import pytest
 
-from tr_structured_products.providers.onvista import OnvistaUrlResolver, parse_onvista_metadata, parse_onvista_product_data
+from agent_foundry_python.structured_products.providers.onvista import OnvistaUrlResolver, parse_onvista_metadata, parse_onvista_product_data
 
 
 ONVISTA_PRODUCT_HTML = """

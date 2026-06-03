@@ -1,8 +1,8 @@
 import pytest
 
-from tr_structured_products.agent_foundry import assign_enrichment_tiers
-from tr_structured_products.enrichment import ProductData, enrich_structured_product_rows
-from tr_structured_products.models import Greek, InstrumentMetadata, Quote
+from agent_foundry_python.structured_products.agent_foundry import assign_enrichment_tiers
+from agent_foundry_python.structured_products.enrichment import ProductData, enrich_structured_product_rows
+from agent_foundry_python.structured_products.models import Greek, InstrumentMetadata, Quote
 
 
 def _row(isin, product_type="optionsschein", asset_class="DERIVATIVE", instrument=None, market_value=1.0):

@@ -1,7 +1,7 @@
 import httpx
 import pytest
 
-from tr_structured_products.providers.gs_de import GsDeProductProvider, parse_gs_de_product_html
+from agent_foundry_python.structured_products.providers.gs_de import GsDeProductProvider, parse_gs_de_product_html
 
 
 GS_OPTIONSSCHEIN_HTML = """

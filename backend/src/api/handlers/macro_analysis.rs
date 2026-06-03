@@ -12,16 +12,9 @@ fn macro_analysis_path() -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from("data/macro-analysis.json"))
 }
 
-fn macro_analysis_script_path() -> PathBuf {
-    std::env::var("MACRO_ANALYSIS_SCRIPT")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("backend/python/scripts/generate_macro_analysis.py"))
-}
-
-fn macro_analysis_python() -> String {
-    std::env::var("MACRO_ANALYSIS_PYTHON")
-        .or_else(|_| std::env::var("PYTHON_BIN"))
-        .unwrap_or_else(|_| "backend/python/.venv/bin/python".to_owned())
+fn macro_analysis_command() -> String {
+    std::env::var("MACRO_ANALYSIS_COMMAND")
+        .unwrap_or_else(|_| "backend/python/.venv/bin/agent-foundry-macro-analysis".to_owned())
 }
 
 /// Serves the pre-generated macroeconomic analysis and dynamic Reddit trending tickers JSON.
@@ -85,8 +78,7 @@ pub async fn refresh_macro_analysis(
         }
 
         // Then trigger python generator
-        let mut command = Command::new(macro_analysis_python());
-        command.arg(macro_analysis_script_path());
+        let mut command = Command::new(macro_analysis_command());
 
         match command.spawn() {
             Ok(mut child) => match child.wait().await {

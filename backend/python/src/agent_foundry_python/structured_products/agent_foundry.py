@@ -6,8 +6,8 @@ import re
 from pathlib import Path
 from typing import Any
 
-from tr_structured_products.models import Greek, InstrumentMetadata, Position, Quote
-from tr_structured_products.storage import StructuredProductStore
+from agent_foundry_python.structured_products.models import Greek, InstrumentMetadata, Position, Quote
+from agent_foundry_python.structured_products.storage import StructuredProductStore
 
 STRUCTURED_PRODUCT_KEYWORDS = (
     "optionsschein",

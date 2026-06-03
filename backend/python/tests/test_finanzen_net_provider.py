@@ -1,7 +1,7 @@
 import httpx
 import pytest
 
-from tr_structured_products.providers.finanzen_net import (
+from agent_foundry_python.structured_products.providers.finanzen_net import (
     FinanzenNetProductProvider,
     FinanzenNetUrlResolver,
     parse_finanzen_product_html,

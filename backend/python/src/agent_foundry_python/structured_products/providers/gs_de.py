@@ -8,7 +8,7 @@ from typing import Any
 import httpx
 from bs4 import BeautifulSoup
 
-from tr_structured_products.models import Greek, InstrumentMetadata
+from agent_foundry_python.structured_products.models import Greek, InstrumentMetadata
 
 
 @dataclass(frozen=True)

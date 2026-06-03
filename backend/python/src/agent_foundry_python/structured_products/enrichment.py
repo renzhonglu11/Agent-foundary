@@ -4,7 +4,7 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any, Callable, Protocol
 
-from tr_structured_products.models import Greek, InstrumentMetadata, Quote
+from agent_foundry_python.structured_products.models import Greek, InstrumentMetadata, Quote
 
 
 @dataclass(frozen=True)

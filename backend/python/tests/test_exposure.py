@@ -1,5 +1,5 @@
-from tr_structured_products.exposure import compute_delta_exposure
-from tr_structured_products.models import Greek, Position, Quote
+from agent_foundry_python.structured_products.exposure import compute_delta_exposure
+from agent_foundry_python.structured_products.models import Greek, Position, Quote
 
 
 def test_compute_delta_exposure_uses_quantity_delta_and_underlying_price():

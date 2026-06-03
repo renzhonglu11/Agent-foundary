@@ -9,8 +9,8 @@ from urllib.parse import urljoin
 import httpx
 from bs4 import BeautifulSoup
 
-from tr_structured_products.models import Greek, InstrumentMetadata
-from tr_structured_products.providers.onvista import PRODUCT_TYPES
+from agent_foundry_python.structured_products.models import Greek, InstrumentMetadata
+from agent_foundry_python.structured_products.providers.onvista import PRODUCT_TYPES
 
 
 LABEL_ALIASES = {

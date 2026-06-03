@@ -4,7 +4,7 @@ from typing import Any
 
 import httpx
 
-from tr_structured_products.models import Quote
+from agent_foundry_python.structured_products.models import Quote
 
 
 class BoerseFrankfurtQuoteProvider:

@@ -2,17 +2,14 @@
 import os
 import sys
 import json
+from pathlib import Path
 import sqlite3
 import subprocess
-import urllib.parse
 from datetime import datetime, timezone
 
-# Define workspace directories relative to this script location
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-# The script is located in backend/python/scripts/, so three levels up is the repo root.
-REPOS_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "..", "..", ".."))
-DB_PATH = os.path.join(REPOS_DIR, "data/agent_foundry.db")
-OUTPUT_PATH = os.path.join(REPOS_DIR, "data/macro-analysis.json")
+REPOS_DIR = Path(os.environ.get("AGENT_FOUNDRY_ROOT", Path(__file__).resolve().parents[4]))
+DB_PATH = REPOS_DIR / "data/agent_foundry.db"
+OUTPUT_PATH = REPOS_DIR / "data/macro-analysis.json"
 # Use environment variable or default system path for hermes
 HERMES_PATH = os.environ.get("HERMES_PATH", os.path.expanduser("~/.local/bin/hermes"))
 
@@ -26,7 +23,7 @@ except ImportError:
 
 def get_latest_macro_data():
     """Reads FRED data cache from SQLite."""
-    if not os.path.exists(DB_PATH):
+    if not DB_PATH.exists():
         print(f"Database not found at {DB_PATH}")
         return None
 
@@ -188,9 +185,9 @@ def main():
     # 2. Check for difference against last generated results
     skip_llm = False
     previous_data = None
-    if os.path.exists(OUTPUT_PATH):
+    if OUTPUT_PATH.exists():
         try:
-            with open(OUTPUT_PATH, "r", encoding="utf-8") as f:
+            with OUTPUT_PATH.open("r", encoding="utf-8") as f:
                 previous_data = json.load(f)
             
             # Compare indicator values
@@ -265,11 +262,11 @@ def main():
     }
 
     # Ensure output directory exists
-    os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
+    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     
     # Save output
     try:
-        with open(OUTPUT_PATH, "w", encoding="utf-8") as f:
+        with OUTPUT_PATH.open("w", encoding="utf-8") as f:
             json.dump(final_output, f, ensure_ascii=False, indent=2)
         print(f"Successfully generated and wrote final payload to: {OUTPUT_PATH}")
     except Exception as e:

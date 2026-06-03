@@ -1,12 +1,13 @@
 from pathlib import Path
 import sys
+import os
 
 try:
     import pymupdf
 except ModuleNotFoundError:
     import fitz as pymupdf
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(os.environ.get("AGENT_FOUNDRY_ROOT", Path(__file__).resolve().parents[4]))
 PDF = ROOT / 'data' / 'Vermögensübersicht.pdf'
 OUT = ROOT / 'data' / 'asset_overview_extracted.txt'
 

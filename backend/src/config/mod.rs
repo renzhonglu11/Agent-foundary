@@ -21,7 +21,6 @@ pub struct StructuredProductsSettings {
     pub enabled: bool,
     pub command: String,
     pub working_dir: PathBuf,
-    pub script_path: PathBuf,
     pub output_json_path: PathBuf,
     pub output_csv_path: PathBuf,
     pub output_db_path: PathBuf,
@@ -111,14 +110,13 @@ impl StructuredProductsSettings {
     fn from_env() -> Self {
         Self {
             enabled: env_bool("STRUCTURED_PRODUCTS_ENRICHMENT_ENABLED", true),
-            command: env_or("STRUCTURED_PRODUCTS_ENRICHMENT_COMMAND", ".venv/bin/python"),
+            command: env_or(
+                "STRUCTURED_PRODUCTS_ENRICHMENT_COMMAND",
+                ".venv/bin/agent-foundry-structured-products",
+            ),
             working_dir: PathBuf::from(env_or(
                 "STRUCTURED_PRODUCTS_ENRICHMENT_WORKDIR",
                 "backend/python",
-            )),
-            script_path: PathBuf::from(env_or(
-                "STRUCTURED_PRODUCTS_ENRICHMENT_SCRIPT",
-                "scripts/generate_agent_foundry_outputs.py",
             )),
             output_json_path: PathBuf::from(env_or(
                 "STRUCTURED_PRODUCTS_ENRICHMENT_JSON",

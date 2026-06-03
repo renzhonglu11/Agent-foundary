@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from tr_structured_products.models import Exposure, Greek, Position, Quote
+from agent_foundry_python.structured_products.models import Exposure, Greek, Position, Quote
 
 
 def compute_delta_exposure(

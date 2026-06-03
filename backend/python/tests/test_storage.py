@@ -1,6 +1,6 @@
 import sqlite3
 
-from tr_structured_products.storage import initialize_schema
+from agent_foundry_python.structured_products.storage import initialize_schema
 
 
 def test_initialize_schema_creates_required_tables(tmp_path):

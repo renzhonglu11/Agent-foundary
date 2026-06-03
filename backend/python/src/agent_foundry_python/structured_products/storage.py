@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from tr_structured_products.models import Greek, InstrumentMetadata, Position, Quote
+from agent_foundry_python.structured_products.models import Greek, InstrumentMetadata, Position, Quote
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS positions (

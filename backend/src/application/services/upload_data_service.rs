@@ -325,16 +325,15 @@ fn prepare_uploaded_pdf(filename: &str, content: &[u8]) -> anyhow::Result<Prepar
 }
 
 fn run_pdf_text_extractor(pdf_path: &Path, text_path: &Path) -> anyhow::Result<()> {
-    let script_path = pdf_text_extractor_script()?;
-    let python = env::var("PDF_EXTRACT_PYTHON").unwrap_or_else(|_| "python3".to_owned());
-    let output = Command::new(python)
-        .arg(script_path)
+    let command = env::var("PDF_EXTRACT_COMMAND")
+        .unwrap_or_else(|_| "backend/python/.venv/bin/agent-foundry-extract-pdf".to_owned());
+    let output = Command::new(command)
         .arg(pdf_path)
         .arg(text_path)
         .output()
         .map_err(|error| {
             anyhow::anyhow!(
-                "failed to run PDF text extractor. Install dependencies with `uv sync --directory backend/python`, or set PDF_EXTRACT_PYTHON to a Python with PyMuPDF installed: {error}"
+                "failed to run PDF text extractor. Install dependencies with `uv sync --directory backend/python`, or set PDF_EXTRACT_COMMAND to an installed agent-foundry-extract-pdf command: {error}"
             )
         })?;
 
@@ -345,32 +344,12 @@ fn run_pdf_text_extractor(pdf_path: &Path, text_path: &Path) -> anyhow::Result<(
         if stderr.contains("No module named 'pymupdf'") || stderr.contains("No module named 'fitz'")
         {
             anyhow::bail!(
-                "PDF text extraction failed because PyMuPDF is not installed. Run `uv sync --directory backend/python` or set PDF_EXTRACT_PYTHON to a Python with PyMuPDF installed."
+                "PDF text extraction failed because PyMuPDF is not installed. Run `uv sync --directory backend/python` or set PDF_EXTRACT_COMMAND to an installed agent-foundry-extract-pdf command."
             );
         }
 
         anyhow::bail!("PDF text extraction failed: {stderr}");
     }
-}
-
-fn pdf_text_extractor_script() -> anyhow::Result<PathBuf> {
-    if let Ok(path) = env::var("PDF_TEXT_EXTRACTOR_SCRIPT") {
-        let path = PathBuf::from(path);
-        if path.exists() {
-            return Ok(path);
-        }
-    }
-
-    for candidate in [
-        PathBuf::from("backend/python/scripts/extractPdfText.py"),
-        PathBuf::from("scripts/extractPdfText.py"),
-    ] {
-        if candidate.exists() {
-            return Ok(candidate);
-        }
-    }
-
-    anyhow::bail!("PDF text extractor script not found");
 }
 
 fn temporary_csv_path(filename: &str) -> PathBuf {
