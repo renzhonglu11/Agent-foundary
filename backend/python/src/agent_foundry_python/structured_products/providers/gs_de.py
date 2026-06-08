@@ -19,36 +19,57 @@ class ProductData:
     url: str | None = None
 
 
+import asyncio
+from playwright.async_api import async_playwright, Browser, Playwright, Page
+
 class GsDeProductProvider:
     """GS Markets optionsschein calculator metadata + Greeks provider."""
 
     BASE_URL = "https://www.gs.de/de/optionsschein-rechner"
 
-    def __init__(self, *, timeout: float = 20.0, transport: httpx.AsyncBaseTransport | None = None) -> None:
-        self._client = httpx.AsyncClient(
-            timeout=timeout,
-            transport=transport,
-            follow_redirects=True,
-            headers={
-                "User-Agent": "Mozilla/5.0 (compatible; Agent-Foundry/structured-products)",
-                "Accept-Language": "de-DE,de;q=0.9,en;q=0.8",
-            },
+    def __init__(self, *, timeout: float = 20.0, transport: Any | None = None) -> None:
+        self._timeout = timeout * 1000  # Playwright uses milliseconds
+        self._playwright: Playwright | None = None
+        self._browser: Browser | None = None
+        self._page: Page | None = None
+
+    async def _init_browser(self) -> Page:
+        if self._page is not None:
+            return self._page
+        
+        self._playwright = await async_playwright().start()
+        self._browser = await self._playwright.chromium.launch(headless=True)
+        context = await self._browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            locale="de-DE",
         )
+        self._page = await context.new_page()
+        return self._page
 
     async def get_product_data(self, isin: str) -> ProductData | None:
-        url = self.BASE_URL
         try:
-            response = await self._client.get(url, params={"isin": isin})
-            response.raise_for_status()
-            product = parse_gs_de_product_html(response.text)
+            page = await self._init_browser()
+            url = f"{self.BASE_URL}?isin={isin}"
+            await page.goto(url, wait_until="domcontentloaded", timeout=self._timeout)
+            
+            # Wait to allow client-side JS to execute Black-Scholes calculation
+            await page.wait_for_timeout(2000)
+            
+            html = await page.content()
+            product = parse_gs_de_product_html(html)
             if product.metadata.isin.upper() != isin.upper():
                 return None
-            return ProductData(metadata=product.metadata, greek=product.greek, source="gs.de", url=str(response.url))
-        except (httpx.HTTPError, ValueError):
+            return ProductData(metadata=product.metadata, greek=product.greek, source="gs.de", url=url)
+        except Exception:
             return None
 
     async def aclose(self) -> None:
-        await self._client.aclose()
+        if self._browser is not None:
+            await self._browser.close()
+            self._browser = None
+        if self._playwright is not None:
+            await self._playwright.stop()
+            self._playwright = None
 
 
 def parse_gs_de_product_html(html: str) -> ProductData:
