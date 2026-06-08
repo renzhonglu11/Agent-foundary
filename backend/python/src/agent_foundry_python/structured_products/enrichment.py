@@ -150,6 +150,7 @@ def _needs_product_fallback(row: dict) -> bool:
             "break_even",
             "ratio",
             "expiry",
+            "delta",
             "omega",
             "theta",
             "iv",

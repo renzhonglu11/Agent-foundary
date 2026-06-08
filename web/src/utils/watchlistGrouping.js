@@ -96,6 +96,7 @@ const underlyingAliasKeys = new Map([
   ['broadcom', 'broadcom'],
   ['stmicro', 'stmicroelectronics'],
   ['stmicroelectronics', 'stmicroelectronics'],
+  ['stmpa fp', 'stmicroelectronics'],
 ])
 
 export function buildWatchlistGroups(data, structuredProducts = [], alpacaQuotes = []) {
@@ -138,7 +139,11 @@ export function buildWatchlistGroups(data, structuredProducts = [], alpacaQuotes
   }
 
   for (const tier of tierBuckets) {
-    grouped[tier].sort((left, right) => Math.abs(right.marketValue) - Math.abs(left.marketValue))
+    grouped[tier].sort((left, right) => {
+      const leftExposure = left.deltaExposure != null ? Math.abs(left.deltaExposure) : Math.abs(left.marketValue)
+      const rightExposure = right.deltaExposure != null ? Math.abs(right.deltaExposure) : Math.abs(right.marketValue)
+      return rightExposure - leftExposure
+    })
   }
   return grouped
 }
@@ -291,16 +296,33 @@ function spotPriceForGroup(group) {
 
 function calculateDeltaExposure(row, spot) {
   const quantity = finiteNumber(row.quantity)
-  const delta = finiteNumber(row.delta)
-  const ratio = finiteNumber(row.ratio)
-  const spotPrice = finiteNumber(spot)
-  if ([quantity, delta, ratio, spotPrice].every((value) => value != null)) {
-    return { value: quantity * delta * ratio * spotPrice, estimated: false }
-  }
-
-  const omega = finiteNumber(row.omega)
   const marketValue = finiteNumber(row.marketValue)
-  if (omega != null && marketValue != null) return { value: omega * marketValue, estimated: true }
+  const spotPrice = finiteNumber(spot)
+
+  if (row.productType === 'factor_certificate') {
+    const leverage = finiteNumber(row.leverage)
+    const omega = finiteNumber(row.omega)
+    if (leverage != null && marketValue != null) return { value: marketValue * leverage, estimated: true }
+    if (omega != null && marketValue != null) return { value: marketValue * omega, estimated: true }
+    if (marketValue != null) return { value: marketValue, estimated: true }
+    return { value: null, estimated: false }
+  } else {
+    const delta = finiteNumber(row.delta)
+    const ratio = finiteNumber(row.ratio)
+    if ([quantity, delta, ratio, spotPrice].every((value) => value != null)) {
+      return { value: quantity * delta * ratio * spotPrice, estimated: false }
+    }
+    const omega = finiteNumber(row.omega)
+    if (omega != null && marketValue != null) return { value: omega * marketValue, estimated: true }
+    
+    const leverage = finiteNumber(row.leverage)
+    if (leverage != null && marketValue != null) return { value: leverage * marketValue, estimated: true }
+
+    // Last resort fallback: assume delta=1.0 for an estimated max exposure
+    if ([quantity, ratio, spotPrice].every((value) => value != null)) {
+      return { value: quantity * 1.0 * ratio * spotPrice, estimated: true }
+    }
+  }
 
   return { value: null, estimated: false }
 }

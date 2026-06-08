@@ -24,6 +24,8 @@ LABEL_ALIASES = {
     "product type": "product_type",
     "hebel": "leverage",
     "leverage": "leverage",
+    "faktor": "leverage",
+    "factor": "leverage",
     "basispreis": "strike_price",
     "strike": "strike_price",
     "strike price": "strike_price",
@@ -324,6 +326,8 @@ def _detect_product_type(text: str) -> str | None:
         ("faktor zertifikat", "factor_certificate"),
         ("faktor-zertifikat", "factor_certificate"),
         ("factor certificate", "factor_certificate"),
+        ("faktor-optionsschein", "factor_certificate"),
+        ("faktor optionsschein", "factor_certificate"),
         ("optionsschein", "optionsschein"),
     ]
     for needle, product_type in priority:
