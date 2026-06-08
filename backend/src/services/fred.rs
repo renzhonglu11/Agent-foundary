@@ -148,6 +148,11 @@ impl FredService {
         let ttl = self.cache_ttl_for(&entry.response);
 
         if cache_entry_age(entry.fetched_at) <= ttl {
+            if entry.response.status == "sandbox_mock" && self.settings.api_key.is_some() {
+                info!("Ignoring in-memory sandbox_mock cache because FRED_API_KEY is now configured");
+                return None;
+            }
+
             info!(
                 status = %entry.response.status,
                 "Using in-memory cached FRED macroeconomic data"
@@ -170,6 +175,11 @@ impl FredService {
         let ttl = self.cache_ttl_for(&entry.response);
 
         if cache_entry_age(entry.fetched_at) > ttl {
+            return None;
+        }
+
+        if entry.response.status == "sandbox_mock" && self.settings.api_key.is_some() {
+            info!("Ignoring sqlite sandbox_mock cache because FRED_API_KEY is now configured");
             return None;
         }
 
@@ -241,6 +251,13 @@ impl FredService {
                 id: "UNRATE",
                 title: "Unemployment Rate",
                 units: "Percent",
+                frequency: "Monthly",
+                observation_start: "2021-01-01",
+            },
+            FredSeriesRequest {
+                id: "PAYEMS",
+                title: "All Employees, Total Nonfarm",
+                units: "Thousands of Persons",
                 frequency: "Monthly",
                 observation_start: "2021-01-01",
             },
@@ -658,6 +675,65 @@ impl FredService {
             units: "Percent".to_owned(),
             frequency: "Monthly".to_owned(),
             observations: unrate_obs,
+        });
+
+        // 5b. PAYEMS Mock (Monthly Nonfarm Payrolls, Jan 2023 to May 2026)
+        let mut payems_obs = Vec::new();
+        let payems_vals = vec![
+            ("2023-01-01", 154635.0),
+            ("2023-02-01", 154883.0),
+            ("2023-03-01", 155100.0),
+            ("2023-04-01", 155350.0),
+            ("2023-05-01", 155600.0),
+            ("2023-06-01", 155820.0),
+            ("2023-07-01", 156050.0),
+            ("2023-08-01", 156280.0),
+            ("2023-09-01", 156550.0),
+            ("2023-10-01", 156750.0),
+            ("2023-11-01", 156950.0),
+            ("2023-12-01", 157200.0),
+            ("2024-01-01", 157450.0),
+            ("2024-02-01", 157700.0),
+            ("2024-03-01", 158000.0),
+            ("2024-04-01", 158250.0),
+            ("2024-05-01", 158500.0),
+            ("2024-06-01", 158720.0),
+            ("2024-07-01", 158850.0),
+            ("2024-08-01", 159000.0),
+            ("2024-09-01", 159250.0),
+            ("2024-10-01", 159500.0),
+            ("2024-11-01", 159700.0),
+            ("2024-12-01", 159900.0),
+            ("2025-01-01", 160100.0),
+            ("2025-02-01", 160300.0),
+            ("2025-03-01", 160500.0),
+            ("2025-04-01", 160700.0),
+            ("2025-05-01", 160900.0),
+            ("2025-06-01", 161100.0),
+            ("2025-07-01", 161280.0),
+            ("2025-08-01", 161450.0),
+            ("2025-09-01", 161620.0),
+            ("2025-10-01", 161800.0),
+            ("2025-11-01", 161980.0),
+            ("2025-12-01", 162150.0),
+            ("2026-01-01", 162300.0),
+            ("2026-02-01", 162450.0),
+            ("2026-03-01", 162600.0),
+            ("2026-04-01", 162750.0),
+            ("2026-05-01", 162900.0),
+        ];
+        for (date, val) in payems_vals {
+            payems_obs.push(FredObservation {
+                date: date.to_owned(),
+                value: val,
+            });
+        }
+        series.push(FredSeriesData {
+            id: "PAYEMS".to_owned(),
+            title: "All Employees, Total Nonfarm".to_owned(),
+            units: "Thousands of Persons".to_owned(),
+            frequency: "Monthly".to_owned(),
+            observations: payems_obs,
         });
 
         // 6. DGS10 Mock (Daily 10-Year yield, sampled semi-weekly, Jan 2023 to May 2026)

@@ -63,7 +63,7 @@ def extract_key_indicators(payload):
     series_map = {s["id"]: s for s in payload["series"]}
     indicators = {}
 
-    for series_id in ["FEDFUNDS", "T10Y2Y", "CPI_YOY", "DGS10", "UNRATE", "GDPC1"]:
+    for series_id in ["FEDFUNDS", "T10Y2Y", "CPI_YOY", "DGS10", "UNRATE", "GDPC1", "PAYEMS"]:
         series = series_map.get(series_id)
         if series and series.get("observations"):
             # Sort by date to ensure the latest is last
@@ -90,6 +90,7 @@ def run_hermes_analysis(indicators):
     dgs10 = indicators.get("DGS10")
     unrate = indicators.get("UNRATE")
     gdp = indicators.get("GDPC1")
+    payems = indicators.get("PAYEMS")
 
     macro_text = f"""
 - 联邦基金利率 (Fed Funds Rate): {fedfunds['value'] if fedfunds else 'N/A'}% (最新日期: {fedfunds['date'] if fedfunds else 'N/A'})
@@ -97,6 +98,7 @@ def run_hermes_analysis(indicators):
 - 10Y-2Y 国债利差 (10Y-2Y Spread): {yield_spread['value'] if yield_spread else 'N/A'}% (最新日期: {yield_spread['date'] if yield_spread else 'N/A'})
 - 10年期国债收益率 (10Y Yield): {dgs10['value'] if dgs10 else 'N/A'}% (最新日期: {dgs10['date'] if dgs10 else 'N/A'})
 - 失业率 (Unemployment Rate): {unrate['value'] if unrate else 'N/A'}% (最新日期: {unrate['date'] if unrate else 'N/A'})
+- 非农就业人数 (Nonfarm Payrolls): {payems['value'] if payems else 'N/A'} 千人 (最新日期: {payems['date'] if payems else 'N/A'})
 - 实际GDP (Real GDP Index): {gdp['value'] if gdp else 'N/A'}B (最新日期: {gdp['date'] if gdp else 'N/A'})
 """
 
@@ -104,7 +106,7 @@ def run_hermes_analysis(indicators):
 {macro_text}
 
 任务：
-作为专业的资深宏观经济策略分析师，请根据当前的利率、通胀、国债收益率、失业率和实际 GDP 情况，生成：
+作为专业的资深宏观经济策略分析师，请根据当前的利率、通胀、国债收益率、失业率、非农就业人数和实际 GDP 情况，生成：
 1. 一段客观、深刻且富含专业洞察力的整体宏观经济点评 (summary_commentary)，字数为 3-5 句自然中文，指明当前市场处于周期的什么阶段、美联储下一步政策导向以及对风险资产的整体影响。
 2. 针对以下四个核心板块的价值重估分析与配置建议 (sectors)：
    - 🚀 高科技 & 成长板块 (Tech & Growth)
@@ -231,11 +233,13 @@ def main():
 
 
     # 4. Generate macro commentary and sectors impact guide
+    used_cache = False
     if skip_llm and previous_data and "sectors" in previous_data and "summary_commentary" in previous_data:
         print("Using cached AI analysis...")
         summary_commentary = previous_data["summary_commentary"]
         sectors = previous_data["sectors"]
-        analysis_date = previous_data.get("analysis_date", datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"))
+        analysis_date = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        used_cache = True
     else:
         ai_payload = run_hermes_analysis(indicators)
         if ai_payload:
@@ -248,7 +252,8 @@ def main():
                 "analysis_date": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                 "ai_commentary_available": False,
                 "ai_commentary_unavailable_reason": "Hermes LLM invocation failed",
-                "raw_indicators": indicators
+                "raw_indicators": indicators,
+                "used_cache": False
             })
             print("--- Macro economic generator run completed without AI commentary ---")
             return
@@ -259,7 +264,8 @@ def main():
         "ai_commentary_available": True,
         "summary_commentary": summary_commentary,
         "sectors": sectors,
-        "raw_indicators": indicators
+        "raw_indicators": indicators,
+        "used_cache": used_cache
     }
 
     write_output(final_output)

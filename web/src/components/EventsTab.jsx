@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
     Alert,
     Box,
@@ -8,6 +8,7 @@ import {
     Divider,
     Grid,
     Paper,
+    Snackbar,
     Stack,
     Tab,
     Tabs,
@@ -27,6 +28,7 @@ import HelpOutlineRoundedIcon from '@mui/icons-material/HelpOutlineRounded'
 import ForumRoundedIcon from '@mui/icons-material/ForumRounded'
 import WhatshotRoundedIcon from '@mui/icons-material/WhatshotRounded'
 import AutorenewRoundedIcon from '@mui/icons-material/AutorenewRounded'
+import WorkOutlineRoundedIcon from '@mui/icons-material/WorkOutlineRounded'
 
 import {
     Area,
@@ -51,6 +53,22 @@ export default function EventsTab() {
     const { loading, error, data } = useFredMacroData()
     const { loading: analysisLoading, data: analysisData, refresh: refreshAnalysis, refreshing: analysisRefreshing } = useMacroAnalysis({ refreshMs: 60_000 })
     const [activeChartTab, setActiveChartTab] = useState(0)
+    const [snackbarOpen, setSnackbarOpen] = useState(false)
+    const [prevRefreshing, setPrevRefreshing] = useState(false)
+
+    useEffect(() => {
+        if (prevRefreshing && !analysisRefreshing) {
+            if (analysisData?.used_cache) {
+                setSnackbarOpen(true)
+            }
+        }
+        setPrevRefreshing(analysisRefreshing)
+    }, [analysisRefreshing, prevRefreshing, analysisData])
+
+    const handleCloseSnackbar = (event, reason) => {
+        if (reason === 'clickaway') return;
+        setSnackbarOpen(false);
+    }
 
     if (loading) {
         return (
@@ -99,6 +117,7 @@ export default function EventsTab() {
     const unrate = getLatestValue('UNRATE')
     const dgs10 = getLatestValue('DGS10')
     const gdpc1 = getLatestValue('GDPC1')
+    const payems = getLatestValue('PAYEMS')
 
     // Change computation
     const getChange = (seriesId) => {
@@ -113,6 +132,7 @@ export default function EventsTab() {
     const cpiChange = getChange('CPI_YOY')
     const unrateChange = getChange('UNRATE')
     const dgs10Change = getChange('DGS10')
+    const payemsChange = getChange('PAYEMS')
 
     const getRedditTrendBadge = (item) => {
         const value = item?.mentions_change_pct
@@ -227,18 +247,60 @@ export default function EventsTab() {
     const sectors = aiCommentaryAvailable && Array.isArray(analysisData?.sectors) ? analysisData.sectors : []
 
     const getImpactColor = (impact) => {
-        if (!impact) return { bgcolor: '#f1f5f9', color: '#475569' };
+        if (!impact) return { bgcolor: '#f1f5f9', color: '#475569' }
         if (impact.includes("正面") || impact.includes("超配") || impact.includes("多配") || impact.includes("买入")) {
-            return { bgcolor: '#dcfce7', color: '#16a34a' };
+            return { bgcolor: '#dcfce7', color: '#16a34a' }
         }
         if (impact.includes("负面") || impact.includes("低配") || impact.includes("避险") || impact.includes("减配")) {
-            return { bgcolor: '#fee2e2', color: '#ef4444' };
+            return { bgcolor: '#fee2e2', color: '#ef4444' }
         }
-        return { bgcolor: '#f1f5f9', color: '#475569' };
-    };
+        return { bgcolor: '#f1f5f9', color: '#475569' }
+    }
 
     return (
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3, p: { xs: 2, md: 3 } }}>
+            <Snackbar
+                open={snackbarOpen}
+                autoHideDuration={6000}
+                onClose={handleCloseSnackbar}
+                anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
+            >
+                <Alert onClose={handleCloseSnackbar} severity="info" sx={{ width: '100%', boxShadow: 3 }}>
+                    由于宏观核心数据近期未发生变化，已为您提取最新的智能缓存分析结果。
+                </Alert>
+            </Snackbar>
+
+
+            <Box sx={{ pt: 1 }}>
+                {data?.status === 'sandbox_mock' ? (
+                    <Alert
+                        severity="warning"
+                        variant="outlined"
+                        sx={{
+                            bgcolor: 'rgba(217, 119, 6, 0.1)',
+                            borderColor: 'rgba(217, 119, 6, 0.3)',
+                            color: '#fbbf24',
+                            '& .MuiAlert-icon': { color: '#fbbf24' }
+                        }}
+                    >
+                        <strong>沙盒模拟模式 (Sandbox Mode)</strong>：当前正使用离线高拟真宏观数据（2023-2026年真实走势）。要连接美联储官方 FRED 获取实时更新，请在根目录 <code>.env</code> 文件中配置 <code>FRED_API_KEY</code> 并重启服务。
+                    </Alert>
+                ) : (
+                    <Alert
+                        severity="success"
+                        variant="outlined"
+                        sx={{
+                            bgcolor: 'rgba(16, 185, 129, 0.1)',
+                            borderColor: 'rgba(16, 185, 129, 0.3)',
+                            color: '#26b37fff',
+                            '& .MuiAlert-icon': { color: '#34d399' }
+                        }}
+                    >
+                        <strong>联接实时 FRED API 成功</strong>：所有宏观经济指标均已同步美联储官方最新公布的观测数据。
+                    </Alert>
+                )}
+            </Box>
+
 
             {/* AI Macro Commentary Card */}
             {hasAiCommentary && (
@@ -286,76 +348,6 @@ export default function EventsTab() {
                     </CardContent>
                 </Card>
             )}
-
-            {/* Header Panel */}
-            <Paper
-                elevation={0}
-                sx={{
-                    p: 3,
-                    borderRadius: 4,
-                    background: 'linear-gradient(135deg, #1e293b 0%, #0f172a 100%)',
-                    color: '#ffffff',
-                    position: 'relative',
-                    overflow: 'hidden',
-                    boxShadow: '0 10px 30px rgba(15, 23, 42, 0.08)'
-                }}
-            >
-                <Stack spacing={1.5} sx={{ zIndex: 2, position: 'relative' }}>
-                    <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center' }}>
-                        <TrendingUpRoundedIcon sx={{ fontSize: 32, color: '#3b82f6' }} />
-                        <Typography variant="h5" sx={{ fontWeight: 700, letterSpacing: 0.5 }}>
-                            事件与宏观经济面板 (Macro Events)
-                        </Typography>
-                    </Stack>
-                    <Typography variant="body2" sx={{ color: '#94a3b8', maxWidth: 800, lineHeight: 1.6 }}>
-                        本板块追踪影响美股核心估值的关键宏观经济指标。利率、通胀、美债收益率及劳动力市场数据，是决定美股牛熊切换与板块轮动最为关键的驱动因子（数据每24小时自动更新）。
-                    </Typography>
-
-                    <Box sx={{ pt: 1 }}>
-                        {data?.status === 'sandbox_mock' ? (
-                            <Alert
-                                severity="warning"
-                                variant="outlined"
-                                sx={{
-                                    bgcolor: 'rgba(217, 119, 6, 0.1)',
-                                    borderColor: 'rgba(217, 119, 6, 0.3)',
-                                    color: '#fbbf24',
-                                    '& .MuiAlert-icon': { color: '#fbbf24' }
-                                }}
-                            >
-                                <strong>沙盒模拟模式 (Sandbox Mode)</strong>：当前正使用离线高拟真宏观数据（2023-2026年真实走势）。要连接美联储官方 FRED 获取实时更新，请在根目录 <code>.env</code> 文件中配置 <code>FRED_API_KEY</code> 并重启服务。
-                            </Alert>
-                        ) : (
-                            <Alert
-                                severity="success"
-                                variant="outlined"
-                                sx={{
-                                    bgcolor: 'rgba(16, 185, 129, 0.1)',
-                                    borderColor: 'rgba(16, 185, 129, 0.3)',
-                                    color: '#34d399',
-                                    '& .MuiAlert-icon': { color: '#34d399' }
-                                }}
-                            >
-                                <strong>联接实时 FRED API 成功</strong>：所有宏观经济指标均已同步美联储官方最新公布的观测数据。
-                            </Alert>
-                        )}
-                    </Box>
-                </Stack>
-
-                {/* Subtle background SVG decorations */}
-                <Box
-                    sx={{
-                        position: 'absolute',
-                        right: -30,
-                        bottom: -30,
-                        opacity: 0.1,
-                        color: '#3b82f6',
-                        pointerEvents: 'none'
-                    }}
-                >
-                    <PublicRoundedIcon sx={{ fontSize: 240 }} />
-                </Box>
-            </Paper>
 
             {/* Grid of Key Macro Indicators (Summary Cards) */}
             <Grid container spacing={2}>
@@ -570,6 +562,54 @@ export default function EventsTab() {
                     </Card>
                 </Grid>
 
+                {/* 5b. Nonfarm Payrolls */}
+                <Grid item xs={12} sm={6} md={4}>
+                    <Card sx={{ borderRadius: 3, boxShadow: '0 4px 20px rgba(0,0,0,0.02)', border: '1px solid #f1f5f9', '&:hover': { transform: 'translateY(-4px)', transition: 'all 0.2s ease-in-out', boxShadow: '0 8px 30px rgba(0,0,0,0.06)' } }}>
+                        <CardContent sx={{ p: 2.5 }}>
+                            <Stack spacing={1}>
+                                <Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <Typography variant="subtitle2" color="text.secondary" sx={{ fontWeight: 600 }}>
+                                        美国非农就业人数 (PAYEMS)
+                                    </Typography>
+                                    <Box sx={{ p: 1, borderRadius: 2, bgcolor: '#eff6ff', color: '#3b82f6' }}>
+                                        <WorkOutlineRoundedIcon fontSize="small" />
+                                    </Box>
+                                </Stack>
+                                <Stack direction="row" sx={{ alignItems: 'baseline', gap: 1 }}>
+                                    <Typography variant="h4" sx={{ fontWeight: 700 }}>
+                                        {payems ? `${(payems.value / 1000).toFixed(2)}M` : 'N/A'}
+                                    </Typography>
+                                    {payemsChange && (
+                                        <Stack direction="row" sx={{ alignItems: 'center', color: parseFloat(payemsChange) >= 0 ? '#10b981' : '#ef4444' }}>
+                                            {parseFloat(payemsChange) >= 0 ? <TrendingUpRoundedIcon fontSize="small" /> : <TrendingDownRoundedIcon fontSize="small" />}
+                                            <Typography variant="caption" sx={{ fontWeight: 600 }}>
+                                                {parseFloat(payemsChange) > 0 ? `+${Math.round(parseFloat(payemsChange))}` : Math.round(parseFloat(payemsChange))}K
+                                            </Typography>
+                                        </Stack>
+                                    )}
+                                </Stack>
+                                <Divider sx={{ my: 0.5 }} />
+                                <Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <Typography variant="caption" color="text.secondary">
+                                        新增就业强劲阀值: 150K
+                                    </Typography>
+                                    <Box sx={{
+                                        px: 1,
+                                        py: 0.3,
+                                        borderRadius: 1,
+                                        bgcolor: payemsChange && parseFloat(payemsChange) >= 150 ? '#dcfce7' : (payemsChange && parseFloat(payemsChange) > 0 ? '#eff6ff' : '#fee2e2'),
+                                        color: payemsChange && parseFloat(payemsChange) >= 150 ? '#15803d' : (payemsChange && parseFloat(payemsChange) > 0 ? '#2563eb' : '#ef4444')
+                                    }}>
+                                        <Typography variant="caption" sx={{ fontWeight: 600 }}>
+                                            {payemsChange && parseFloat(payemsChange) >= 150 ? '新增就业强劲' : (payemsChange && parseFloat(payemsChange) > 0 ? '新增就业温和' : '就业人数收缩')}
+                                        </Typography>
+                                    </Box>
+                                </Stack>
+                            </Stack>
+                        </CardContent>
+                    </Card>
+                </Grid>
+
                 {/* 6. Real GDP */}
                 <Grid item xs={12} sm={6} md={4}>
                     <Card sx={{ borderRadius: 3, boxShadow: '0 4px 20px rgba(0,0,0,0.02)', border: '1px solid #f1f5f9', '&:hover': { transform: 'translateY(-4px)', transition: 'all 0.2s ease-in-out', boxShadow: '0 8px 30px rgba(0,0,0,0.06)' } }}>
@@ -752,7 +792,7 @@ export default function EventsTab() {
 
                     <Grid container spacing={2}>
                         {sectors.map((item, index) => {
-                            const colors = getImpactColor(item.impact);
+                            const colors = getImpactColor(item.impact)
                             return (
                                 <Grid item xs={12} md={6} key={index}>
                                     <Card
