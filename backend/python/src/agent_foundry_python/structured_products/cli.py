@@ -16,6 +16,7 @@ from agent_foundry_python.structured_products.enrichment import enrich_structure
 from agent_foundry_python.structured_products.providers.boerse_frankfurt import BoerseFrankfurtQuoteProvider
 from agent_foundry_python.structured_products.providers.gs_de import GsDeProductProvider
 from agent_foundry_python.structured_products.providers.onvista import OnvistaProductProvider
+from agent_foundry_python.structured_products.risk import evaluate_portfolio_risk
 
 
 def load_summary(*, summary_json: Path | None, summary_url: str | None) -> dict:
@@ -35,6 +36,9 @@ async def generate_outputs(args: argparse.Namespace) -> list[dict]:
         rows = rows[: args.limit]
 
     if not args.no_live_enrichment:
+        from agent_foundry_python.structured_products.storage import StructuredProductStore
+        store = StructuredProductStore(args.db)
+        
         quote_provider = BoerseFrankfurtQuoteProvider(timeout=args.provider_timeout)
         onvista_provider = OnvistaProductProvider(timeout=args.provider_timeout)
         gs_de_provider = GsDeProductProvider(timeout=args.provider_timeout)
@@ -44,16 +48,28 @@ async def generate_outputs(args: argparse.Namespace) -> list[dict]:
                 rows,
                 quote_provider=quote_provider,
                 product_providers=product_providers,
+                cache_store=store,
                 request_delay_seconds=args.request_delay,
                 live_enrichment_tier=args.live_enrichment_tier,
                 progress_callback=emit_progress if args.emit_progress else None,
             )
         finally:
-            await quote_provider.aclose()
-            await onvista_provider.aclose()
-            await gs_de_provider.aclose()
+            import logging
+            for provider in [quote_provider, onvista_provider, gs_de_provider]:
+                try:
+                    await provider.aclose()
+                except Exception as e:
+                    logging.warning(f"Error closing provider: {e}")
 
     write_structured_product_rows_outputs(rows, csv_path=args.csv, json_path=args.json, db_path=args.db)
+
+    # Risk assessment
+    nav = summary.get("summary", {}).get("totalMarketValue", 0.0)
+    all_positions = summary.get("positions", [])
+    risk_reports = evaluate_portfolio_risk(rows, all_positions, nav)
+    args.risk_json.parent.mkdir(parents=True, exist_ok=True)
+    args.risk_json.write_text(json.dumps(risk_reports, indent=2, ensure_ascii=False), encoding="utf-8")
+
     return rows
 
 
@@ -67,6 +83,7 @@ def main() -> int:
     parser.add_argument("--summary-url", default="http://127.0.0.1:8080/data/portfolio-summary.json", help="Rust backend portfolio summary URL.")
     parser.add_argument("--csv", type=Path, default=Path("../../data/structured-products-enrichment.csv"), help="Output CSV path.")
     parser.add_argument("--json", type=Path, default=Path("../../web/public/data/structured-products-enrichment.json"), help="Output JSON path for frontend.")
+    parser.add_argument("--risk-json", type=Path, default=Path("../../web/public/data/structured-products-risk.json"), help="Output JSON path for Tier 1 risk reports.")
     parser.add_argument("--db", type=Path, default=Path("../../data/structured-products-enrichment.sqlite3"), help="Output SQLite path.")
     parser.add_argument("--provider-timeout", type=float, default=10.0, help="Per-request provider timeout in seconds.")
     parser.add_argument("--tier1-limit", type=int, default=20, help="Maximum number of underlying groups eligible for live quote/Greeks enrichment.")
