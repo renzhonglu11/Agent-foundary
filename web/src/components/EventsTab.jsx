@@ -14,7 +14,8 @@ import {
     Tabs,
     Typography,
     useTheme,
-    Button
+    Button,
+    Tooltip as MuiTooltip
 } from '@mui/material'
 import TrendingUpRoundedIcon from '@mui/icons-material/TrendingUpRounded'
 import TrendingDownRoundedIcon from '@mui/icons-material/TrendingDownRounded'
@@ -47,6 +48,16 @@ import {
 import { useFredMacroData } from '../hooks/useFredMacroData.js'
 import { useMacroAnalysis } from '../hooks/useMacroAnalysis.js'
 import { dateTime } from '../utils/formatters.js'
+
+const cleanName = (name) => {
+    if (!name) return '';
+    return name
+        .replace(/&amp;/g, '&')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>');
+};
 
 export default function EventsTab() {
     const theme = useTheme()
@@ -876,29 +887,41 @@ export default function EventsTab() {
                                 <CardContent sx={{ p: 0 }}>
                                     <Stack divider={<Divider />}>
                                         {stocksTrends.length > 0 ? (
-                                            stocksTrends.map((item, idx) => (
-                                                <Box key={idx} sx={{ px: 2.5, py: 1.5, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) max-content', columnGap: 3, alignItems: 'center', '&:hover': { bgcolor: '#f8fafc' } }}>
-                                                    <Stack direction="row" spacing={2} sx={{ alignItems: 'center', minWidth: 0 }}>
-                                                        <Typography variant="body2" sx={{ fontWeight: 700, color: 'text.secondary', width: 20, flexShrink: 0 }}>
-                                                            {idx + 1}
-                                                        </Typography>
-                                                        <Box sx={{ px: 1.2, py: 0.4, borderRadius: 1.5, bgcolor: '#eff6ff', border: '1px solid #dbeafe', flexShrink: 0 }}>
-                                                            <Typography variant="body2" sx={{ fontWeight: 700, color: '#1d4ed8' }}>
-                                                                {item.ticker}
+                                            stocksTrends.map((item, idx) => {
+                                                const cleaned = cleanName(item.name);
+                                                const isLong = cleaned.length > 15;
+                                                return (
+                                                    <Box key={idx} sx={{ px: 2.5, py: 1.5, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) max-content', columnGap: 3, alignItems: 'center', '&:hover': { bgcolor: '#f8fafc' } }}>
+                                                        <Stack direction="row" spacing={2} sx={{ alignItems: 'center', minWidth: 0 }}>
+                                                            <Typography variant="body2" sx={{ fontWeight: 700, color: 'text.secondary', width: 20, flexShrink: 0 }}>
+                                                                {idx + 1}
                                                             </Typography>
-                                                        </Box>
-                                                        <Typography variant="body2" sx={{ fontWeight: 550, color: 'text.primary', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                                            {item.name}
-                                                        </Typography>
-                                                    </Stack>
-                                                    <Stack direction="row" spacing={2.5} sx={{ alignItems: 'center', flexShrink: 0 }}>
-                                                        <Typography variant="body2" sx={{ fontWeight: 600, minWidth: 82, textAlign: 'right' }}>
-                                                            {item.mentions} 提及
-                                                        </Typography>
-                                                        <RedditTrendBadge item={item} />
-                                                    </Stack>
-                                                </Box>
-                                            ))
+                                                            <Box sx={{ px: 1.2, py: 0.4, borderRadius: 1.5, bgcolor: '#eff6ff', border: '1px solid #dbeafe', flexShrink: 0 }}>
+                                                                <Typography variant="body2" sx={{ fontWeight: 700, color: '#1d4ed8' }}>
+                                                                    {item.ticker}
+                                                                </Typography>
+                                                            </Box>
+                                                            {isLong ? (
+                                                                <MuiTooltip title={cleaned} enterDelay={200} arrow>
+                                                                    <Typography variant="body2" sx={{ fontWeight: 550, color: 'text.primary', minWidth: 0, maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                                        {cleaned}
+                                                                    </Typography>
+                                                                </MuiTooltip>
+                                                            ) : (
+                                                                <Typography variant="body2" sx={{ fontWeight: 550, color: 'text.primary', minWidth: 0, maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                                    {cleaned}
+                                                                </Typography>
+                                                            )}
+                                                        </Stack>
+                                                        <Stack direction="row" spacing={2.5} sx={{ alignItems: 'center', flexShrink: 0 }}>
+                                                            <Typography variant="body2" sx={{ fontWeight: 600, minWidth: 82, textAlign: 'right' }}>
+                                                                {item.mentions} 提及
+                                                            </Typography>
+                                                            <RedditTrendBadge item={item} />
+                                                        </Stack>
+                                                    </Box>
+                                                );
+                                            })
                                         ) : (
                                             <Box sx={{ p: 4, textAlign: 'center' }}>
                                                 <Typography color="text.secondary" variant="body2">暂无 Reddit 热门标的数据</Typography>
@@ -923,29 +946,41 @@ export default function EventsTab() {
                                 <CardContent sx={{ p: 0 }}>
                                     <Stack divider={<Divider />}>
                                         {wallstreetbetsTrends.length > 0 ? (
-                                            wallstreetbetsTrends.map((item, idx) => (
-                                                <Box key={idx} sx={{ px: 2.5, py: 1.5, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) max-content', columnGap: 3, alignItems: 'center', '&:hover': { bgcolor: '#f8fafc' } }}>
-                                                    <Stack direction="row" spacing={2} sx={{ alignItems: 'center', minWidth: 0 }}>
-                                                        <Typography variant="body2" sx={{ fontWeight: 700, color: 'text.secondary', width: 20, flexShrink: 0 }}>
-                                                            {idx + 1}
-                                                        </Typography>
-                                                        <Box sx={{ px: 1.2, py: 0.4, borderRadius: 1.5, bgcolor: '#fdf2f8', border: '1px solid #fce7f3', flexShrink: 0 }}>
-                                                            <Typography variant="body2" sx={{ fontWeight: 700, color: '#be185d' }}>
-                                                                {item.ticker}
+                                            wallstreetbetsTrends.map((item, idx) => {
+                                                const cleaned = cleanName(item.name);
+                                                const isLong = cleaned.length > 15;
+                                                return (
+                                                    <Box key={idx} sx={{ px: 2.5, py: 1.5, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) max-content', columnGap: 3, alignItems: 'center', '&:hover': { bgcolor: '#f8fafc' } }}>
+                                                        <Stack direction="row" spacing={2} sx={{ alignItems: 'center', minWidth: 0 }}>
+                                                            <Typography variant="body2" sx={{ fontWeight: 700, color: 'text.secondary', width: 20, flexShrink: 0 }}>
+                                                                {idx + 1}
                                                             </Typography>
-                                                        </Box>
-                                                        <Typography variant="body2" sx={{ fontWeight: 550, color: 'text.primary', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                                            {item.name}
-                                                        </Typography>
-                                                    </Stack>
-                                                    <Stack direction="row" spacing={2.5} sx={{ alignItems: 'center', flexShrink: 0 }}>
-                                                        <Typography variant="body2" sx={{ fontWeight: 600, minWidth: 82, textAlign: 'right' }}>
-                                                            {item.mentions} 提及
-                                                        </Typography>
-                                                        <RedditTrendBadge item={item} />
-                                                    </Stack>
-                                                </Box>
-                                            ))
+                                                            <Box sx={{ px: 1.2, py: 0.4, borderRadius: 1.5, bgcolor: '#fdf2f8', border: '1px solid #fce7f3', flexShrink: 0 }}>
+                                                                <Typography variant="body2" sx={{ fontWeight: 700, color: '#be185d' }}>
+                                                                    {item.ticker}
+                                                                </Typography>
+                                                            </Box>
+                                                            {isLong ? (
+                                                                <MuiTooltip title={cleaned} enterDelay={200} arrow>
+                                                                    <Typography variant="body2" sx={{ fontWeight: 550, color: 'text.primary', minWidth: 0, maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                                        {cleaned}
+                                                                    </Typography>
+                                                                </MuiTooltip>
+                                                            ) : (
+                                                                <Typography variant="body2" sx={{ fontWeight: 550, color: 'text.primary', minWidth: 0, maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                                    {cleaned}
+                                                                </Typography>
+                                                            )}
+                                                        </Stack>
+                                                        <Stack direction="row" spacing={2.5} sx={{ alignItems: 'center', flexShrink: 0 }}>
+                                                            <Typography variant="body2" sx={{ fontWeight: 600, minWidth: 82, textAlign: 'right' }}>
+                                                                {item.mentions} 提及
+                                                            </Typography>
+                                                            <RedditTrendBadge item={item} />
+                                                        </Stack>
+                                                    </Box>
+                                                );
+                                            })
                                         ) : (
                                             <Box sx={{ p: 4, textAlign: 'center' }}>
                                                 <Typography color="text.secondary" variant="body2">暂无 Reddit 热门标的数据</Typography>
