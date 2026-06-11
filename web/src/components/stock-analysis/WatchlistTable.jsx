@@ -24,7 +24,15 @@ import Pill from './Pill.jsx'
 import StockNameCell from './StockNameCell.jsx'
 import { ratingMeta } from './stockAnalysisUi.js'
 
-export default function WatchlistTable({ tier, rows, search, ratingFilter }) {
+const riskActionColors = {
+  'REDUCE_CONCENTRATION': 'error',
+  'REDUCE_DERIVATIVE_RISK': 'error',
+  'CLOSE_OR_ROLL_DERIVATIVE': 'warning',
+  'HOLD_MONITOR': 'warning',
+  'ADD_ALLOWED': 'success',
+}
+
+export default function WatchlistTable({ tier, rows, search, ratingFilter, riskData }) {
   const [expandedRowId, setExpandedRowId] = useState(null)
 
   const filteredRows = useMemo(() => rows.filter((row) => {
@@ -63,7 +71,7 @@ export default function WatchlistTable({ tier, rows, search, ratingFilter }) {
                 <TableCell sx={{ fontWeight: 800 }}>标的总览</TableCell>
                 <TableCell align="right" sx={{ fontWeight: 800 }}>总市值</TableCell>
                 <TableCell align="right" sx={{ fontWeight: 800 }}>Delta Exposure</TableCell>
-                <TableCell sx={{ fontWeight: 800 }}>评级</TableCell>
+                <TableCell sx={{ fontWeight: 800 }}>Risk Action</TableCell>
                 <TableCell sx={{ fontWeight: 800 }}>实时状态</TableCell>
                 <TableCell sx={{ fontWeight: 800 }}>组成</TableCell>
                 <TableCell align="right" sx={{ fontWeight: 800 }}>最近交易</TableCell>
@@ -72,6 +80,9 @@ export default function WatchlistTable({ tier, rows, search, ratingFilter }) {
             <TableBody>
               {filteredRows.map((row) => {
                 const open = expandedRowId === row.id
+                const riskGroup = riskData?.find(r => r.symbol?.toLowerCase() === row.key?.toLowerCase() || r.symbol?.toLowerCase() === row.groupName?.toLowerCase())
+                const actionLabel = riskGroup?.groupActionLabel || 'N/A'
+                
                 return (
                   <Fragment key={row.id}>
                     <TableRow
@@ -95,9 +106,19 @@ export default function WatchlistTable({ tier, rows, search, ratingFilter }) {
                         </IconButton>
                       </TableCell>
                       <TableCell><StockNameCell row={row} /></TableCell>
-                      <TableCell align="right"><Typography variant="body2" fontWeight={700}>{preciseCurrency.format(row.marketValue)}</Typography></TableCell>
+                      <TableCell align="right">
+                        <Typography variant="body2" fontWeight={700}>{preciseCurrency.format(row.marketValue)}</Typography>
+                        {riskGroup && <Typography variant="caption" color="text.secondary">Gross: {(riskGroup.grossWeightPct * 100).toFixed(1)}%</Typography>}
+                      </TableCell>
                       <TableCell align="right"><Typography variant="body2" fontWeight={700}>{row.deltaExposure ? preciseCurrency.format(row.deltaExposure) : '—'}</Typography></TableCell>
-                      <TableCell><Pill label={row.rating} meta={ratingMeta[row.rating]} /></TableCell>
+                      <TableCell>
+                        <Chip 
+                          size="small" 
+                          label={actionLabel.replace(/_/g, ' ')} 
+                          color={riskActionColors[actionLabel] || 'default'} 
+                          variant={actionLabel === 'N/A' ? 'outlined' : 'filled'}
+                        />
+                      </TableCell>
                       <TableCell>
                         <Stack direction="row" spacing={0.75} useFlexGap sx={{ flexWrap: 'wrap' }}>
                           <Chip size="small" color={row.liveStockQuoteCount ? 'success' : 'default'} variant="outlined" label={`Alpaca ${row.liveStockQuoteCount}/${row.stockCount}`} />
@@ -116,7 +137,7 @@ export default function WatchlistTable({ tier, rows, search, ratingFilter }) {
                       <TableCell colSpan={8} sx={{ p: 0, borderBottom: open ? '1px solid #edf2f7' : 0 }}>
                         <Collapse in={open} timeout="auto" unmountOnExit>
                           <Box sx={{ px: 2, pb: 2, backgroundColor: '#ffffff' }}>
-                            <GroupDetailPanel group={row} />
+                            <GroupDetailPanel group={row} riskGroup={riskGroup} />
                           </Box>
                         </Collapse>
                       </TableCell>

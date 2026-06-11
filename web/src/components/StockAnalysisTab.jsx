@@ -6,6 +6,7 @@ import StockAnalysisHeader from './stock-analysis/StockAnalysisHeader.jsx'
 import WatchlistTable from './stock-analysis/WatchlistTable.jsx'
 import { tiers } from './stock-analysis/stockAnalysisUi.js'
 import { buildWatchlistGroups, collectTier1AlpacaSymbols } from '../utils/watchlistGrouping.js'
+import { useRiskData } from '../hooks/useRiskData.js'
 
 const initialLiveProgress = { percent: 0, current: 0, total: 0, label: 'Starting realtime fetch' }
 
@@ -16,6 +17,7 @@ export default function StockAnalysisTab({ data }) {
   const [alpacaQuotes, setAlpacaQuotes] = useState([])
   const [liveRefreshing, setLiveRefreshing] = useState(false)
   const [liveProgress, setLiveProgress] = useState(initialLiveProgress)
+  const { data: riskData } = useRiskData()
   const mountedRef = useRef(false)
   const progressTimerRef = useRef(null)
 
@@ -163,7 +165,7 @@ export default function StockAnalysisTab({ data }) {
       />
 
       {tiers.map((tier) => (
-        <WatchlistTable key={tier.id} tier={tier} rows={stockRows[tier.id]} search={search} ratingFilter={ratingFilter} />
+        <WatchlistTable key={tier.id} tier={tier} rows={stockRows[tier.id]} search={search} ratingFilter={ratingFilter} riskData={riskData} />
       ))}
     </Stack>
   )

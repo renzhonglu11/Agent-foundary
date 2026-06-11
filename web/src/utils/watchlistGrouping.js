@@ -75,7 +75,8 @@ const alpacaSymbolByAliasKey = new Map([
 const underlyingAliasKeys = new Map([
   ['accent', 'accenture'],
   ['accenture plc', 'accenture'],
-  ['amd advanced micro devices', 'advanced micro devices'],
+  ['amd advanced micro devices', 'amd'],
+  ['advanced micro devices', 'amd'],
   ['micron', 'micron technology'],
   ['taiwansm', 'taiwan semiconduct'],
   ['taiwan semiconductor', 'taiwan semiconduct'],
@@ -299,28 +300,42 @@ function calculateDeltaExposure(row, spot) {
   const marketValue = finiteNumber(row.marketValue)
   const spotPrice = finiteNumber(spot)
 
+  const direction = optionDirection(row)
+  const directionSign = (direction === 'put') ? -1 : 1
+
   if (row.productType === 'factor_certificate') {
     const leverage = finiteNumber(row.leverage)
     const omega = finiteNumber(row.omega)
-    if (leverage != null && marketValue != null) return { value: marketValue * leverage, estimated: true }
-    if (omega != null && marketValue != null) return { value: marketValue * omega, estimated: true }
-    if (marketValue != null) return { value: marketValue, estimated: true }
+    if (leverage != null && marketValue != null) return { value: marketValue * leverage * directionSign, estimated: true }
+    if (omega != null && marketValue != null) {
+      const signedOmega = (direction === 'put' && omega > 0) ? -omega : omega
+      return { value: marketValue * signedOmega, estimated: true }
+    }
+    if (marketValue != null) return { value: marketValue * directionSign, estimated: true }
     return { value: null, estimated: false }
   } else {
-    const delta = finiteNumber(row.delta)
+    let delta = finiteNumber(row.delta)
     const ratio = finiteNumber(row.ratio)
+    if (delta != null) {
+      if (direction === 'put' && delta > 0) delta = -delta
+      else if (direction === 'call' && delta < 0) delta = Math.abs(delta)
+    }
+
     if ([quantity, delta, ratio, spotPrice].every((value) => value != null)) {
       return { value: quantity * delta * ratio * spotPrice, estimated: false }
     }
     const omega = finiteNumber(row.omega)
-    if (omega != null && marketValue != null) return { value: omega * marketValue, estimated: true }
+    if (omega != null && marketValue != null) {
+      const signedOmega = (direction === 'put' && omega > 0) ? -omega : omega
+      return { value: signedOmega * marketValue, estimated: true }
+    }
     
     const leverage = finiteNumber(row.leverage)
-    if (leverage != null && marketValue != null) return { value: leverage * marketValue, estimated: true }
+    if (leverage != null && marketValue != null) return { value: leverage * marketValue * directionSign, estimated: true }
 
-    // Last resort fallback: assume delta=1.0 for an estimated max exposure
+    // Last resort fallback: assume delta=1.0 for Call, -1.0 for Put
     if ([quantity, ratio, spotPrice].every((value) => value != null)) {
-      return { value: quantity * 1.0 * ratio * spotPrice, estimated: true }
+      return { value: quantity * (1.0 * directionSign) * ratio * spotPrice, estimated: true }
     }
   }
 
@@ -378,9 +393,9 @@ function breakEvenForRow(row) {
 }
 
 function optionDirection(row) {
-  const text = `${row.stockName || ''} ${row.instrument || ''} ${row.displayName || ''}`.toLowerCase()
-  if (/\bput\b/.test(text)) return 'put'
-  if (/\bcall\b/.test(text)) return 'call'
+  const text = `${row.stockName || ''} ${row.instrument || ''} ${row.displayName || ''} ${row.underlying || ''}`.toLowerCase()
+  if (/put|bear|short|turbop|fakts/i.test(text)) return 'put'
+  if (/call|bull|long|turboc|faktl/i.test(text)) return 'call'
   return null
 }
 
@@ -439,9 +454,9 @@ function positionToInstrumentRow(position, enriched, index, totalMarketValue, al
     metadataSource: enriched?.metadata_source,
     greeksSource: enriched?.greeks_source,
     underlying: enriched?.underlying || (isDerivative ? inferDerivativeUnderlying(enriched?.instrument || enriched?.display_name || position.instrument || stockName) : stockName),
-    leverage: enriched?.leverage,
-    delta: enriched?.delta,
-    omega: enriched?.omega,
+    leverage: sanitizeGreek(enriched?.leverage, enriched?.instrument || stockName, true),
+    delta: sanitizeGreek(enriched?.delta, enriched?.instrument || stockName, false),
+    omega: sanitizeGreek(enriched?.omega, enriched?.instrument || stockName, false),
     theta: enriched?.theta,
     iv: enriched?.iv,
     strikePrice: enriched?.strike_price,
@@ -449,6 +464,8 @@ function positionToInstrumentRow(position, enriched, index, totalMarketValue, al
     ratio: enriched?.ratio,
     breakEven: enriched?.break_even ?? enriched?.breakEven ?? enriched?.break_even_price ?? enriched?.breakEvenPrice,
     expiry: enriched?.expiry,
+    optionType: enriched?.option_type || optionDirection({ stockName, instrument: enriched?.instrument || position.instrument, displayName: position.displayName }),
+    resetBarrier: enriched?.reset_barrier,
     lastTradeDate: position.lastTradeDate,
     tierNote: enriched
       ? '来自 Python structured-products enrichment；CSV/PDF 解析以 Rust portfolio summary 为准。'
@@ -522,6 +539,7 @@ function canonicalGroupKey(value) {
   text = text.replace(/[-,.;()/]/g, ' ')
   text = text.replace(/\b\d+[\d.,]*\b/g, ' ')
   text = text.replace(/\s+/g, ' ').trim()
+  if (text.toLowerCase() === 'amd') text = 'amd'
   const normalized = normalizeKey(text || value)
   return underlyingAliasKeys.get(normalized) || normalized
 }
@@ -626,4 +644,21 @@ function formatPercent(value) {
   if (!Number.isFinite(Number(value))) return '0.00%'
   const sign = Number(value) > 0 ? '+' : ''
   return `${sign}${Number(value).toFixed(2)}%`
+}
+
+function sanitizeGreek(value, name, isLeverage = false) {
+  const numeric = finiteNumber(value)
+  if (numeric == null) return null
+  
+  const text = String(name || '').toLowerCase()
+  const isCall = /call|bull|long|turboc|faktl/i.test(text)
+  const isPut = /put|bear|short|turbop|fakts/i.test(text)
+  
+  if (isLeverage) {
+    return Math.abs(numeric)
+  }
+  
+  if (isCall && numeric < 0) return Math.abs(numeric)
+  if (isPut && numeric > 0) return -Math.abs(numeric)
+  return numeric
 }

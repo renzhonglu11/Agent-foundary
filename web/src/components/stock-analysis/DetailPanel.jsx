@@ -46,6 +46,7 @@ export default function DetailPanel({ row }) {
           {row.underlyingSpot != null ? <Typography variant="caption" color="text.secondary">Spot：{preciseCurrency.format(row.underlyingSpot)}</Typography> : null}
           {row.strikePrice != null ? <Typography variant="caption" color="text.secondary">Basispreis：{preciseCurrency.format(row.strikePrice)}</Typography> : null}
           {row.knockoutPrice != null ? <Typography variant="caption" color="text.secondary">Knock-Out：{preciseCurrency.format(row.knockoutPrice)}</Typography> : null}
+          {row.resetBarrier != null ? <Typography variant="caption" color="text.secondary">Akt. Reset-Barriere：{preciseCurrency.format(row.resetBarrier)}</Typography> : null}
           {row.ratio != null ? <Typography variant="caption" color="text.secondary">Bezugsverhältnis：{formatNumber2(row.ratio)}</Typography> : null}
           {row.calculatedBreakEven != null ? <Typography variant="caption" color="text.secondary">Break-even：{preciseCurrency.format(row.calculatedBreakEven)}</Typography> : null}
           {row.expiry ? <Typography variant="caption" color="text.secondary">Fälligkeit：{row.expiry}</Typography> : null}
