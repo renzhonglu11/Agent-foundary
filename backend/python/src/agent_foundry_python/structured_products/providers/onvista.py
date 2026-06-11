@@ -29,12 +29,14 @@ LABEL_ALIASES = {
     "basispreis": "strike_price",
     "strike": "strike_price",
     "strike price": "strike_price",
+    "akt. basispreis": "strike_price",
     "knock-out": "knockout_price",
     "k.o.": "knockout_price",
     "ko": "knockout_price",
     "knock out": "knockout_price",
     "knockout": "knockout_price",
     "ko-schwelle": "knockout_price",
+    "k.o.-schwelle": "knockout_price",
     "break-even": "break_even",
     "break even": "break_even",
     "break-even-punkt": "break_even",
@@ -47,6 +49,12 @@ LABEL_ALIASES = {
     "fälligkeit": "expiry",
     "faelligkeit": "expiry",
     "expiry": "expiry",
+    "typ": "option_type",
+    "optionstyp": "option_type",
+    "akt. reset-barriere": "reset_barrier",
+    "reset-barriere": "reset_barrier",
+    "reset barriere": "reset_barrier",
+    "reset barrier": "reset_barrier",
     "delta": "delta",
     "omega": "omega",
     "theta": "theta",
@@ -201,11 +209,22 @@ def parse_onvista_product_data(html: str) -> OnvistaProductData:
         "break_even",
         "ratio",
         "expiry",
+        "option_type",
+        "reset_barrier",
     }
     metadata = InstrumentMetadata(**{key: value for key, value in normalized.items() if key in metadata_keys})
     greek_values = {key: normalized.get(key) for key in ("delta", "omega", "theta", "iv") if normalized.get(key) is not None}
     greek = Greek(isin=metadata.isin, **greek_values) if greek_values else None
     return OnvistaProductData(metadata=metadata, greek=greek, source="onvista")
+
+
+def _detect_direction(text: str) -> str | None:
+    text_lower = str(text or "").lower()
+    if any(k in text_lower for k in ("put", "bear", "short", "turbop", "fakts")):
+        return "put"
+    if any(k in text_lower for k in ("call", "bull", "long", "turboc", "faktl")):
+        return "call"
+    return None
 
 
 def _parse_onvista_normalized(html: str) -> dict[str, object]:
@@ -232,6 +251,13 @@ def _parse_onvista_normalized(html: str) -> dict[str, object]:
         title_text = f"{title_text} {next_data.get('name') or ''}"
     if not normalized.get("product_type"):
         normalized["product_type"] = _detect_product_type(title_text)
+
+    if not normalized.get("option_type"):
+        opt_type = _detect_direction(title_text)
+        if not opt_type:
+            opt_type = _detect_direction(soup.get_text(" "))
+        if opt_type:
+            normalized["option_type"] = opt_type
 
     isin = str(normalized.get("isin") or _find_isin(soup.get_text(" ", strip=True)) or "")
     if not isin:
@@ -284,7 +310,7 @@ def _normalize_label(label: str) -> str:
 
 def _normalize_value(key: str, value: str) -> object:
     cleaned = " ".join(value.split())
-    if key in {"leverage", "strike_price", "knockout_price", "break_even", "ratio", "delta", "omega", "theta", "iv"}:
+    if key in {"leverage", "strike_price", "knockout_price", "break_even", "ratio", "delta", "omega", "theta", "iv", "reset_barrier"}:
         number = _parse_decimal(cleaned)
         if key == "iv" and number is not None and ("%" in cleaned or number > 1):
             return number / 100

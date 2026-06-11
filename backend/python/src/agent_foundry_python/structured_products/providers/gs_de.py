@@ -29,6 +29,7 @@ class GsDeProductProvider:
 
     def __init__(self, *, timeout: float = 20.0, transport: Any | None = None) -> None:
         self._timeout = timeout * 1000  # Playwright uses milliseconds
+        self._transport = transport
         self._playwright: Playwright | None = None
         self._browser: Browser | None = None
         self._page: Page | None = None
@@ -48,14 +49,19 @@ class GsDeProductProvider:
 
     async def get_product_data(self, isin: str) -> ProductData | None:
         try:
-            page = await self._init_browser()
             url = f"{self.BASE_URL}?isin={isin}"
-            await page.goto(url, wait_until="domcontentloaded", timeout=self._timeout)
-            
-            # Wait to allow client-side JS to execute Black-Scholes calculation
-            await page.wait_for_timeout(2000)
-            
-            html = await page.content()
+            if self._transport is not None:
+                async with httpx.AsyncClient(transport=self._transport) as client:
+                    response = await client.get(url)
+                    response.raise_for_status()
+                    html = response.text
+            else:
+                page = await self._init_browser()
+                await page.goto(url, wait_until="domcontentloaded", timeout=self._timeout)
+                # Wait to allow client-side JS to execute Black-Scholes calculation
+                await page.wait_for_timeout(2000)
+                html = await page.content()
+
             product = parse_gs_de_product_html(html)
             if product.metadata.isin.upper() != isin.upper():
                 return None
@@ -81,6 +87,10 @@ def parse_gs_de_product_html(html: str) -> ProductData:
     if not isin:
         raise ValueError("gs.de HTML does not contain an ISIN")
 
+    # Determine option direction
+    is_put = any("put" in token.lower() or "bear" in token.lower() or "short" in token.lower() for token in tokens)
+    option_type = "put" if is_put else "call"
+
     metadata = InstrumentMetadata(
         isin=isin,
         wkn=_as_text(fields.get("wkn")),
@@ -90,6 +100,7 @@ def parse_gs_de_product_html(html: str) -> ProductData:
         strike_price=_parse_decimal(fields.get("strike_price")),
         ratio=_parse_decimal(fields.get("ratio")),
         expiry=_parse_expiry(_as_text(fields.get("expiry"))),
+        option_type=option_type,
     )
 
     greek_values = {
