@@ -50,6 +50,8 @@ CSV_FIELDS = [
     "break_even",
     "ratio",
     "expiry",
+    "option_type",
+    "reset_barrier",
     "metadata_source",
     "greeks_source",
     "metadata_url",
@@ -266,12 +268,22 @@ def _position_to_row(position: dict[str, Any], *, generated_at: str | None) -> d
         position.get("symbol"),
     )
 
+    # Determine option direction
+    dir_text = display_name + " " + _first_non_empty(position.get("instrument"), position.get("issuer"), position.get("name"))
+    option_type = _detect_direction(dir_text)
+
     return {
         "isin": str(position.get("symbol") or ""),
         "display_name": display_name,
         "issuer": _first_non_empty(position.get("issuer")),
         "instrument": _first_non_empty(position.get("instrument")),
-        "underlying": "",
+        "underlying": _infer_underlying(
+            _first_non_empty(
+                position.get("instrument"),
+                display_name,
+                position.get("symbol")
+            )
+        ),
         "asset_class": _first_non_empty(position.get("assetClass"), position.get("asset_class")),
         "product_type": _detect_product_type(position),
         "wkn": "",
@@ -295,6 +307,8 @@ def _position_to_row(position: dict[str, Any], *, generated_at: str | None) -> d
         "break_even": None,
         "ratio": None,
         "expiry": None,
+        "option_type": option_type,
+        "reset_barrier": None,
         "metadata_source": None,
         "greeks_source": None,
         "metadata_url": None,
@@ -305,16 +319,23 @@ def _position_to_row(position: dict[str, Any], *, generated_at: str | None) -> d
     }
 
 
+def _detect_direction(text: str) -> str:
+    text_lower = str(text or "").lower()
+    if any(k in text_lower for k in ("put", "bear", "short", "turbop", "fakts")):
+        return "put"
+    if any(k in text_lower for k in ("call", "bull", "long", "turboc", "faktl")):
+        return "call"
+    return "call"
+
+
 def _detect_product_type(position: dict[str, Any]) -> str | None:
     text = " ".join(str(position.get(key) or "") for key in ("displayName", "pdfName", "issuer", "instrument", "name")).casefold()
+    if any(k in text for k in ("faktor zertifikat", "faktor-zertifikat", "factor certificate", "faktor optionsschein", "faktor-optionsschein", "faktl", "fakts")):
+        return "factor_certificate"
+    if any(k in text for k in ("open end turbo", "open-end turbo", "turbo", "knock-out", "knock out", "turboc", "turbop")):
+        return "open_end_turbo"
     if "optionsschein" in text or "call " in text or "put " in text:
         return "optionsschein"
-    if "faktor zertifikat" in text or "faktor-zertifikat" in text or "factor certificate" in text:
-        return "factor_certificate"
-    if "knock-out" in text or "knock out" in text:
-        return "knock_out"
-    if "open end turbo" in text or "open-end turbo" in text or "turbo" in text:
-        return "open_end_turbo"
     return None
 
 
@@ -341,9 +362,10 @@ def _write_json(rows: list[dict[str, Any]], path: str | Path) -> None:
 
 def _write_sqlite(rows: list[dict[str, Any]], path: str | Path) -> None:
     path = Path(path)
-    if path.exists():
-        path.unlink()
     store = StructuredProductStore(path)
+    import sqlite3
+    with sqlite3.connect(path) as conn:
+        conn.execute("DELETE FROM positions")
     for row in rows:
         store.upsert_position(
             Position(
@@ -358,7 +380,7 @@ def _write_sqlite(rows: list[dict[str, Any]], path: str | Path) -> None:
                 isin=row["isin"],
                 wkn=row.get("wkn") or None,
                 issuer=row.get("issuer") or None,
-                underlying=row.get("underlying") or row.get("instrument") or row.get("display_name") or None,
+                underlying=row.get("underlying") or None,
                 product_type=row.get("product_type"),
                 leverage=_optional_float(row.get("leverage")),
                 strike_price=_optional_float(row.get("strike_price")),
@@ -366,6 +388,8 @@ def _write_sqlite(rows: list[dict[str, Any]], path: str | Path) -> None:
                 break_even=_optional_float(row.get("break_even")),
                 ratio=_optional_float(row.get("ratio")),
                 expiry=row.get("expiry") or None,
+                option_type=row.get("option_type") or None,
+                reset_barrier=_optional_float(row.get("reset_barrier")),
             )
         )
         if row["quote_price"]:

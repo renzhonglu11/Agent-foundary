@@ -146,3 +146,172 @@ async def test_enrich_rows_uses_later_product_provider_to_fill_missing_fields():
     assert enriched[0]["metadata_source"] == "onvista+gs.de"
     assert enriched[0]["greeks_source"] == "gs.de"
     assert enriched[0]["metadata_url"] == "https://www.gs.de/de/optionsschein-rechner?isin=DE000PARTIAL"
+
+
+@pytest.mark.asyncio
+async def test_enrich_rows_discards_invalid_greeks_and_falls_back_to_next_provider():
+    rows = [
+        {
+            "isin": "DE000INVALID",
+            "display_name": "Call NVIDIA 220",
+            "issuer": "Vontobel",
+            "instrument": "Call NVIDIA 220",
+            "asset_class": "DERIVATIVE",
+            "product_type": "optionsschein",
+            "quantity": 1,
+            "quote_price": 3.21,
+            "quote_currency": "EUR",
+            "quote_source": "rust_portfolio_summary",
+            "market_value": 3.21,
+        },
+    ]
+    onvista = FakeProductProvider(
+        {
+            "DE000INVALID": ProductData(
+                metadata=InstrumentMetadata(isin="DE000INVALID", leverage=-5.0, underlying="NVIDIA"),
+                greek=Greek(isin="DE000INVALID", delta=1.0, omega=-18.36),
+                source="onvista",
+            )
+        }
+    )
+    gs_de = FakeProductProvider(
+        {
+            "DE000INVALID": ProductData(
+                metadata=InstrumentMetadata(isin="DE000INVALID", leverage=15.0, underlying="NVIDIA"),
+                greek=Greek(isin="DE000INVALID", delta=0.95, omega=18.0),
+                source="gs.de",
+            )
+        }
+    )
+
+    enriched = await enrich_structured_product_rows(rows, product_providers=[onvista, gs_de])
+
+    assert enriched[0]["metadata_source"] == "onvista+gs.de"
+    assert enriched[0]["greeks_source"] == "gs.de"
+    assert enriched[0]["leverage"] == 15.0  # fell back because leverage was negative
+    assert enriched[0]["delta"] == 0.95     # fell back because omega was negative
+    assert enriched[0]["omega"] == 18.0
+
+
+class FakeCacheStore:
+    def __init__(self, metadata=None, greeks=None):
+        self.metadata = metadata or {}
+        self.greeks = greeks or {}
+        self.upserted_metadata = []
+        self.inserted_greeks = []
+
+    def get_metadata(self, isin):
+        return self.metadata.get(isin)
+
+    def get_latest_greek(self, isin):
+        return self.greeks.get(isin)
+
+    def upsert_metadata(self, metadata):
+        self.upserted_metadata.append(metadata)
+
+    def insert_greek(self, greek):
+        self.inserted_greeks.append(greek)
+
+
+@pytest.mark.asyncio
+async def test_enrich_rows_uses_valid_cached_metadata_and_greeks():
+    from datetime import datetime, timezone
+    rows = [
+        {
+            "isin": "DE000CACHED",
+            "display_name": "Call NVIDIA 220",
+            "issuer": "Vontobel",
+            "instrument": "Call NVIDIA 220",
+            "asset_class": "DERIVATIVE",
+            "product_type": "optionsschein",
+            "quantity": 1,
+            "quote_price": 3.21,
+            "quote_currency": "EUR",
+            "quote_source": "rust_portfolio_summary",
+            "market_value": 3.21,
+        },
+    ]
+    
+    # 5 minutes old greeks (valid) with all fields populated to prevent fallback
+    cached_greek = Greek(isin="DE000CACHED", delta=0.9, omega=15.0, theta=-0.01, iv=0.4, timestamp=datetime.now(timezone.utc))
+    cached_metadata = InstrumentMetadata(isin="DE000CACHED", leverage=12.0, break_even=230.0, ratio=0.1, expiry="2026-12-18", underlying="NVIDIA")
+    
+    cache = FakeCacheStore(
+        metadata={"DE000CACHED": cached_metadata},
+        greeks={"DE000CACHED": cached_greek}
+    )
+    
+    # Provider returns different values but should NOT be called
+    onvista = FakeProductProvider({
+        "DE000CACHED": ProductData(
+            metadata=InstrumentMetadata(isin="DE000CACHED", leverage=9.0, underlying="NVIDIA"),
+            greek=Greek(isin="DE000CACHED", delta=0.8, omega=10.0),
+            source="onvista",
+        )
+    })
+
+    enriched = await enrich_structured_product_rows(rows, product_providers=[onvista], cache_store=cache)
+
+    assert enriched[0]["metadata_source"] == "cache"
+    assert enriched[0]["greeks_source"] == "cache"
+    assert enriched[0]["leverage"] == 12.0
+    assert enriched[0]["delta"] == 0.9
+    assert enriched[0]["omega"] == 15.0
+    # Provider should not be called
+    assert not onvista.calls
+
+
+@pytest.mark.asyncio
+async def test_enrich_rows_ignores_expired_cached_greeks():
+    from datetime import datetime, timedelta, timezone
+    rows = [
+        {
+            "isin": "DE000EXPIRED",
+            "display_name": "Call NVIDIA 220",
+            "issuer": "Vontobel",
+            "instrument": "Call NVIDIA 220",
+            "asset_class": "DERIVATIVE",
+            "product_type": "optionsschein",
+            "quantity": 1,
+            "quote_price": 3.21,
+            "quote_currency": "EUR",
+            "quote_source": "rust_portfolio_summary",
+            "market_value": 3.21,
+        },
+    ]
+    
+    # 2 hours old greeks (expired)
+    expired_time = datetime.now(timezone.utc) - timedelta(hours=2)
+    cached_greek = Greek(isin="DE000EXPIRED", delta=0.9, omega=15.0, timestamp=expired_time)
+    cached_metadata = InstrumentMetadata(isin="DE000EXPIRED", leverage=12.0, underlying="NVIDIA")
+    
+    cache = FakeCacheStore(
+        metadata={"DE000EXPIRED": cached_metadata},
+        greeks={"DE000EXPIRED": cached_greek}
+    )
+    
+    # Provider should be called to fetch new greeks, but metadata is still loaded from cache
+    onvista = FakeProductProvider({
+        "DE000EXPIRED": ProductData(
+            metadata=InstrumentMetadata(isin="DE000EXPIRED", leverage=12.0, underlying="NVIDIA"),
+            greek=Greek(isin="DE000EXPIRED", delta=0.8, omega=10.0),
+            source="onvista",
+        )
+    })
+
+    enriched = await enrich_structured_product_rows(rows, product_providers=[onvista], cache_store=cache)
+
+    assert enriched[0]["metadata_source"] == "cache"  # loaded from cache
+    assert enriched[0]["greeks_source"] == "onvista"  # loaded from provider because cache was expired
+    assert enriched[0]["leverage"] == 12.0
+    assert enriched[0]["delta"] == 0.8
+    assert enriched[0]["omega"] == 10.0
+    # Provider was called
+    assert onvista.calls == ["DE000EXPIRED"]
+    # New greeks should be saved back to cache
+    assert len(cache.inserted_greeks) == 1
+    assert cache.inserted_greeks[0].omega == 10.0
+    # Metadata was not changed/fetched, so not saved back
+    assert len(cache.upserted_metadata) == 0
+
+

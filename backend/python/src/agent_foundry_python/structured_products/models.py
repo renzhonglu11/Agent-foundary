@@ -53,4 +53,7 @@ class InstrumentMetadata(BaseModel):
     break_even: Optional[float] = None
     ratio: Optional[float] = None
     expiry: Optional[str] = None
+    option_type: Optional[str] = None
+    reset_barrier: Optional[float] = None
     last_updated: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
