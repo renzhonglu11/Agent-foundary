@@ -51,6 +51,9 @@ def compute_delta_exposure(
         # Priority 3: Leverage
         elif metadata.leverage is not None and metadata.leverage != 0.0:
             delta_exposure = market_value * metadata.leverage * direction_sign
+        # Priority 4: bounded fallback when providers do not expose Greeks.
+        else:
+            delta_exposure = market_value * direction_sign
 
     return Exposure(
         isin=position.isin,

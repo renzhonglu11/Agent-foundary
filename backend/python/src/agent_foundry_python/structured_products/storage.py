@@ -3,64 +3,27 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+from yoyo import get_backend, read_migrations
+
 from agent_foundry_python.structured_products.models import Greek, InstrumentMetadata, Position, Quote
 
-SCHEMA_SQL = """
-CREATE TABLE IF NOT EXISTS positions (
-    isin TEXT PRIMARY KEY,
-    quantity REAL,
-    avg_cost REAL,
-    source TEXT
-);
-
-CREATE TABLE IF NOT EXISTS instrument_metadata (
-    isin TEXT PRIMARY KEY,
-    wkn TEXT,
-    issuer TEXT,
-    underlying TEXT,
-    product_type TEXT,
-    leverage REAL,
-    strike_price REAL,
-    knockout_price REAL,
-    break_even REAL,
-    ratio REAL,
-    expiry TEXT,
-    option_type TEXT,
-    reset_barrier REAL,
-    last_updated TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS quotes (
-    isin TEXT,
-    timestamp TIMESTAMP,
-    price REAL,
-    currency TEXT
-);
-
-CREATE INDEX IF NOT EXISTS idx_quotes_isin_timestamp
-    ON quotes (isin, timestamp DESC);
-
-CREATE TABLE IF NOT EXISTS greeks (
-    isin TEXT,
-    timestamp TIMESTAMP,
-    delta REAL,
-    omega REAL,
-    theta REAL,
-    iv REAL
-);
-
-CREATE INDEX IF NOT EXISTS idx_greeks_isin_timestamp
-    ON greeks (isin, timestamp DESC);
-"""
+MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "migrations"
 
 
 def initialize_schema(db_path: str | Path) -> None:
-    """Create the Phase 1 structured-products SQLite schema."""
+    """Apply structured-products SQLite migrations."""
     path = Path(db_path)
     if path.parent != Path(""):
         path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(path) as conn:
-        conn.executescript(SCHEMA_SQL)
+    backend = get_backend(_sqlite_url(path))
+    migrations = read_migrations(str(MIGRATIONS_DIR))
+    with backend.lock():
+        backend.apply_migrations(backend.to_apply(migrations))
+
+
+def _sqlite_url(path: Path) -> str:
+    absolute_path = path if path.is_absolute() else path.absolute()
+    return f"sqlite:///{absolute_path.as_posix()}"
 
 
 class StructuredProductStore:
@@ -207,4 +170,3 @@ class StructuredProductStore:
                 theta=row["theta"],
                 iv=row["iv"],
             )
-

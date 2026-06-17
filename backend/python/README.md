@@ -38,7 +38,7 @@ Generate current outputs from the running Rust backend:
 
 ```bash
 uv sync
-.venv/bin/agent-foundry-structured-products
+uv run agent-foundry-structured-products
 ```
 
 Default behavior uses tiered live enrichment:
@@ -51,7 +51,7 @@ Default behavior uses tiered live enrichment:
 For cautious smoke runs, limit the number of products and slow the request rate:
 
 ```bash
-.venv/bin/agent-foundry-structured-products \
+uv run agent-foundry-structured-products \
   --limit 10 \
   --tier1-limit 20 \
   --request-delay 3 \
@@ -75,6 +75,16 @@ uv sync --dev
 .venv/bin/python -m pytest -q
 .venv/bin/python -m compileall -q src scripts tests
 ```
+
+## Database Migrations
+
+Structured-products SQLite schema changes are managed with yoyo migrations in
+`migrations/`. The Rust backend calls the Python CLI through `uv run`, and the
+Python store applies pending migrations automatically before reading or writing
+`structured-products-enrichment.sqlite3`.
+
+When adding schema changes, create a new numbered migration file in
+`migrations/` and keep migrations compatible with existing local SQLite caches.
 
 ## Design Notes
 

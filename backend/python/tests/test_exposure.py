@@ -14,3 +14,15 @@ def test_compute_delta_exposure_uses_quantity_delta_and_underlying_price():
     assert exposure.delta_exposure == 788.76
     assert exposure.market_value == 50.88
     assert exposure.currency == "EUR"
+
+
+def test_compute_delta_exposure_falls_back_to_market_value_for_options_without_greeks():
+    position = Position(isin="DE000HT0Q0Z8", quantity=43, avg_cost=2.89, source="risk")
+    greek = Greek(isin="DE000HT0Q0Z8")
+    quote = Quote(isin="DE000HT0Q0Z8", price=28.98, currency="EUR")
+    metadata = InstrumentMetadata(isin="DE000HT0Q0Z8", product_type="optionsschein", option_type="call")
+
+    exposure = compute_delta_exposure(position, greek, quote, metadata, underlying_price=0.0)
+
+    assert exposure.delta_exposure == 1246.14
+    assert exposure.market_value == 1246.14

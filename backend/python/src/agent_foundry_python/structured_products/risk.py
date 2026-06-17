@@ -149,20 +149,28 @@ def evaluate_portfolio_risk(
                     pass
 
             # Completeness & Status
-            missing_score = 0
-            if delta is None: missing_score += 4
-            if quote_age_hours is None or quote_age_hours > 24: missing_score += 4
-            if underlying_price == 0: missing_score += 2
-
-            confidence = "live_delta" if delta is not None and quote_age_hours and quote_age_hours < 4 else "fallback"
-            if missing_score > 5:
-                confidence = "no_data"
+            missing_score = _data_completeness_score(
+                row,
+                product_type=row.get("product_type"),
+                delta=delta,
+                quote_age_hours=quote_age_hours,
+                underlying_price=underlying_price,
+                market_value=market_value,
+            )
+            confidence = _exposure_confidence(
+                row,
+                product_type=row.get("product_type"),
+                delta=delta,
+                quote_age_hours=quote_age_hours,
+                underlying_price=underlying_price,
+                market_value=market_value,
+            )
             
             status = "OK"
-            if missing_score >= 8 or (days_to_expiry is not None and days_to_expiry <= 0):
+            if confidence == "no_data" or (days_to_expiry is not None and days_to_expiry <= 0):
                 status = "HARD_BLOCKED"
                 any_hard_blocked = True
-            elif missing_score > 3 or (barrier_distance_pct and barrier_distance_pct < 0.10):
+            elif missing_score > 3 or (days_to_expiry is not None and days_to_expiry < 7) or (barrier_distance_pct and barrier_distance_pct < 0.10):
                 status = "WATCH"
 
             legs.append(RiskLeg(
@@ -255,3 +263,122 @@ def _optional_float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _positive_float(value: Any) -> float | None:
+    number = _optional_float(value)
+    if number is None or number <= 0:
+        return None
+    return number
+
+
+def _has_fresh_quote(quote_age_hours: float | None) -> bool:
+    return quote_age_hours is not None and quote_age_hours <= 24
+
+
+def _has_recent_quote(quote_age_hours: float | None) -> bool:
+    return quote_age_hours is not None and quote_age_hours <= 72
+
+
+def _has_portfolio_price(row: dict[str, Any], market_value: float) -> bool:
+    return _positive_float(row.get("quote_price")) is not None or market_value > 0
+
+
+def _has_option_exposure_input(
+    row: dict[str, Any],
+    *,
+    delta: float | None,
+    underlying_price: float,
+    market_value: float,
+) -> bool:
+    has_delta_model = (
+        delta is not None
+        and _positive_float(row.get("ratio")) is not None
+        and underlying_price > 0
+    )
+    return (
+        has_delta_model
+        or _optional_float(row.get("omega")) is not None
+        or _optional_float(row.get("leverage")) is not None
+        or _has_portfolio_price(row, market_value)
+    )
+
+
+def _data_completeness_score(
+    row: dict[str, Any],
+    *,
+    product_type: Any,
+    delta: float | None,
+    quote_age_hours: float | None,
+    underlying_price: float,
+    market_value: float,
+) -> int:
+    score = 0
+    product_type_text = str(product_type or "")
+
+    if _has_fresh_quote(quote_age_hours):
+        pass
+    elif _has_recent_quote(quote_age_hours):
+        score += 1
+    elif _has_portfolio_price(row, market_value):
+        score += 2
+    else:
+        score += 4
+
+    if product_type_text == "factor_certificate":
+        if _optional_float(row.get("leverage")) is not None or _optional_float(row.get("omega")) is not None:
+            pass
+        elif _has_portfolio_price(row, market_value):
+            score += 2
+        else:
+            score += 4
+        return min(score, 10)
+
+    if _has_option_exposure_input(row, delta=delta, underlying_price=underlying_price, market_value=market_value):
+        if delta is None:
+            score += 2
+        elif underlying_price == 0 and _positive_float(row.get("ratio")) is not None:
+            score += 2
+    else:
+        score += 4
+
+    return min(score, 10)
+
+
+def _exposure_confidence(
+    row: dict[str, Any],
+    *,
+    product_type: Any,
+    delta: float | None,
+    quote_age_hours: float | None,
+    underlying_price: float,
+    market_value: float,
+) -> str:
+    product_type_text = str(product_type or "")
+    if (
+        delta is not None
+        and _positive_float(row.get("ratio")) is not None
+        and underlying_price > 0
+        and quote_age_hours is not None
+        and quote_age_hours < 4
+    ):
+        return "live_delta"
+
+    if product_type_text == "factor_certificate":
+        if _optional_float(row.get("leverage")) is not None:
+            return "estimated_leverage"
+        if _optional_float(row.get("omega")) is not None:
+            return "estimated_omega"
+        if _has_portfolio_price(row, market_value):
+            return "estimated_market_value"
+        return "no_data"
+
+    if _optional_float(row.get("omega")) is not None:
+        return "estimated_omega"
+    if _optional_float(row.get("leverage")) is not None:
+        return "estimated_leverage"
+    if delta is not None and _positive_float(row.get("ratio")) is not None and underlying_price > 0:
+        return "estimated_delta"
+    if _has_portfolio_price(row, market_value):
+        return "estimated_market_value"
+    return "no_data"

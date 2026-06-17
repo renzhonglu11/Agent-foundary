@@ -262,6 +262,62 @@ async def test_enrich_rows_uses_valid_cached_metadata_and_greeks():
 
 
 @pytest.mark.asyncio
+async def test_enrich_rows_refreshes_cached_metadata_from_live_provider():
+    rows = [
+        {
+            "isin": "DE000HM0T297",
+            "display_name": "TurboC O.End Micron",
+            "issuer": "HSBC",
+            "instrument": "TurboC O.End Micron",
+            "asset_class": "DERIVATIVE",
+            "product_type": "open_end_turbo",
+            "quantity": 348,
+            "quote_price": 6.7,
+            "quote_currency": "EUR",
+            "quote_source": "rust_portfolio_summary",
+            "market_value": 2185.44,
+        },
+    ]
+    cached_metadata = InstrumentMetadata(
+        isin="DE000HM0T297",
+        leverage=1.20,
+        ratio=0.01,
+        knockout_price=257.9722,
+        underlying="Micron",
+        product_type="open_end_turbo",
+        option_type="call",
+    )
+    cache = FakeCacheStore(metadata={"DE000HM0T297": cached_metadata})
+    gs_de = FakeProductProvider(
+        {
+            "DE000HM0T297": ProductData(
+                metadata=InstrumentMetadata(
+                    isin="DE000HM0T297",
+                    leverage=1.33,
+                    ratio=0.01,
+                    knockout_price=257.9722,
+                    underlying="Micron",
+                    product_type="open_end_turbo",
+                    option_type="call",
+                ),
+                greek=None,
+                source="gs.de",
+                url="https://www.gs.de/de/optionsschein-rechner?isin=DE000HM0T297",
+            )
+        }
+    )
+
+    enriched = await enrich_structured_product_rows(rows, product_providers=[gs_de], cache_store=cache)
+
+    assert gs_de.calls == ["DE000HM0T297"]
+    assert enriched[0]["leverage"] == 1.33
+    assert enriched[0]["metadata_source"] == "gs.de"
+    assert enriched[0]["metadata_url"] == "https://www.gs.de/de/optionsschein-rechner?isin=DE000HM0T297"
+    assert len(cache.upserted_metadata) == 1
+    assert cache.upserted_metadata[0].leverage == 1.33
+
+
+@pytest.mark.asyncio
 async def test_enrich_rows_ignores_expired_cached_greeks():
     from datetime import datetime, timedelta, timezone
     rows = [
@@ -315,3 +371,41 @@ async def test_enrich_rows_ignores_expired_cached_greeks():
     assert len(cache.upserted_metadata) == 0
 
 
+@pytest.mark.asyncio
+async def test_enrich_rows_uses_expired_cached_greeks_as_stale_fallback():
+    from datetime import datetime, timedelta, timezone
+    rows = [
+        {
+            "isin": "DE000STALE",
+            "display_name": "Call NVIDIA 220",
+            "issuer": "Vontobel",
+            "instrument": "Call NVIDIA 220",
+            "asset_class": "DERIVATIVE",
+            "product_type": "optionsschein",
+            "quantity": 1,
+            "quote_price": 3.21,
+            "quote_currency": "EUR",
+            "quote_source": "rust_portfolio_summary",
+            "market_value": 3.21,
+        },
+    ]
+
+    expired_time = datetime.now(timezone.utc) - timedelta(hours=2)
+    cached_greek = Greek(isin="DE000STALE", delta=0.9, omega=15.0, iv=0.4, timestamp=expired_time)
+    cached_metadata = InstrumentMetadata(isin="DE000STALE", leverage=12.0, underlying="NVIDIA")
+
+    cache = FakeCacheStore(
+        metadata={"DE000STALE": cached_metadata},
+        greeks={"DE000STALE": cached_greek}
+    )
+    provider = FakeProductProvider({})
+
+    enriched = await enrich_structured_product_rows(rows, product_providers=[provider], cache_store=cache)
+
+    assert provider.calls == ["DE000STALE"]
+    assert enriched[0]["metadata_source"] == "cache"
+    assert enriched[0]["greeks_source"] == "cache_stale"
+    assert enriched[0]["delta"] == 0.9
+    assert enriched[0]["omega"] == 15.0
+    assert enriched[0]["iv"] == 0.4
+    assert len(cache.inserted_greeks) == 0

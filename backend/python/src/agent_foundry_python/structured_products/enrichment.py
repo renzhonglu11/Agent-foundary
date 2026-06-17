@@ -95,6 +95,7 @@ async def enrich_structured_product_rows(
 
             cached_metadata = None
             cached_greek = None
+            stale_cached_greek = None
             
             if cache_store is not None:
                 cached_metadata = cache_store.get_metadata(isin)
@@ -108,6 +109,7 @@ async def enrich_structured_product_rows(
                         g_time = g_time.replace(tzinfo=timezone.utc)
                     age = datetime.now(timezone.utc) - g_time
                     if age.total_seconds() > 3600: # 1 hour
+                        stale_cached_greek = cached_greek
                         cached_greek = None
 
             metadata_sources: list[str] = []
@@ -138,7 +140,11 @@ async def enrich_structured_product_rows(
                     if metadata_to_merge is not None and _is_metadata_invalid(metadata_to_merge, name):
                         metadata_to_merge = metadata_to_merge.model_copy(update={"leverage": None})
 
-                    metadata_changed = _merge_metadata(enriched, metadata_to_merge, overwrite=not metadata_sources)
+                    metadata_changed = _merge_metadata(
+                        enriched,
+                        metadata_to_merge,
+                        overwrite=not metadata_sources or metadata_sources == ["cache"],
+                    )
                     if metadata_changed:
                         if "cache" in metadata_sources:
                             metadata_sources.remove("cache")
@@ -156,6 +162,13 @@ async def enrich_structured_product_rows(
                     
                     if not _needs_product_fallback(enriched):
                         break
+
+            if stale_cached_greek is not None:
+                name = enriched.get("instrument") or enriched.get("display_name") or ""
+                if not _is_greek_invalid(stale_cached_greek, name):
+                    stale_greek_changed = _merge_greek(enriched, stale_cached_greek, overwrite=False)
+                    if stale_greek_changed:
+                        greek_sources.append("cache_stale")
 
             # Save back to cache if we fetched new data from network and they are clean
             if cache_store is not None:
@@ -178,7 +191,7 @@ async def enrich_structured_product_rows(
                     if not _is_metadata_invalid(metadata_to_save, name):
                         cache_store.upsert_metadata(metadata_to_save)
 
-                if greek_sources and "cache" not in greek_sources:
+                if greek_sources and "cache" not in greek_sources and "cache_stale" not in greek_sources:
                     greek_to_save = Greek(
                         isin=isin,
                         delta=enriched.get("delta"),
@@ -331,4 +344,3 @@ def _is_metadata_invalid(metadata: InstrumentMetadata, name: str) -> bool:
         if metadata.leverage is not None and metadata.leverage < 0:
             return True
     return False
-

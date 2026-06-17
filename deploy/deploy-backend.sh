@@ -93,8 +93,10 @@ ssh -tt "${SSH_HOST}" "
   sudo mv '${TMP_DIR}/agent-foundry-hermes-cron-sync.service' '/etc/systemd/system/${SYNC_SERVICE_NAME}.service'
   sudo mv '${TMP_DIR}/agent-foundry-hermes-cron-sync.path' '/etc/systemd/system/${SYNC_SERVICE_NAME}.path'
   sudo install -d -o '${REMOTE_USER}' -g '${REMOTE_GROUP}' -m 2750 '${REMOTE_ROOT}/data/uv-cache'
-  sudo chown -R '${REMOTE_USER}:${REMOTE_GROUP}' '${REMOTE_ROOT}/backend/python' '${REMOTE_ROOT}/data/uv-cache'
+  sudo install -d -o '${REMOTE_USER}' -g '${REMOTE_GROUP}' -m 2750 '${REMOTE_ROOT}/data/playwright-browsers'
+  sudo chown -R '${REMOTE_USER}:${REMOTE_GROUP}' '${REMOTE_ROOT}/backend/python' '${REMOTE_ROOT}/data/uv-cache' '${REMOTE_ROOT}/data/playwright-browsers'
   sudo -u '${REMOTE_USER}' env UV_CACHE_DIR='${REMOTE_ROOT}/data/uv-cache' '${REMOTE_UV_BIN}' sync --directory '${REMOTE_ROOT}/backend/python' --frozen --no-dev
+  sudo -u '${REMOTE_USER}' env UV_CACHE_DIR='${REMOTE_ROOT}/data/uv-cache' PLAYWRIGHT_BROWSERS_PATH='${REMOTE_ROOT}/data/playwright-browsers' '${REMOTE_UV_BIN}' run --directory '${REMOTE_ROOT}/backend/python' playwright install chromium
   sudo chown -R '${REMOTE_USER}:${REMOTE_GROUP}' '${REMOTE_ROOT}'
   sudo install -d -o '${SYNC_USER}' -g '${REMOTE_GROUP}' -m 2750 '${REMOTE_ROOT}/data/hermes-cron'
   sudo chmod +x '${REMOTE_ROOT}/bin/agent-foundry-backend' '${REMOTE_ROOT}/bin/sync-hermes-cron-jobs.sh'
