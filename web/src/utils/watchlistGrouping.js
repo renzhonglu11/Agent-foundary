@@ -337,6 +337,8 @@ function calculateDeltaExposure(row, spot) {
     if ([quantity, ratio, spotPrice].every((value) => value != null)) {
       return { value: quantity * (1.0 * directionSign) * ratio * spotPrice, estimated: true }
     }
+
+    if (marketValue != null) return { value: marketValue * directionSign, estimated: true }
   }
 
   return { value: null, estimated: false }
@@ -531,7 +533,7 @@ function inferDerivativeUnderlying(value) {
   return text || null
 }
 
-function canonicalGroupKey(value) {
+export function canonicalGroupKey(value) {
   let text = selectCompanyNameSegment(value)
   text = text.replace(/\b(registered|bearer|ordinary|common|preferred|reg\.?|inhaber|namens|stamm)\s*-?\s*(shares?|aktien|shs)?\b/gi, ' ')
   text = text.replace(/\b(shares?|aktien|adr|adrs|gdrs|ads|ord|stk|cap\.?stk|class|klasse|cl\.?|dl|eur|usd|eo|ta|sw|o\.n\.|sp\.?|spons\.?|aandelen|naam|toonder)\b/gi, ' ')

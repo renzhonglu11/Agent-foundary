@@ -17,7 +17,7 @@ export default function StockAnalysisTab({ data }) {
   const [alpacaQuotes, setAlpacaQuotes] = useState([])
   const [liveRefreshing, setLiveRefreshing] = useState(false)
   const [liveProgress, setLiveProgress] = useState(initialLiveProgress)
-  const { data: riskData } = useRiskData()
+  const { data: riskData, refresh: refreshRiskData } = useRiskData()
   const mountedRef = useRef(false)
   const progressTimerRef = useRef(null)
 
@@ -81,6 +81,8 @@ export default function StockAnalysisTab({ data }) {
       updateProgressFromStatus(status)
       if (!status.running || Date.now() - startedAt > 240000) {
         await reloadStructuredProducts()
+        if (!mountedRef.current) return
+        await refreshRiskData().catch(() => {})
         if (!mountedRef.current) return
         setLiveRefreshing(false)
         return

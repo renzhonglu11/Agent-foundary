@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { buildWatchlistGroups, collectTier1AlpacaSymbols } from './watchlistGrouping.js'
+import { buildWatchlistGroups, canonicalGroupKey, collectTier1AlpacaSymbols } from './watchlistGrouping.js'
 
 const portfolio = {
   summary: { totalMarketValue: 10000 },
@@ -262,6 +262,25 @@ test('aggregates group delta exposure from omega fallback when delta is missing'
   assert.equal(amd.deltaExposureEstimated, true)
   assert.equal(amd.derivatives[0].deltaExposureEur, 2160)
   assert.equal(amd.derivatives[1].deltaExposureEur, 550)
+})
+
+test('canonicalizes broker shorthand risk symbols to stable underlying keys', () => {
+  assert.equal(canonicalGroupKey('Globalf.'), canonicalGroupKey('globalfoundries'))
+  assert.equal(canonicalGroupKey('STMicro.'), canonicalGroupKey('stmicro'))
+})
+
+test('falls back to market value exposure when option greeks and spot are unavailable', () => {
+  const groups = buildWatchlistGroups(
+    { summary: { totalMarketValue: 10000 }, positions: [] },
+    [
+      { isin: 'D-AMD', display_name: 'Call AMD 160', instrument: 'Call 18.12.26 AMD 160', asset_class: 'DERIVATIVE', product_type: 'optionsschein', underlying: 'AMD', enrichment_tier: 'tier1', live_enrichment_enabled: true, quote_source: 'boerse_frankfurt', quantity: 43, market_value: 1200 },
+    ],
+  )
+
+  const amd = groups.tier1[0]
+  assert.equal(amd.deltaExposure, 1200)
+  assert.equal(amd.deltaExposureEstimated, true)
+  assert.equal(amd.derivatives[0].deltaExposureEur, 1200)
 })
 
 test('collects unique tier1 Alpaca symbols from stock rows', () => {

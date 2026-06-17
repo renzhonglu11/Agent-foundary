@@ -13,16 +13,20 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  Tooltip,
   Typography,
 } from '@mui/material'
 import KeyboardArrowDownRoundedIcon from '@mui/icons-material/KeyboardArrowDownRounded'
 import KeyboardArrowRightRoundedIcon from '@mui/icons-material/KeyboardArrowRightRounded'
+import UnfoldLessRoundedIcon from '@mui/icons-material/UnfoldLessRounded'
+import UnfoldMoreRoundedIcon from '@mui/icons-material/UnfoldMoreRounded'
 
 import { preciseCurrency } from '../../utils/formatters.js'
 import GroupDetailPanel from './GroupDetailPanel.jsx'
 import Pill from './Pill.jsx'
 import StockNameCell from './StockNameCell.jsx'
 import { ratingMeta } from './stockAnalysisUi.js'
+import { canonicalGroupKey } from '../../utils/watchlistGrouping.js'
 
 const riskActionColors = {
   'REDUCE_CONCENTRATION': 'error',
@@ -33,7 +37,7 @@ const riskActionColors = {
 }
 
 export default function WatchlistTable({ tier, rows, search, ratingFilter, riskData }) {
-  const [expandedRowId, setExpandedRowId] = useState(null)
+  const [expandedRowIds, setExpandedRowIds] = useState(() => new Set())
 
   const filteredRows = useMemo(() => rows.filter((row) => {
     const searchText = `${row.groupName} ${row.symbol} ${row.rating} ${row.apiStatus} ${row.holdingStatus} ${row.instruments.map((item) => `${item.stockName} ${item.symbol}`).join(' ')}`
@@ -42,19 +46,82 @@ export default function WatchlistTable({ tier, rows, search, ratingFilter, riskD
     return matchesSearch && matchesRating
   }), [ratingFilter, rows, search])
 
+  const riskByKey = useMemo(() => {
+    const map = new Map()
+    if (!Array.isArray(riskData)) return map
+
+    riskData.forEach((riskGroup) => {
+      const key = canonicalGroupKey(riskGroup?.symbol)
+      if (key && key !== 'unknown') map.set(key, riskGroup)
+    })
+
+    return map
+  }, [riskData])
+
   const toggleRow = (rowId) => {
-    setExpandedRowId((current) => (current === rowId ? null : rowId))
+    setExpandedRowIds((current) => {
+      const next = new Set(current)
+      if (next.has(rowId)) next.delete(rowId)
+      else next.add(rowId)
+      return next
+    })
   }
+
+  const expandAllRows = () => {
+    setExpandedRowIds((current) => {
+      const next = new Set(current)
+      filteredRows.forEach((row) => next.add(row.id))
+      return next
+    })
+  }
+
+  const toggleAllRows = () => {
+    if (allVisibleExpanded) collapseAllRows()
+    else expandAllRows()
+  }
+
+  const collapseAllRows = () => {
+    setExpandedRowIds((current) => {
+      const visibleRowIds = new Set(filteredRows.map((row) => row.id))
+      return new Set([...current].filter((rowId) => !visibleRowIds.has(rowId)))
+    })
+  }
+
+  const expandedVisibleCount = filteredRows.reduce((count, row) => count + (expandedRowIds.has(row.id) ? 1 : 0), 0)
+  const allVisibleExpanded = filteredRows.length > 0 && expandedVisibleCount === filteredRows.length
 
   return (
     <Card className="panel-card">
       <CardContent>
-        <Stack direction={{ xs: 'column', md: 'row' }} spacing={1} sx={{ justifyContent: 'space-between', mb: 2 }}>
+        <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5} sx={{ justifyContent: 'space-between', mb: 2 }}>
           <Box>
             <Typography variant="h6">{tier.title}</Typography>
             <Typography variant="body2" color="text.secondary">{tier.subtitle}</Typography>
           </Box>
-          <Chip color="primary" size="small" label={`${filteredRows.length} / ${rows.length} 个标的组`} />
+          <Stack direction="row" spacing={1} alignItems="center" useFlexGap sx={{ flexWrap: 'wrap' }}>
+            <Tooltip title={allVisibleExpanded ? '全收起' : '全展开'}>
+              <span>
+                <IconButton
+                  aria-label={allVisibleExpanded ? `收起 ${tier.title} 当前标的组` : `展开 ${tier.title} 当前标的组`}
+                  size="small"
+                  onClick={toggleAllRows}
+                  disabled={!filteredRows.length}
+                  sx={{
+                    width: 32,
+                    height: 32,
+                    border: '1px solid #d7dde5',
+                    borderRadius: 1.5,
+                    color: allVisibleExpanded ? 'primary.main' : 'text.secondary',
+                    backgroundColor: allVisibleExpanded ? '#f2f4ff' : '#ffffff',
+                    '&:hover': { backgroundColor: allVisibleExpanded ? '#eef1ff' : '#f8fafc' },
+                  }}
+                >
+                  {allVisibleExpanded ? <UnfoldLessRoundedIcon fontSize="small" /> : <UnfoldMoreRoundedIcon fontSize="small" />}
+                </IconButton>
+              </span>
+            </Tooltip>
+            <Chip color="primary" size="small" label={`${filteredRows.length} / ${rows.length} 个标的组`} />
+          </Stack>
         </Stack>
 
         <TableContainer
@@ -79,8 +146,8 @@ export default function WatchlistTable({ tier, rows, search, ratingFilter, riskD
             </TableHead>
             <TableBody>
               {filteredRows.map((row) => {
-                const open = expandedRowId === row.id
-                const riskGroup = riskData?.find(r => r.symbol?.toLowerCase() === row.key?.toLowerCase() || r.symbol?.toLowerCase() === row.groupName?.toLowerCase())
+                const open = expandedRowIds.has(row.id)
+                const riskGroup = riskByKey.get(row.key) || riskByKey.get(canonicalGroupKey(row.groupName))
                 const actionLabel = riskGroup?.groupActionLabel || 'N/A'
                 
                 return (

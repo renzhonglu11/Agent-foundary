@@ -1,4 +1,5 @@
-import { Box, Chip, Stack, Typography } from '@mui/material'
+import { Accordion, AccordionDetails, AccordionSummary, Box, Stack, Typography } from '@mui/material'
+import ExpandMoreRoundedIcon from '@mui/icons-material/ExpandMoreRounded'
 
 import { preciseCurrency } from '../../utils/formatters.js'
 import { formatNumber2, formatPercent2 } from './stockAnalysisUi.js'
@@ -15,54 +16,116 @@ export default function DetailPanel({ row }) {
       }}
     >
       <Stack spacing={1.5}>
-        <Box>
-          <Typography variant="caption" color="text.secondary">{row.tierNote}</Typography>
-        </Box>
-        <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap' }}>
-          <Chip size="small" label={`市值 ${preciseCurrency.format(row.marketValue)}`} />
-          <Chip size="small" label={`价格 ${preciseCurrency.format(row.price)}`} />
-          <Chip size="small" label={`数量 ${formatNumber2(row.quantity)}`} />
-          <Chip size="small" label={`成本 ${preciseCurrency.format(row.costBasis)}`} />
-          <Chip size="small" color={row.unrealizedPnl >= 0 ? 'success' : 'error'} label={`浮盈亏 ${preciseCurrency.format(row.unrealizedPnl)} (${formatPercent2(row.unrealizedPct)})`} />
-          <Chip size="small" variant="outlined" label={`资产类型 ${row.assetClass}`} />
-          <Chip
-            size="small"
-            color={row.liveEnrichmentEnabled ? 'success' : 'default'}
-            variant="outlined"
-            label={row.liveStockQuoteEnabled ? 'Alpaca 实时价格' : `${row.enrichmentTier?.toUpperCase()} ${row.liveEnrichmentEnabled ? '实时更新' : '非实时'}`}
-          />
-          {row.productType ? <Chip size="small" color="info" variant="outlined" label={`产品类型 ${row.productType}`} /> : null}
-          {row.leverage != null ? <Chip size="small" color="warning" variant="outlined" label={`Hebel ${Number(row.leverage).toFixed(2)}x`} /> : null}
-          {row.delta != null ? <Chip size="small" color="secondary" variant="outlined" label={`Delta ${Number(row.delta).toFixed(2)}`} /> : null}
-          {row.quoteSource ? <Chip size="small" color="success" variant="outlined" label={`报价来源 ${row.quoteSource}`} /> : null}
-          {row.alpacaSymbol ? <Chip size="small" variant="outlined" label={`Alpaca ${row.alpacaSymbol}`} /> : null}
-          {row.metadataSource ? <Chip size="small" variant="outlined" label={`Metadata ${row.metadataSource}`} /> : null}
-        </Stack>
-        <Stack spacing={0.25}>
-          {row.pdfName ? <Typography variant="caption" color="text.secondary">PDF 名称：{row.pdfName}</Typography> : null}
-          {row.issuer ? <Typography variant="caption" color="text.secondary">Issuer：{row.issuer}</Typography> : null}
-          {row.instrument ? <Typography variant="caption" color="text.secondary">Instrument：{row.instrument}</Typography> : null}
-          {row.underlying ? <Typography variant="caption" color="text.secondary">Underlying：{row.underlying}</Typography> : null}
-          {row.underlyingSpot != null ? <Typography variant="caption" color="text.secondary">Spot：{preciseCurrency.format(row.underlyingSpot)}</Typography> : null}
-          {row.strikePrice != null ? <Typography variant="caption" color="text.secondary">Basispreis：{preciseCurrency.format(row.strikePrice)}</Typography> : null}
-          {row.knockoutPrice != null ? <Typography variant="caption" color="text.secondary">Knock-Out：{preciseCurrency.format(row.knockoutPrice)}</Typography> : null}
-          {row.resetBarrier != null ? <Typography variant="caption" color="text.secondary">Akt. Reset-Barriere：{preciseCurrency.format(row.resetBarrier)}</Typography> : null}
-          {row.ratio != null ? <Typography variant="caption" color="text.secondary">Bezugsverhältnis：{formatNumber2(row.ratio)}</Typography> : null}
-          {row.calculatedBreakEven != null ? <Typography variant="caption" color="text.secondary">Break-even：{preciseCurrency.format(row.calculatedBreakEven)}</Typography> : null}
-          {row.expiry ? <Typography variant="caption" color="text.secondary">Fälligkeit：{row.expiry}</Typography> : null}
-          {row.bidPrice != null || row.askPrice != null ? (
-            <Typography variant="caption" color="text.secondary">
-              Alpaca IEX：Bid {formatNumber2(row.bidPrice)} / Ask {formatNumber2(row.askPrice)}{row.priceAsOf ? ` · ${row.priceAsOf}` : ''}
-            </Typography>
-          ) : null}
-          {row.omega != null || row.theta != null || row.iv != null ? (
-            <Typography variant="caption" color="text.secondary">
-              Greeks：{row.omega != null ? `Omega ${formatNumber2(row.omega)} ` : ''}{row.theta != null ? `Theta ${formatNumber2(row.theta)} ` : ''}{row.iv != null ? `IV ${formatNumber2(Number(row.iv) * 100)}%` : ''}
-            </Typography>
-          ) : null}
-          {row.lastTradeDate ? <Typography variant="caption" color="text.secondary">最近交易日期：{row.lastTradeDate}</Typography> : null}
-        </Stack>
+        <MetricSection
+          title="Position"
+          items={[
+            ['市值', currencyOrDash(row.marketValue)],
+            ['价格', currencyOrDash(row.price)],
+            ['数量', formatNumber2(row.quantity)],
+            ['成本', currencyOrDash(row.costBasis)],
+            ['盈亏', currencyOrDash(row.unrealizedPnl), row.unrealizedPnl >= 0 ? 'success.main' : 'error.main'],
+            ['盈亏率', formatPercent2(row.unrealizedPct), row.unrealizedPnl >= 0 ? 'success.main' : 'error.main'],
+          ]}
+        />
+
+        {row.isDerivative ? (
+          <>
+            <MetricSection
+              title="Risk"
+              items={[
+                [row.deltaExposureEstimated ? 'Delta Exp est.' : 'Delta Exp', currencyOrDash(row.deltaExposureEur)],
+                ['Delta', numberOrDash(row.delta)],
+                ['Omega', numberOrDash(row.omega)],
+                ['IV', percentRatioOrDash(row.iv)],
+                ['Theta', numberOrDash(row.theta)],
+              ]}
+            />
+            <MetricSection
+              title="Contract"
+              items={[
+                ['Strike', currencyOrDash(row.strikePrice)],
+                ['Ratio', numberOrDash(row.ratio)],
+                ['Break-even', currencyOrDash(row.calculatedBreakEven)],
+                ['Expiry', row.expiry || '—'],
+                ['Knock-Out', currencyOrDash(row.knockoutPrice)],
+                ['Reset barrier', currencyOrDash(row.resetBarrier)],
+              ]}
+            />
+          </>
+        ) : null}
+
+        <Accordion disableGutters elevation={0} sx={{ border: '1px solid #e5eaef', borderRadius: 1.5, '&:before': { display: 'none' } }}>
+          <AccordionSummary expandIcon={<ExpandMoreRoundedIcon />} sx={{ minHeight: 36, px: 1.5, '& .MuiAccordionSummary-content': { my: 0.75 } }}>
+            <Typography variant="body2" fontWeight={800}>数据诊断</Typography>
+          </AccordionSummary>
+          <AccordionDetails sx={{ px: 1.5, pt: 0, pb: 1.5 }}>
+            <MetricGrid
+              items={[
+                ['实时状态', realtimeStatus(row)],
+                ['Metadata source', row.metadataSource || '—'],
+                ['Greeks source', row.greeksSource || '—'],
+                ['Quote source', row.quoteSource || '—'],
+                ['Quote time', row.priceAsOf || '—'],
+                ['Product type', row.productType || '—'],
+                ['Tier', row.enrichmentTier || '—'],
+                ['ISIN', row.symbol || '—'],
+                ['PDF name', row.pdfName || '—'],
+                ['Instrument raw', row.instrument || '—'],
+                ['Underlying', row.underlying || '—'],
+              ]}
+              dense
+            />
+          </AccordionDetails>
+        </Accordion>
       </Stack>
     </Box>
   )
+}
+
+function MetricSection({ title, items }) {
+  return (
+    <Box>
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.75, fontWeight: 800 }}>{title}</Typography>
+      <MetricGrid items={items} />
+    </Box>
+  )
+}
+
+function MetricGrid({ items, dense = false }) {
+  return (
+    <Box
+      sx={{
+        display: 'grid',
+        gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))', lg: 'repeat(3, minmax(0, 1fr))' },
+        gap: dense ? 0.75 : 1,
+      }}
+    >
+      {items.map(([label, value, tone]) => (
+        <Box key={label} sx={{ minWidth: 0 }}>
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', lineHeight: 1.2 }}>{label}</Typography>
+          <Typography variant="body2" sx={{ color: tone || 'text.primary', fontWeight: 800, wordBreak: 'break-word' }}>{value}</Typography>
+        </Box>
+      ))}
+    </Box>
+  )
+}
+
+function currencyOrDash(value) {
+  const numeric = Number(value)
+  return Number.isFinite(numeric) ? preciseCurrency.format(numeric) : '—'
+}
+
+function numberOrDash(value) {
+  return Number.isFinite(Number(value)) ? formatNumber2(value) : '—'
+}
+
+function percentRatioOrDash(value) {
+  return Number.isFinite(Number(value)) ? `${formatNumber2(Number(value) * 100)}%` : '—'
+}
+
+function realtimeStatus(row) {
+  if (row.liveStockQuoteEnabled) return 'Alpaca realtime'
+  if (row.liveEnrichmentEnabled) return 'structured-products realtime'
+  if (row.metadataSource || row.greeksSource) return 'cache/provider fallback'
+  return 'portfolio fallback'
 }
