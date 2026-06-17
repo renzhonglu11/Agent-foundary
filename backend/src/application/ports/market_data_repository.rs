@@ -22,6 +22,12 @@ pub struct MarketQuoteRecord {
     pub fetched_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone)]
+pub struct RealtimePayloadRecord {
+    pub payload_json: String,
+    pub updated_at: String,
+}
+
 #[async_trait::async_trait]
 pub trait MarketDataRepository: Send + Sync {
     async fn load_quotes(
@@ -34,6 +40,9 @@ pub trait MarketDataRepository: Send + Sync {
     async fn store_quotes(&self, quotes: &[MarketQuoteRecord]) -> anyhow::Result<()>;
 
     async fn load_payload(&self, key: &str) -> anyhow::Result<Option<String>>;
+
+    async fn load_payload_record(&self, key: &str)
+    -> anyhow::Result<Option<RealtimePayloadRecord>>;
 
     async fn store_payload(
         &self,

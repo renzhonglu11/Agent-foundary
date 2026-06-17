@@ -22,9 +22,11 @@ pub struct StructuredProductsSettings {
     pub command: String,
     pub working_dir: PathBuf,
     pub output_json_path: PathBuf,
+    pub risk_json_path: PathBuf,
     pub output_csv_path: PathBuf,
     pub output_db_path: PathBuf,
     pub no_live_enrichment: bool,
+    pub export_files: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -110,10 +112,7 @@ impl StructuredProductsSettings {
     fn from_env() -> Self {
         Self {
             enabled: env_bool("STRUCTURED_PRODUCTS_ENRICHMENT_ENABLED", true),
-            command: env_or(
-                "STRUCTURED_PRODUCTS_ENRICHMENT_COMMAND",
-                ".venv/bin/agent-foundry-structured-products",
-            ),
+            command: env_or("STRUCTURED_PRODUCTS_ENRICHMENT_COMMAND", "uv"),
             working_dir: PathBuf::from(env_or(
                 "STRUCTURED_PRODUCTS_ENRICHMENT_WORKDIR",
                 "backend/python",
@@ -121,6 +120,10 @@ impl StructuredProductsSettings {
             output_json_path: PathBuf::from(env_or(
                 "STRUCTURED_PRODUCTS_ENRICHMENT_JSON",
                 "data/structured-products-enrichment.json",
+            )),
+            risk_json_path: PathBuf::from(env_or(
+                "STRUCTURED_PRODUCTS_RISK_JSON",
+                "data/structured-products-risk.json",
             )),
             output_csv_path: PathBuf::from(env_or(
                 "STRUCTURED_PRODUCTS_ENRICHMENT_CSV",
@@ -131,6 +134,7 @@ impl StructuredProductsSettings {
                 "data/structured-products-enrichment.sqlite3",
             )),
             no_live_enrichment: env_bool("STRUCTURED_PRODUCTS_ENRICHMENT_NO_LIVE", false),
+            export_files: env_bool("STRUCTURED_PRODUCTS_EXPORT_FILES", false),
         }
     }
 }

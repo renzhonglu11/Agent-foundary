@@ -15,6 +15,6 @@ pub use portfolio::portfolio_summary;
 pub use stock_analysis::stock_analysis_alpaca_quotes;
 pub use structured_products::{
     refresh_structured_products_enrichment, structured_products_enrichment,
-    structured_products_enrichment_status,
+    structured_products_enrichment_status, structured_products_risk,
 };
 pub use upload::upload_data;

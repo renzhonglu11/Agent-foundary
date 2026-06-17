@@ -12,6 +12,7 @@ deploy/       systemd unit templates
 ```
 
 The old `scripts/generatePortfolioData.js` flow has been migrated into the Rust backend. The frontend still requests `/data/portfolio-summary.json`; in local development Vite proxies that path to `http://127.0.0.1:8080`.
+Structured-products enrichment and risk reports are served from the Rust backend's `realtime_payloads` SQLite cache; JSON/CSV files are fallback or debug exports and are only refreshed when `STRUCTURED_PRODUCTS_EXPORT_FILES=true`.
 
 ## Backend
 

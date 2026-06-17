@@ -10,6 +10,7 @@ use tracing::warn;
 use crate::{
     application::{
         ports::{
+            market_data_repository::MarketDataRepository,
             transaction_repository::TransactionRepository,
             upload_archive_repository::UploadArchiveRepository,
         },
@@ -24,12 +25,15 @@ use crate::{
 };
 use serde::Deserialize;
 
+const STRUCTURED_PRODUCTS_PAYLOAD_KEY: &str = "structured_products_enrichment";
+
 #[derive(Clone)]
 pub struct PortfolioService {
     repository: Arc<dyn TransactionRepository>,
+    market_data_repository: Arc<dyn MarketDataRepository>,
     upload_archive_repository: Arc<dyn UploadArchiveRepository>,
     csv_source: Arc<RwLock<String>>,
-    structured_products_json_path: Option<PathBuf>,
+    structured_products_fallback_json_path: Option<PathBuf>,
     summary_cache: Arc<RwLock<Option<CachedPortfolioSummary>>>,
 }
 
@@ -42,21 +46,23 @@ struct CachedPortfolioSummary {
 impl PortfolioService {
     pub fn new(
         repository: Arc<dyn TransactionRepository>,
+        market_data_repository: Arc<dyn MarketDataRepository>,
         upload_archive_repository: Arc<dyn UploadArchiveRepository>,
         csv_source: String,
-        structured_products_json_path: Option<PathBuf>,
+        structured_products_fallback_json_path: Option<PathBuf>,
     ) -> Self {
         Self {
             repository,
+            market_data_repository,
             upload_archive_repository,
             csv_source: Arc::new(RwLock::new(csv_source)),
-            structured_products_json_path,
+            structured_products_fallback_json_path,
             summary_cache: Arc::new(RwLock::new(None)),
         }
     }
 
     pub async fn summary(&self) -> anyhow::Result<PortfolioSummaryResponse> {
-        if let Some(summary) = self.cached_summary()? {
+        if let Some(summary) = self.cached_summary().await? {
             return Ok(summary);
         }
 
@@ -65,13 +71,14 @@ impl PortfolioService {
 
     pub async fn refresh_summary_cache(&self) -> anyhow::Result<PortfolioSummaryResponse> {
         let summary = self.calculate_summary().await?;
+        let quote_source_modified_at = self.quote_source_version().await;
         let mut cache = self
             .summary_cache
             .write()
             .map_err(|_| anyhow!("portfolio summary cache lock poisoned"))?;
         *cache = Some(CachedPortfolioSummary {
             summary: summary.clone(),
-            quote_source_modified_at: self.quote_source_modified_at(),
+            quote_source_modified_at,
         });
 
         Ok(summary)
@@ -111,7 +118,8 @@ impl PortfolioService {
         Ok((imported_rows, summary))
     }
 
-    fn cached_summary(&self) -> anyhow::Result<Option<PortfolioSummaryResponse>> {
+    async fn cached_summary(&self) -> anyhow::Result<Option<PortfolioSummaryResponse>> {
+        let quote_source_version = self.quote_source_version().await;
         let cache = self
             .summary_cache
             .read()
@@ -120,7 +128,7 @@ impl PortfolioService {
         let Some(cached) = cache.as_ref() else {
             return Ok(None);
         };
-        if cached.quote_source_modified_at == self.quote_source_modified_at() {
+        if cached.quote_source_modified_at == quote_source_version {
             Ok(Some(cached.summary.clone()))
         } else {
             Ok(None)
@@ -161,9 +169,10 @@ impl PortfolioService {
         let isin_names = build_isin_name_map_from_text(
             latest_pdf.as_ref().map(|pdf| pdf.extracted_text.as_str()),
         );
-        let price_overrides =
-            build_structured_product_price_overrides(self.structured_products_json_path.as_deref())
-                .context("failed to parse structured products quote overrides")?;
+        let price_overrides = self
+            .build_structured_product_price_overrides()
+            .await
+            .context("failed to parse structured products quote overrides")?;
         let csv_source = self
             .csv_source
             .read()
@@ -187,11 +196,37 @@ impl PortfolioService {
         ))
     }
 
-    fn quote_source_modified_at(&self) -> Option<SystemTime> {
-        self.structured_products_json_path
+    async fn quote_source_version(&self) -> Option<SystemTime> {
+        if let Ok(Some(record)) = self
+            .market_data_repository
+            .load_payload_record(STRUCTURED_PRODUCTS_PAYLOAD_KEY)
+            .await
+        {
+            return chrono::DateTime::parse_from_rfc3339(&record.updated_at)
+                .ok()
+                .map(|value| value.into());
+        }
+
+        self.structured_products_fallback_json_path
             .as_deref()
             .and_then(|path| std::fs::metadata(path).ok())
             .and_then(|metadata| metadata.modified().ok())
+    }
+
+    async fn build_structured_product_price_overrides(
+        &self,
+    ) -> anyhow::Result<std::collections::HashMap<String, PriceOverride>> {
+        if let Some(content) = self
+            .market_data_repository
+            .load_payload(STRUCTURED_PRODUCTS_PAYLOAD_KEY)
+            .await?
+        {
+            return build_structured_product_price_overrides_from_json(&content);
+        }
+
+        build_structured_product_price_overrides_from_file(
+            self.structured_products_fallback_json_path.as_deref(),
+        )
     }
 }
 
@@ -208,7 +243,14 @@ struct StructuredProductQuoteRow {
     quote_source: Option<String>,
 }
 
-fn build_structured_product_price_overrides(
+fn build_structured_product_price_overrides_from_json(
+    content: &str,
+) -> anyhow::Result<std::collections::HashMap<String, PriceOverride>> {
+    let payload: StructuredProductsPayload = serde_json::from_str(content)?;
+    Ok(structured_product_price_overrides_from_payload(payload))
+}
+
+fn build_structured_product_price_overrides_from_file(
     path: Option<&Path>,
 ) -> anyhow::Result<std::collections::HashMap<String, PriceOverride>> {
     let Some(path) = path else {
@@ -219,8 +261,13 @@ fn build_structured_product_price_overrides(
     }
 
     let content = std::fs::read_to_string(path)?;
-    let payload: StructuredProductsPayload = serde_json::from_str(&content)?;
-    let overrides = payload
+    build_structured_product_price_overrides_from_json(&content)
+}
+
+fn structured_product_price_overrides_from_payload(
+    payload: StructuredProductsPayload,
+) -> std::collections::HashMap<String, PriceOverride> {
+    payload
         .items
         .into_iter()
         .filter_map(|item| {
@@ -233,9 +280,7 @@ fn build_structured_product_price_overrides(
                 None
             }
         })
-        .collect();
-
-    Ok(overrides)
+        .collect()
 }
 
 #[cfg(test)]
@@ -255,7 +300,7 @@ mod tests {
             }"#,
         )?;
 
-        let overrides = build_structured_product_price_overrides(Some(temp.path()))?;
+        let overrides = build_structured_product_price_overrides_from_file(Some(temp.path()))?;
 
         assert_eq!(overrides.len(), 1);
         assert_eq!(overrides["DE000LIVE001"].price, 2.5);

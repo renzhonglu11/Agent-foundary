@@ -41,6 +41,10 @@ pub fn build(state: Arc<AppState>, frontend_origin: &str) -> anyhow::Result<Rout
             get(handlers::structured_products_enrichment),
         )
         .route(
+            "/data/structured-products-risk.json",
+            get(handlers::structured_products_risk),
+        )
+        .route(
             "/api/structured-products-enrichment/refresh",
             post(handlers::refresh_structured_products_enrichment),
         )

@@ -56,6 +56,7 @@ impl App {
         let market_data_repository = Arc::new(SqliteMarketDataRepository::new(pool.clone()));
         let portfolio_service = PortfolioService::new(
             repository,
+            market_data_repository.clone(),
             upload_archive_repository.clone(),
             settings.database_url.clone(),
             Some(settings.structured_products.output_json_path.clone()),

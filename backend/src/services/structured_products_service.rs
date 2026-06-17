@@ -19,6 +19,7 @@ use crate::{
 };
 
 const STRUCTURED_PRODUCTS_PAYLOAD_KEY: &str = "structured_products_enrichment";
+const STRUCTURED_PRODUCTS_RISK_PAYLOAD_KEY: &str = "structured_products_risk";
 
 #[derive(Debug, Clone, Copy)]
 pub enum RefreshMode {
@@ -31,9 +32,11 @@ pub struct StructuredProductsService {
     settings: StructuredProductsSettings,
     market_data_repository: Arc<dyn MarketDataRepository>,
     output_json_path: PathBuf,
+    risk_json_path: PathBuf,
     output_csv_path: PathBuf,
     output_db_path: PathBuf,
     uv_cache_path: PathBuf,
+    playwright_browsers_path: PathBuf,
     refresh_lock: Arc<Mutex<()>>,
     status: Arc<RwLock<RefreshStatus>>,
 }
@@ -51,6 +54,13 @@ struct RefreshStatus {
     last_error: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+struct TemporaryOutputPaths {
+    enrichment_json: PathBuf,
+    risk_json: PathBuf,
+    csv: PathBuf,
+}
+
 impl StructuredProductsService {
     pub fn new(
         settings: StructuredProductsSettings,
@@ -58,9 +68,11 @@ impl StructuredProductsService {
     ) -> anyhow::Result<Self> {
         Ok(Self {
             output_json_path: absolute_path(&settings.output_json_path)?,
+            risk_json_path: absolute_path(&settings.risk_json_path)?,
             output_csv_path: absolute_path(&settings.output_csv_path)?,
             output_db_path: absolute_path(&settings.output_db_path)?,
             uv_cache_path: absolute_path(Path::new("data/uv-cache"))?,
+            playwright_browsers_path: absolute_path(Path::new("data/playwright-browsers"))?,
             settings,
             market_data_repository,
             refresh_lock: Arc::new(Mutex::new(())),
@@ -69,19 +81,23 @@ impl StructuredProductsService {
     }
 
     pub async fn refresh_if_missing(&self, summary: PortfolioSummaryResponse) {
-        if self.output_json_path.exists() {
-            return;
-        }
-
-        match self
+        let enrichment_payload = self
             .market_data_repository
             .load_payload(STRUCTURED_PRODUCTS_PAYLOAD_KEY)
-            .await
-        {
-            Ok(Some(_)) => return,
-            Ok(None) => {}
-            Err(error) => {
+            .await;
+        let risk_payload = self
+            .market_data_repository
+            .load_payload(STRUCTURED_PRODUCTS_RISK_PAYLOAD_KEY)
+            .await;
+
+        match (&enrichment_payload, &risk_payload) {
+            (Ok(Some(_)), Ok(Some(_))) => return,
+            (Ok(_), Ok(_)) => {}
+            (Err(error), _) => {
                 warn!(%error, "failed to check persisted structured products payload");
+            }
+            (_, Err(error)) => {
+                warn!(%error, "failed to check persisted structured products risk payload");
             }
         }
 
@@ -107,35 +123,49 @@ impl StructuredProductsService {
     }
 
     pub async fn read_payload(&self) -> Value {
-        match self
-            .market_data_repository
-            .load_payload(STRUCTURED_PRODUCTS_PAYLOAD_KEY)
-            .await
-        {
+        self.read_json_payload(
+            STRUCTURED_PRODUCTS_PAYLOAD_KEY,
+            &self.output_json_path,
+            self.empty_enrichment_payload(None),
+        )
+        .await
+    }
+
+    pub async fn read_risk_payload(&self) -> Value {
+        self.read_json_payload(
+            STRUCTURED_PRODUCTS_RISK_PAYLOAD_KEY,
+            &self.risk_json_path,
+            Value::Array(Vec::new()),
+        )
+        .await
+    }
+
+    async fn read_json_payload(&self, payload_key: &str, path: &Path, fallback: Value) -> Value {
+        match self.market_data_repository.load_payload(payload_key).await {
             Ok(Some(content)) => match serde_json::from_str::<Value>(&content) {
                 Ok(payload) => return payload,
                 Err(error) => {
-                    warn!(%error, "failed to parse persisted structured products payload");
+                    warn!(%error, payload_key, "failed to parse persisted realtime payload");
                 }
             },
             Ok(None) => {}
             Err(error) => {
-                warn!(%error, "failed to read persisted structured products payload");
+                warn!(%error, payload_key, "failed to read persisted realtime payload");
             }
         }
 
-        match tokio::fs::read_to_string(&self.output_json_path).await {
+        match tokio::fs::read_to_string(path).await {
             Ok(content) => match serde_json::from_str::<Value>(&content) {
                 Ok(payload) => payload,
-                Err(error) => self.empty_payload(Some(format!(
-                    "Failed to parse {}: {error}",
-                    self.output_json_path.display()
-                ))),
+                Err(error) => self.payload_with_read_error(
+                    fallback,
+                    format!("Failed to parse {}: {error}", path.display()),
+                ),
             },
-            Err(error) => self.empty_payload(Some(format!(
-                "File not found or unreadable: {} ({error})",
-                self.output_json_path.display()
-            ))),
+            Err(error) => self.payload_with_read_error(
+                fallback,
+                format!("File not found or unreadable: {} ({error})", path.display()),
+            ),
         }
     }
 
@@ -209,13 +239,67 @@ impl StructuredProductsService {
         Ok(path)
     }
 
+    fn temporary_output_paths(&self) -> anyhow::Result<TemporaryOutputPaths> {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or_default();
+        let suffix = format!("{}-{timestamp}", std::process::id());
+        let output_dir = self
+            .output_json_path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."));
+        let csv_dir = self
+            .output_csv_path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."));
+
+        Ok(TemporaryOutputPaths {
+            enrichment_json: output_dir
+                .join(format!(".structured-products-enrichment-{suffix}.json")),
+            risk_json: output_dir.join(format!(".structured-products-risk-{suffix}.json")),
+            csv: csv_dir.join(format!(".structured-products-enrichment-{suffix}.csv")),
+        })
+    }
+
+    async fn export_temporary_outputs(&self, paths: &TemporaryOutputPaths) -> anyhow::Result<()> {
+        if let Some(parent) = self.output_json_path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        if let Some(parent) = self.risk_json_path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        if let Some(parent) = self.output_csv_path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+
+        tokio::fs::copy(&paths.enrichment_json, &self.output_json_path).await?;
+        tokio::fs::copy(&paths.risk_json, &self.risk_json_path).await?;
+        tokio::fs::copy(&paths.csv, &self.output_csv_path).await?;
+        self.cleanup_temporary_outputs(paths).await;
+        Ok(())
+    }
+
+    async fn cleanup_temporary_outputs(&self, paths: &TemporaryOutputPaths) {
+        let _ = tokio::fs::remove_file(&paths.enrichment_json).await;
+        let _ = tokio::fs::remove_file(&paths.risk_json).await;
+        let _ = tokio::fs::remove_file(&paths.csv).await;
+    }
+
     async fn run_generator(
         &self,
         summary_path: &Path,
         reason: &'static str,
         mode: RefreshMode,
     ) -> anyhow::Result<()> {
+        let output_paths = self.temporary_output_paths()?;
+
         if let Some(parent) = self.output_json_path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        if let Some(parent) = self.risk_json_path.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
         if let Some(parent) = self.output_csv_path.parent() {
@@ -225,6 +309,7 @@ impl StructuredProductsService {
             tokio::fs::create_dir_all(parent).await?;
         }
         tokio::fs::create_dir_all(&self.uv_cache_path).await?;
+        tokio::fs::create_dir_all(&self.playwright_browsers_path).await?;
 
         let command_path =
             resolve_command_path(&self.settings.command, &self.settings.working_dir)?;
@@ -233,25 +318,20 @@ impl StructuredProductsService {
         if command_uses_uv(&self.settings.command) {
             command
                 .env("UV_CACHE_DIR", &self.uv_cache_path)
+                .env("PLAYWRIGHT_BROWSERS_PATH", &self.playwright_browsers_path)
                 .arg("run")
-                .arg("--with")
-                .arg("httpx")
-                .arg("--with")
-                .arg("beautifulsoup4")
-                .arg("--with")
-                .arg("lxml")
-                .arg("--with")
-                .arg("pydantic")
-                .arg("python");
+                .arg("agent-foundry-structured-products");
         }
 
         command
             .arg("--summary-json")
             .arg(summary_path)
             .arg("--csv")
-            .arg(&self.output_csv_path)
+            .arg(&output_paths.csv)
             .arg("--json")
-            .arg(&self.output_json_path)
+            .arg(&output_paths.enrichment_json)
+            .arg("--risk-json")
+            .arg(&output_paths.risk_json)
             .arg("--db")
             .arg(&self.output_db_path);
 
@@ -264,7 +344,7 @@ impl StructuredProductsService {
 
         info!(
             reason,
-            output = %self.output_json_path.display(),
+            output = %output_paths.enrichment_json.display(),
             "starting structured products enrichment refresh"
         );
         command.stdout(std::process::Stdio::piped());
@@ -313,17 +393,18 @@ impl StructuredProductsService {
             .context("structured products stderr reader task failed")??;
 
         if !status.success() {
+            self.cleanup_temporary_outputs(&output_paths).await;
             return Err(anyhow!(
                 "structured products generator exited with {status}: {stderr}",
             ));
         }
 
-        let payload_json = tokio::fs::read_to_string(&self.output_json_path)
+        let payload_json = tokio::fs::read_to_string(&output_paths.enrichment_json)
             .await
             .with_context(|| {
                 format!(
                     "failed to read structured products output {}",
-                    self.output_json_path.display()
+                    output_paths.enrichment_json.display()
                 )
             })?;
         self.market_data_repository
@@ -335,16 +416,41 @@ impl StructuredProductsService {
             .await
             .context("failed to persist structured products realtime payload")?;
 
+        let risk_payload_json = tokio::fs::read_to_string(&output_paths.risk_json)
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to read structured products risk output {}",
+                    output_paths.risk_json.display()
+                )
+            })?;
+        self.market_data_repository
+            .store_payload(
+                STRUCTURED_PRODUCTS_RISK_PAYLOAD_KEY,
+                &risk_payload_json,
+                &chrono::Utc::now().to_rfc3339(),
+            )
+            .await
+            .context("failed to persist structured products risk payload")?;
+
+        if self.settings.export_files {
+            self.export_temporary_outputs(&output_paths).await?;
+        } else {
+            self.cleanup_temporary_outputs(&output_paths).await;
+        }
+
         info!(
             reason,
-            output = %self.output_json_path.display(),
+            output = %output_paths.enrichment_json.display(),
+            risk_output = %output_paths.risk_json.display(),
+            exported = self.settings.export_files,
             stdout = %stdout.trim(),
             "structured products enrichment refresh finished"
         );
         Ok(())
     }
 
-    fn empty_payload(&self, read_error: Option<String>) -> Value {
+    fn empty_enrichment_payload(&self, read_error: Option<String>) -> Value {
         json!({
             "source": "rust_backend_structured_products_service",
             "count": 0,
@@ -352,6 +458,17 @@ impl StructuredProductsService {
             "read_error": read_error,
             "path": self.output_json_path.display().to_string(),
         })
+    }
+
+    fn payload_with_read_error(&self, mut fallback: Value, read_error: String) -> Value {
+        match &mut fallback {
+            Value::Object(map) => {
+                map.insert("read_error".to_owned(), Value::String(read_error));
+                fallback
+            }
+            Value::Array(_) => fallback,
+            _ => json!({ "read_error": read_error }),
+        }
     }
 
     fn mark_started(&self, mode: RefreshMode) {

@@ -11,6 +11,10 @@ pub async fn structured_products_enrichment(State(state): State<Arc<AppState>>) 
     Json(state.structured_products_service.read_payload().await)
 }
 
+pub async fn structured_products_risk(State(state): State<Arc<AppState>>) -> Json<Value> {
+    Json(state.structured_products_service.read_risk_payload().await)
+}
+
 pub async fn structured_products_enrichment_status(
     State(state): State<Arc<AppState>>,
 ) -> Json<Value> {

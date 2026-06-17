@@ -149,7 +149,9 @@ impl FredService {
 
         if cache_entry_age(entry.fetched_at) <= ttl {
             if entry.response.status == "sandbox_mock" && self.settings.api_key.is_some() {
-                info!("Ignoring in-memory sandbox_mock cache because FRED_API_KEY is now configured");
+                info!(
+                    "Ignoring in-memory sandbox_mock cache because FRED_API_KEY is now configured"
+                );
                 return None;
             }
 
