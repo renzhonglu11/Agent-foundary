@@ -246,8 +246,14 @@ def main():
             summary_commentary = ai_payload["summary_commentary"]
             sectors = ai_payload["sectors"]
             analysis_date = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        elif previous_data and "sectors" in previous_data and "summary_commentary" in previous_data:
+            print("Warning: LLM call failed. Falling back to previous cached AI analysis.")
+            summary_commentary = previous_data["summary_commentary"]
+            sectors = previous_data["sectors"]
+            analysis_date = previous_data.get("analysis_date", datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"))
+            used_cache = True
         else:
-            print("Warning: LLM call failed. Writing macro payload without AI commentary.")
+            print("Warning: LLM call failed and no previous cache exists. Writing macro payload without AI commentary.")
             write_output({
                 "analysis_date": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                 "ai_commentary_available": False,

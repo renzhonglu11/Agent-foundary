@@ -47,13 +47,13 @@ fn hermes_available() -> bool {
 
 fn mark_ai_commentary_unavailable(payload: &mut Value) {
     if let Some(obj) = payload.as_object_mut() {
-        obj.remove("summary_commentary");
-        obj.remove("sectors");
-        obj.insert("ai_commentary_available".to_string(), json!(false));
-        obj.insert(
-            "ai_commentary_unavailable_reason".to_string(),
-            json!("Hermes executable is not available in this environment"),
-        );
+        if !obj.contains_key("summary_commentary") {
+            obj.insert("ai_commentary_available".to_string(), json!(false));
+            obj.insert(
+                "ai_commentary_unavailable_reason".to_string(),
+                json!("Hermes executable is not available in this environment"),
+            );
+        }
     }
 }
 
