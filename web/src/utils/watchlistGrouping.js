@@ -259,12 +259,18 @@ function applyGroupSpotQuote(group, alpacaQuoteBySymbol) {
 
 function applyGroupMonitoringMetrics(group) {
   const spot = spotPriceForGroup(group)
+  const rawSpot = positiveNumber(group.spotQuote?.rawPrice)
+  const rawCurrency = group.spotQuote?.rawCurrency || null
+  const usdEurRate = positiveNumber(group.spotQuote?.usdEurRate)
   let deltaExposure = 0
   let hasDeltaExposure = false
   let hasEstimatedDeltaExposure = false
 
   group.instruments.forEach((row) => {
     row.underlyingSpot = spot
+    row.underlyingSpotRaw = rawSpot
+    row.underlyingSpotRawCurrency = rawCurrency
+    row.underlyingSpotUsdEurRate = usdEurRate
     row.calculatedBreakEven = breakEvenForRow(row)
     const rowDeltaExposure = calculateDeltaExposure(row, spot)
     row.deltaExposureEur = rowDeltaExposure.value
@@ -508,6 +514,7 @@ export function collectTier1AlpacaSymbols(stockRows) {
   const seen = new Set()
 
   tier1.forEach((group) => {
+    // Stocks (non-derivative positions) in the group
     group.stocks.forEach((row) => {
       const symbol = row.alpacaSymbol
       if (symbol && !seen.has(symbol)) {
@@ -515,6 +522,13 @@ export function collectTier1AlpacaSymbols(stockRows) {
         symbols.push(symbol)
       }
     })
+
+    // For derivative-only groups, resolve Alpaca symbol from the group's underlying
+    const groupSymbol = resolveAlpacaSymbolForGroup(group)
+    if (groupSymbol && !seen.has(groupSymbol)) {
+      seen.add(groupSymbol)
+      symbols.push(groupSymbol)
+    }
   })
 
   return symbols

@@ -98,7 +98,7 @@ export default function WatchlistTable({ tier, rows, search, ratingFilter, riskD
             <Typography variant="h6">{tier.title}</Typography>
             <Typography variant="body2" color="text.secondary">{tier.subtitle}</Typography>
           </Box>
-          <Stack direction="row" spacing={1} alignItems="center" useFlexGap sx={{ flexWrap: 'wrap' }}>
+          <Stack direction="row" spacing={1} useFlexGap sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
             <Tooltip title={allVisibleExpanded ? '全收起' : '全展开'}>
               <span>
                 <IconButton

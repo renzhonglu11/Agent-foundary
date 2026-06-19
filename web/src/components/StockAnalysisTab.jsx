@@ -7,6 +7,7 @@ import WatchlistTable from './stock-analysis/WatchlistTable.jsx'
 import { tiers } from './stock-analysis/stockAnalysisUi.js'
 import { buildWatchlistGroups, collectTier1AlpacaSymbols } from '../utils/watchlistGrouping.js'
 import { useRiskData } from '../hooks/useRiskData.js'
+import { loadStructuredProducts } from '../hooks/useStructuredProducts.js'
 
 const initialLiveProgress = { percent: 0, current: 0, total: 0, label: 'Starting realtime fetch' }
 
@@ -171,13 +172,6 @@ export default function StockAnalysisTab({ data }) {
       ))}
     </Stack>
   )
-}
-
-async function loadStructuredProducts() {
-  const response = await fetch('/data/structured-products-enrichment.json', { cache: 'no-store' })
-  if (!response.ok) return []
-  const payload = await response.json()
-  return Array.isArray(payload?.items) ? payload.items : []
 }
 
 async function fetchRefreshStatus() {

@@ -11,9 +11,9 @@ import TrendingUpRoundedIcon from '@mui/icons-material/TrendingUpRounded';
 
 const navItems = [
   { id: 'overview', label: 'Overview', subtitle: '总览', icon: DashboardRoundedIcon },
-  { id: 'positions', label: 'Positions', subtitle: '持仓查询', icon: AccountBalanceWalletRoundedIcon },
+  { id: 'positions', label: 'Positions', subtitle: '仓位监控', icon: AccountBalanceWalletRoundedIcon },
   { id: 'dividend', label: 'Dividend', subtitle: '股息 / 利息', icon: PaidRoundedIcon },
-  { id: 'stockAnalysis', label: 'Stock Picks', subtitle: '选股分析', icon: QueryStatsRoundedIcon },
+  { id: 'stockAnalysis', label: 'Stock Analysis', subtitle: '仓位分析', icon: QueryStatsRoundedIcon },
   { id: 'events', label: 'Macro Events', subtitle: '事件与宏观', icon: TrendingUpRoundedIcon },
   { id: 'hermesCron', label: 'Hermes Cron', subtitle: '定时任务状态', icon: ScheduleRoundedIcon },
 ];
