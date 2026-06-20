@@ -11,6 +11,7 @@ SERVICE_NAME="${SERVICE_NAME:-agent-foundry-backend}"
 SYNC_SERVICE_NAME="${SYNC_SERVICE_NAME:-agent-foundry-hermes-cron-sync}"
 REMOTE_UV_BIN="${REMOTE_UV_BIN:-/home/rz/.local/bin/uv}"
 REMOTE_UV_DIR="$(dirname -- "${REMOTE_UV_BIN}")"
+REMOTE_PYTHON_VENV="${REMOTE_PYTHON_VENV:-${REMOTE_ROOT}/backend/python/.venv}"
 HERMES_CRON_SOURCE_PATH="${HERMES_CRON_SOURCE_PATH:-/home/${SYNC_USER}/.hermes/cron/jobs.json}"
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -25,12 +26,16 @@ ENV_SOURCE="${ENV_SOURCE:-${DEFAULT_ENV_SOURCE}}"
 SERVICE_FILE_SOURCE="${REPO_ROOT}/deploy/agent-foundry-backend.service"
 SYNC_SCRIPT="${REPO_ROOT}/deploy/sync-hermes-cron-jobs.sh"
 SYNC_SERVICE_FILE_SOURCE="${REPO_ROOT}/deploy/agent-foundry-hermes-cron-sync.service"
-SYNC_PATH_FILE="${REPO_ROOT}/deploy/agent-foundry-hermes-cron-sync.path"
+SYNC_PATH_FILE_SOURCE="${REPO_ROOT}/deploy/agent-foundry-hermes-cron-sync.path"
 PYTHON_PROJECT_DIR="${REPO_ROOT}/backend/python"
 LOCAL_TMP_DIR="$(mktemp -d /tmp/agent-foundry-deploy-local.XXXXXX)"
 SERVICE_FILE="${LOCAL_TMP_DIR}/agent-foundry-backend.service"
 SYNC_SERVICE_FILE="${LOCAL_TMP_DIR}/agent-foundry-hermes-cron-sync.service"
 SYNC_PATH_FILE="${LOCAL_TMP_DIR}/agent-foundry-hermes-cron-sync.path"
+PYTHON_DIST_DIR="${LOCAL_TMP_DIR}/python-dist"
+PYTHON_REQUIREMENTS_FILE="${LOCAL_TMP_DIR}/python-requirements.txt"
+PYTHON_WHEEL_FILE=""
+PYTHON_WHEEL_BASENAME=""
 
 render_systemd_unit() {
   local source_file="$1"
@@ -61,6 +66,16 @@ echo "Using env file: ${ENV_FILE}"
 
 echo "Building release binary..."
 cargo build --release --manifest-path "${REPO_ROOT}/Cargo.toml"
+echo "Building Python wheel..."
+uv build --wheel --out-dir "${PYTHON_DIST_DIR}" "${PYTHON_PROJECT_DIR}"
+uv export --quiet --directory "${PYTHON_PROJECT_DIR}" --frozen --no-dev --no-emit-project --format requirements.txt --output-file "${PYTHON_REQUIREMENTS_FILE}"
+mapfile -t wheel_files < <(find "${PYTHON_DIST_DIR}" -maxdepth 1 -name '*.whl' -type f | sort)
+if [[ "${#wheel_files[@]}" -ne 1 ]]; then
+  echo "Expected exactly one Python wheel in ${PYTHON_DIST_DIR}, found ${#wheel_files[@]}." >&2
+  exit 1
+fi
+PYTHON_WHEEL_FILE="${wheel_files[0]}"
+PYTHON_WHEEL_BASENAME="$(basename -- "${PYTHON_WHEEL_FILE}")"
 render_systemd_unit "${SERVICE_FILE_SOURCE}" "${SERVICE_FILE}" "${REMOTE_USER}"
 render_systemd_unit "${SYNC_SERVICE_FILE_SOURCE}" "${SYNC_SERVICE_FILE}" "${SYNC_USER}"
 render_systemd_unit "${SYNC_PATH_FILE_SOURCE}" "${SYNC_PATH_FILE}" "${SYNC_USER}"
@@ -73,27 +88,14 @@ cleanup() {
 trap cleanup EXIT
 
 echo "Uploading files to ${SSH_HOST}:${TMP_DIR}..."
-ssh "${SSH_HOST}" "mkdir -p '${TMP_DIR}/backend-python'"
 scp "${BINARY}" "${SSH_HOST}:${TMP_DIR}/agent-foundry-backend"
 scp "${ENV_FILE}" "${SSH_HOST}:${TMP_DIR}/agent-foundry.env"
 scp "${SERVICE_FILE}" "${SSH_HOST}:${TMP_DIR}/agent-foundry-backend.service"
 scp "${SYNC_SCRIPT}" "${SSH_HOST}:${TMP_DIR}/sync-hermes-cron-jobs.sh"
 scp "${SYNC_SERVICE_FILE}" "${SSH_HOST}:${TMP_DIR}/agent-foundry-hermes-cron-sync.service"
 scp "${SYNC_PATH_FILE}" "${SSH_HOST}:${TMP_DIR}/agent-foundry-hermes-cron-sync.path"
-rsync -az --delete \
-  --exclude '.venv/' \
-  --exclude '__pycache__/' \
-  --exclude '*.pyc' \
-  --exclude '.pytest_cache/' \
-  --exclude '.mypy_cache/' \
-  --exclude '.ruff_cache/' \
-  --exclude '.coverage' \
-  --exclude 'htmlcov/' \
-  --exclude 'dist/' \
-  --exclude 'build/' \
-  --exclude '*.egg-info/' \
-  "${PYTHON_PROJECT_DIR}/" \
-  "${SSH_HOST}:${TMP_DIR}/backend-python/"
+scp "${PYTHON_WHEEL_FILE}" "${SSH_HOST}:${TMP_DIR}/${PYTHON_WHEEL_BASENAME}"
+scp "${PYTHON_REQUIREMENTS_FILE}" "${SSH_HOST}:${TMP_DIR}/python-requirements.txt"
 
 echo "Installing on VPS..."
 ssh -tt "${SSH_HOST}" "
@@ -106,26 +108,47 @@ ssh -tt "${SSH_HOST}" "
     sudo useradd --system --home '${REMOTE_ROOT}' --shell /usr/sbin/nologin '${REMOTE_USER}'
   fi
   sudo mv '${TMP_DIR}/agent-foundry-backend' '${REMOTE_ROOT}/bin/agent-foundry-backend'
+  sudo find '${REMOTE_ROOT}/bin' -maxdepth 1 -type f \( -name 'agent_foundry_python-*.whl' -o -name 'agent-foundry-python*.whl' \) -delete
+  sudo mv '${TMP_DIR}/${PYTHON_WHEEL_BASENAME}' '${REMOTE_ROOT}/bin/${PYTHON_WHEEL_BASENAME}'
+  sudo mv '${TMP_DIR}/python-requirements.txt' '${REMOTE_ROOT}/bin/python-requirements.txt'
   sudo mv '${TMP_DIR}/agent-foundry.env' '${REMOTE_ROOT}/.env'
-  sudo rm -rf '${REMOTE_ROOT}/backend/python'
-  sudo mkdir -p '${REMOTE_ROOT}/backend/python'
-  sudo cp -a '${TMP_DIR}/backend-python/.' '${REMOTE_ROOT}/backend/python/'
   sudo rm -rf '${REMOTE_ROOT}/tools/tr-structured-products'
-  sudo find '${REMOTE_ROOT}/backend/python' \
-    \( -name '.venv' -o -name '__pycache__' -o -name '.pytest_cache' -o -name '.mypy_cache' -o -name '.ruff_cache' -o -name 'htmlcov' -o -name 'dist' -o -name 'build' -o -name '*.egg-info' \) \
-    -prune -exec rm -rf {} +
-  sudo find '${REMOTE_ROOT}/backend/python' \
-    \( -name '*.pyc' -o -name '.coverage' \) \
-    -type f -delete
+  sudo install -d -o '${REMOTE_USER}' -g '${REMOTE_GROUP}' -m 0755 '${REMOTE_ROOT}/backend/python' '${REMOTE_PYTHON_VENV}'
   sudo mv '${TMP_DIR}/sync-hermes-cron-jobs.sh' '${REMOTE_ROOT}/bin/sync-hermes-cron-jobs.sh'
   sudo mv '${TMP_DIR}/agent-foundry-backend.service' '/etc/systemd/system/${SERVICE_NAME}.service'
   sudo mv '${TMP_DIR}/agent-foundry-hermes-cron-sync.service' '/etc/systemd/system/${SYNC_SERVICE_NAME}.service'
   sudo mv '${TMP_DIR}/agent-foundry-hermes-cron-sync.path' '/etc/systemd/system/${SYNC_SERVICE_NAME}.path'
   sudo install -d -o '${REMOTE_USER}' -g '${REMOTE_GROUP}' -m 2750 '${REMOTE_ROOT}/data/uv-cache'
   sudo install -d -o '${REMOTE_USER}' -g '${REMOTE_GROUP}' -m 2750 '${REMOTE_ROOT}/data/playwright-browsers'
-  sudo chown -R '${REMOTE_USER}:${REMOTE_GROUP}' '${REMOTE_ROOT}/backend/python' '${REMOTE_ROOT}/data/uv-cache' '${REMOTE_ROOT}/data/playwright-browsers'
-  sudo -u '${REMOTE_USER}' env UV_CACHE_DIR='${REMOTE_ROOT}/data/uv-cache' '${REMOTE_UV_BIN}' sync --directory '${REMOTE_ROOT}/backend/python' --frozen --no-dev
-  sudo -u '${REMOTE_USER}' env UV_CACHE_DIR='${REMOTE_ROOT}/data/uv-cache' PLAYWRIGHT_BROWSERS_PATH='${REMOTE_ROOT}/data/playwright-browsers' '${REMOTE_UV_BIN}' run --directory '${REMOTE_ROOT}/backend/python' playwright install chromium
+  sudo chown -R '${REMOTE_USER}:${REMOTE_GROUP}' '${REMOTE_PYTHON_VENV}' '${REMOTE_ROOT}/data/uv-cache' '${REMOTE_ROOT}/data/playwright-browsers'
+  sudo -u '${REMOTE_USER}' env UV_CACHE_DIR='${REMOTE_ROOT}/data/uv-cache' '${REMOTE_UV_BIN}' venv '${REMOTE_PYTHON_VENV}'
+  sudo -u '${REMOTE_USER}' env UV_CACHE_DIR='${REMOTE_ROOT}/data/uv-cache' '${REMOTE_UV_BIN}' pip install --python '${REMOTE_PYTHON_VENV}/bin/python' --exact --strict --reinstall-package agent-foundry-python -r '${REMOTE_ROOT}/bin/python-requirements.txt' '${REMOTE_ROOT}/bin/${PYTHON_WHEEL_BASENAME}'
+  sudo -u '${REMOTE_USER}' env UV_CACHE_DIR='${REMOTE_ROOT}/data/uv-cache' PLAYWRIGHT_BROWSERS_PATH='${REMOTE_ROOT}/data/playwright-browsers' '${REMOTE_PYTHON_VENV}/bin/playwright' install chromium
+  if sudo grep -q '^PDF_EXTRACT_COMMAND=' '${REMOTE_ROOT}/.env'; then
+    sudo sed -i 's#^PDF_EXTRACT_COMMAND=.*#PDF_EXTRACT_COMMAND=${REMOTE_PYTHON_VENV}/bin/agent-foundry-extract-pdf#' '${REMOTE_ROOT}/.env'
+  else
+    echo 'PDF_EXTRACT_COMMAND=${REMOTE_PYTHON_VENV}/bin/agent-foundry-extract-pdf' | sudo tee -a '${REMOTE_ROOT}/.env' >/dev/null
+  fi
+  if sudo grep -q '^MACRO_ANALYSIS_COMMAND=' '${REMOTE_ROOT}/.env'; then
+    sudo sed -i 's#^MACRO_ANALYSIS_COMMAND=.*#MACRO_ANALYSIS_COMMAND=${REMOTE_PYTHON_VENV}/bin/agent-foundry-macro-analysis#' '${REMOTE_ROOT}/.env'
+  else
+    echo 'MACRO_ANALYSIS_COMMAND=${REMOTE_PYTHON_VENV}/bin/agent-foundry-macro-analysis' | sudo tee -a '${REMOTE_ROOT}/.env' >/dev/null
+  fi
+  if sudo grep -q '^STRUCTURED_PRODUCTS_ENRICHMENT_COMMAND=' '${REMOTE_ROOT}/.env'; then
+    sudo sed -i 's#^STRUCTURED_PRODUCTS_ENRICHMENT_COMMAND=.*#STRUCTURED_PRODUCTS_ENRICHMENT_COMMAND=${REMOTE_PYTHON_VENV}/bin/agent-foundry-structured-products#' '${REMOTE_ROOT}/.env'
+  else
+    echo 'STRUCTURED_PRODUCTS_ENRICHMENT_COMMAND=${REMOTE_PYTHON_VENV}/bin/agent-foundry-structured-products' | sudo tee -a '${REMOTE_ROOT}/.env' >/dev/null
+  fi
+  if sudo grep -q '^STRUCTURED_PRODUCTS_ENRICHMENT_WORKDIR=' '${REMOTE_ROOT}/.env'; then
+    sudo sed -i 's#^STRUCTURED_PRODUCTS_ENRICHMENT_WORKDIR=.*#STRUCTURED_PRODUCTS_ENRICHMENT_WORKDIR=${REMOTE_ROOT}#' '${REMOTE_ROOT}/.env'
+  else
+    echo 'STRUCTURED_PRODUCTS_ENRICHMENT_WORKDIR=${REMOTE_ROOT}' | sudo tee -a '${REMOTE_ROOT}/.env' >/dev/null
+  fi
+  if sudo grep -q '^HERMES_CRON_JOBS_PATH=' '${REMOTE_ROOT}/.env'; then
+    sudo sed -i 's#^HERMES_CRON_JOBS_PATH=.*#HERMES_CRON_JOBS_PATH=data/hermes-cron/jobs.json#' '${REMOTE_ROOT}/.env'
+  else
+    echo 'HERMES_CRON_JOBS_PATH=data/hermes-cron/jobs.json' | sudo tee -a '${REMOTE_ROOT}/.env' >/dev/null
+  fi
   sudo chown -R '${REMOTE_USER}:${REMOTE_GROUP}' '${REMOTE_ROOT}'
   sudo install -d -o '${SYNC_USER}' -g '${REMOTE_GROUP}' -m 2750 '${REMOTE_ROOT}/data/hermes-cron'
   sudo chmod +x '${REMOTE_ROOT}/bin/agent-foundry-backend' '${REMOTE_ROOT}/bin/sync-hermes-cron-jobs.sh'
