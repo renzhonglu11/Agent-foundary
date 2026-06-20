@@ -36,6 +36,7 @@ use crate::{
         alpaca_market_data::AlpacaMarketDataService, apewisdom::ApeWisdomService,
         fred::FredService, hermes_cron_status::HermesCronStatusService,
         structured_products_service::StructuredProductsService,
+        systemd_status::SystemdStatusService,
     },
 };
 
@@ -85,11 +86,14 @@ impl App {
             market_data_repository,
         );
         let hermes_cron_status_service = HermesCronStatusService::new();
+        let systemd_status_service = SystemdStatusService::new();
         let ape_wisdom_service = ApeWisdomService::new();
         if let Err(e) = ape_wisdom_service.load_cache_from_file().await {
             tracing::warn!(error = %e, "Failed to load pre-existing ApeWisdom cache from file on startup");
         }
         ape_wisdom_service.start_polling_in_background();
+
+        structured_products_service.start_auto_refresh_loop(portfolio_service.clone());
 
         let fred_macro_data_cache = Arc::new(SqliteFredMacroDataCache::new(pool.clone()));
         let fred_service = FredService::new(settings.fred.clone(), fred_macro_data_cache);
@@ -108,6 +112,7 @@ impl App {
             hermes_cron_status_service,
             fred_service,
             ape_wisdom_service,
+            systemd_status_service,
         ));
         let router = router::build(state, &settings.frontend_origin)?;
 

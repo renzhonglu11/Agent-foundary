@@ -1,10 +1,11 @@
 use std::{
     path::{Path, PathBuf},
     sync::{Arc, RwLock},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context, anyhow};
+use chrono::Utc;
 use serde_json::{Value, json};
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
@@ -14,8 +15,13 @@ use tokio::{
 use tracing::{info, warn};
 
 use crate::{
-    application::ports::market_data_repository::MarketDataRepository,
-    config::StructuredProductsSettings, domain::portfolio::PortfolioSummaryResponse,
+    application::{
+        ports::market_data_repository::MarketDataRepository,
+        services::portfolio_service::PortfolioService,
+    },
+    config::StructuredProductsSettings,
+    domain::portfolio::PortfolioSummaryResponse,
+    services::market_calendar,
 };
 
 const STRUCTURED_PRODUCTS_PAYLOAD_KEY: &str = "structured_products_enrichment";
@@ -52,6 +58,8 @@ struct RefreshStatus {
     last_started_at: Option<String>,
     last_finished_at: Option<String>,
     last_error: Option<String>,
+    auto_refresh_active: bool,
+    last_scheduled_refresh_at: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -122,6 +130,89 @@ impl StructuredProductsService {
         });
     }
 
+    /// Start a background auto-refresh loop that keeps Tier-1 structured-product
+    /// data fresh during European trading hours (08:00–22:00 CET, Mon–Fri).
+    ///
+    /// * During market hours — refreshes every `auto_refresh_interval_mins`.
+    /// * After market close — takes one closing snapshot, then sleeps until the
+    ///   next trading day.
+    /// * Weekends & holidays — skipped (checked via FinCal API + hardcoded fallback).
+    pub fn start_auto_refresh_loop(&self, portfolio_service: PortfolioService) {
+        if !self.settings.auto_refresh_enabled {
+            info!("structured products auto-refresh is disabled");
+            return;
+        }
+
+        let service = self.clone();
+        let interval = Duration::from_secs(self.settings.auto_refresh_interval_mins * 60);
+        let market_open = self.settings.market_open_hour_cet;
+        let market_close = self.settings.market_close_hour_cet;
+        let sleep_off_hours = Duration::from_secs(1800); // 30 min when market is closed
+
+        tokio::spawn(async move {
+            // Brief initial delay so the server finishes binding its port.
+            tokio::time::sleep(Duration::from_secs(10)).await;
+            info!(
+                interval_mins = service.settings.auto_refresh_interval_mins,
+                market_open, market_close, "starting structured products auto-refresh loop"
+            );
+            service.set_auto_refresh_active(true);
+
+            let mut post_close_done = false;
+
+            loop {
+                let now = Utc::now();
+                let today = now.date_naive();
+                let cet_hour = market_calendar::current_cet_hour();
+
+                if !market_calendar::is_xetra_trading_day(today).await {
+                    // Weekend or public holiday — check back periodically.
+                    post_close_done = false;
+                    tokio::time::sleep(sleep_off_hours).await;
+                    continue;
+                }
+
+                if cet_hour >= market_open && cet_hour < market_close {
+                    // ----- Market hours: refresh on the configured interval -----
+                    post_close_done = false;
+                    let summary = match portfolio_service.summary().await {
+                        Ok(s) => s,
+                        Err(error) => {
+                            warn!(%error, "auto-refresh: failed to load portfolio summary, retrying");
+                            tokio::time::sleep(sleep_off_hours).await;
+                            continue;
+                        }
+                    };
+                    service.set_last_scheduled_refresh_at();
+                    service.spawn_refresh(summary, "scheduled", RefreshMode::Live);
+                    tokio::time::sleep(interval).await;
+                } else if cet_hour >= market_close && !post_close_done {
+                    // ----- Post-close: one snapshot, then wait for next open -----
+                    post_close_done = true;
+                    let summary = match portfolio_service.summary().await {
+                        Ok(s) => s,
+                        Err(error) => {
+                            warn!(%error, "auto-refresh: failed to load portfolio summary for close snapshot");
+                            tokio::time::sleep(sleep_off_hours).await;
+                            continue;
+                        }
+                    };
+                    info!("auto-refresh: taking post-close snapshot");
+                    service.set_last_scheduled_refresh_at();
+                    service.spawn_refresh(summary, "scheduled_close_snapshot", RefreshMode::Live);
+                    tokio::time::sleep(sleep_off_hours).await;
+                } else {
+                    // ----- Pre-market: wait until open -----
+                    let mins_to_open = market_open.saturating_sub(cet_hour);
+                    let wait = Duration::from_secs(
+                        (mins_to_open as u64 * 60).min(sleep_off_hours.as_secs()),
+                    );
+                    tokio::time::sleep(wait).await;
+                }
+            }
+        });
+    }
+
     pub async fn read_payload(&self) -> Value {
         self.read_json_payload(
             STRUCTURED_PRODUCTS_PAYLOAD_KEY,
@@ -181,6 +272,8 @@ impl StructuredProductsService {
                 "lastStartedAt": status.last_started_at,
                 "lastFinishedAt": status.last_finished_at,
                 "lastError": status.last_error,
+                "autoRefreshActive": status.auto_refresh_active,
+                "lastScheduledRefreshAt": status.last_scheduled_refresh_at,
             }),
             Err(_) => json!({
                 "running": false,
@@ -494,6 +587,18 @@ impl StructuredProductsService {
             }
             status.last_finished_at = Some(chrono::Utc::now().to_rfc3339());
             status.last_error = error;
+        }
+    }
+
+    fn set_auto_refresh_active(&self, active: bool) {
+        if let Ok(mut status) = self.status.write() {
+            status.auto_refresh_active = active;
+        }
+    }
+
+    fn set_last_scheduled_refresh_at(&self) {
+        if let Ok(mut status) = self.status.write() {
+            status.last_scheduled_refresh_at = Some(chrono::Utc::now().to_rfc3339());
         }
     }
 

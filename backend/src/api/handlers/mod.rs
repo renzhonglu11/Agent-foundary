@@ -5,6 +5,7 @@ mod macro_analysis;
 mod portfolio;
 mod stock_analysis;
 mod structured_products;
+mod systemd;
 mod upload;
 
 pub use fred::fred_macro_data;
@@ -17,4 +18,5 @@ pub use structured_products::{
     refresh_structured_products_enrichment, structured_products_enrichment,
     structured_products_enrichment_status, structured_products_risk,
 };
+pub use systemd::systemd_units;
 pub use upload::upload_data;

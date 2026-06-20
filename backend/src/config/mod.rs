@@ -27,6 +27,10 @@ pub struct StructuredProductsSettings {
     pub output_db_path: PathBuf,
     pub no_live_enrichment: bool,
     pub export_files: bool,
+    pub auto_refresh_enabled: bool,
+    pub auto_refresh_interval_mins: u64,
+    pub market_open_hour_cet: u32,
+    pub market_close_hour_cet: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -135,6 +139,19 @@ impl StructuredProductsSettings {
             )),
             no_live_enrichment: env_bool("STRUCTURED_PRODUCTS_ENRICHMENT_NO_LIVE", false),
             export_files: env_bool("STRUCTURED_PRODUCTS_EXPORT_FILES", false),
+            auto_refresh_enabled: env_bool("STRUCTURED_PRODUCTS_AUTO_REFRESH_ENABLED", true),
+            auto_refresh_interval_mins: env_or(
+                "STRUCTURED_PRODUCTS_AUTO_REFRESH_INTERVAL_MINS",
+                "60",
+            )
+            .parse()
+            .unwrap_or(60),
+            market_open_hour_cet: env_or("STRUCTURED_PRODUCTS_MARKET_OPEN_HOUR_CET", "8")
+                .parse()
+                .unwrap_or(8),
+            market_close_hour_cet: env_or("STRUCTURED_PRODUCTS_MARKET_CLOSE_HOUR_CET", "22")
+                .parse()
+                .unwrap_or(22),
         }
     }
 }

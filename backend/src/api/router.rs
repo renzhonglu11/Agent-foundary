@@ -56,6 +56,7 @@ pub fn build(state: Arc<AppState>, frontend_origin: &str) -> anyhow::Result<Rout
             "/api/stock-analysis/alpaca-quotes",
             get(handlers::stock_analysis_alpaca_quotes),
         )
+        .route("/api/systemd/units", get(handlers::systemd_units))
         .route("/api/fred/macro-data", get(handlers::fred_macro_data))
         .route(
             "/data/macro-analysis.json",

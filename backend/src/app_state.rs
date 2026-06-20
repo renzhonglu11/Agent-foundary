@@ -6,6 +6,7 @@ use crate::{
         alpaca_market_data::AlpacaMarketDataService, apewisdom::ApeWisdomService,
         fred::FredService, hermes_cron_status::HermesCronStatusService,
         structured_products_service::StructuredProductsService,
+        systemd_status::SystemdStatusService,
     },
 };
 
@@ -18,9 +19,11 @@ pub struct AppState {
     pub hermes_cron_status_service: HermesCronStatusService,
     pub fred_service: FredService,
     pub ape_wisdom_service: ApeWisdomService,
+    pub systemd_status_service: SystemdStatusService,
 }
 
 impl AppState {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         portfolio_service: PortfolioService,
         upload_data_service: UploadDataService,
@@ -29,6 +32,7 @@ impl AppState {
         hermes_cron_status_service: HermesCronStatusService,
         fred_service: FredService,
         ape_wisdom_service: ApeWisdomService,
+        systemd_status_service: SystemdStatusService,
     ) -> Self {
         Self {
             portfolio_service,
@@ -38,6 +42,7 @@ impl AppState {
             hermes_cron_status_service,
             fred_service,
             ape_wisdom_service,
+            systemd_status_service,
         }
     }
 }
