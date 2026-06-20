@@ -139,7 +139,7 @@ export default function PositionsActionBoard({ data, riskData, riskLoading, risk
         <Box
           sx={{
             display: 'grid',
-            gridTemplateColumns: { xs: '1fr', xl: 'minmax(0, 1fr) minmax(560px, 0.82fr)' },
+            gridTemplateColumns: { xs: '1fr', xl: 'minmax(0, 0.9fr) minmax(680px, 1fr)' },
             gap: 1.5,
             alignItems: 'start',
           }}

@@ -336,10 +336,10 @@ function DashboardContextBar({ item, riskLeg, direction }) {
         <ContextChip label="DTE" value={`${dte}天`} highlight={dte < 30} />
       )}
       {item.delta != null && Number.isFinite(Number(item.delta)) && (
-        <ContextChip label="Δ" value={number.format(item.delta)} />
+        <ContextChip label="Delta" value={number.format(item.delta)} />
       )}
       {item.theta != null && Number.isFinite(Number(item.theta)) && (
-        <ContextChip label="Θ" value={number.format(item.theta)} />
+        <ContextChip label="Theta" value={fxRateNumber.format(item.theta)} />
       )}
       {item.currency && item.currency !== 'EUR' && (
         <Chip size="small" variant="outlined" label={`${item.currency} → EUR: ${number.format(item.usdEurRate || 0.92)}`}
@@ -487,8 +487,8 @@ function ExpiryPnlTable({ item, direction, hasSpot }) {
 
   return (
     <Stack spacing={1.5}>
-      <TableContainer sx={{ border: '1px solid #e5eaef', borderRadius: 1 }}>
-        <Table size="small" sx={{ tableLayout: 'fixed' }}>
+      <TableContainer sx={{ border: '1px solid #e5eaef', borderRadius: 1, overflowX: 'auto' }}>
+        <Table size="small" sx={{ tableLayout: 'fixed', minWidth: 720 }}>
           <TableHead>
             <TableRow sx={{ backgroundColor: '#f8fafc' }}>
               <TableCell sx={thSx}>情景价格 ({underlyingCurrencySymbol})</TableCell>
@@ -594,8 +594,8 @@ function TimeDecayTable({ item, riskLeg, direction, hasStrike, hasRatio }) {
 
   return (
     <Stack spacing={1.5}>
-      <TableContainer sx={{ border: '1px solid #e5eaef', borderRadius: 1 }}>
-        <Table size="small" sx={{ tableLayout: 'fixed' }}>
+      <TableContainer sx={{ border: '1px solid #e5eaef', borderRadius: 1, overflowX: 'auto' }}>
+        <Table size="small" sx={{ tableLayout: 'fixed', minWidth: 680 }}>
           <TableHead>
             <TableRow sx={{ backgroundColor: '#f8fafc' }}>
               <TableCell sx={thSx}>期间</TableCell>
@@ -666,7 +666,7 @@ function TimeDecayTable({ item, riskLeg, direction, hasStrike, hasRatio }) {
         )}
         {item.theta != null && Number.isFinite(Number(item.theta)) && (
           <Typography variant="caption" color="text.secondary">
-            Theta: <b>{oneDecimalNumber.format(item.theta)}</b>
+            Theta: <b>{fxRateNumber.format(item.theta)}</b>
           </Typography>
         )}
         {dte != null && (
@@ -719,8 +719,8 @@ function DrawdownTable({ item }) {
 
   return (
     <Stack spacing={1.5}>
-      <TableContainer sx={{ border: '1px solid #e5eaef', borderRadius: 1 }}>
-        <Table size="small" sx={{ tableLayout: 'fixed' }}>
+      <TableContainer sx={{ border: '1px solid #e5eaef', borderRadius: 1, overflowX: 'auto' }}>
+        <Table size="small" sx={{ tableLayout: 'fixed', minWidth: 760 }}>
           <TableHead>
             <TableRow sx={{ backgroundColor: '#f8fafc' }}>
               <TableCell sx={thSx}>标的变动</TableCell>

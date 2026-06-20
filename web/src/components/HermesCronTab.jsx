@@ -1,10 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Alert, Box, Card, CardContent, Chip, CircularProgress, Grid, Stack, Tooltip, Typography, useTheme } from '@mui/material'
 import { DataGrid, GridToolbar } from '@mui/x-data-grid'
 import ScheduleRoundedIcon from '@mui/icons-material/ScheduleRounded'
 import CheckCircleRoundedIcon from '@mui/icons-material/CheckCircleRounded'
 import PauseCircleRoundedIcon from '@mui/icons-material/PauseCircleRounded'
 import ErrorRoundedIcon from '@mui/icons-material/ErrorRounded'
+import DnsRoundedIcon from '@mui/icons-material/DnsRounded'
+import RefreshRoundedIcon from '@mui/icons-material/RefreshRounded'
 import { dateTime, number, relativeDuration } from '../utils/formatters.js'
 import { useHermesCronData } from '../hooks/useHermesCronData.js'
 
@@ -218,6 +220,193 @@ function JobsGrid({ jobs }) {
     )
 }
 
+// ---------------------------------------------------------------------------
+// Systemd unit status section
+// ---------------------------------------------------------------------------
+const UNIT_STATE_COLORS = {
+    active: '#13deb9',
+    inactive: '#ffae1f',
+    failed: '#fa896b',
+    activating: '#49beff',
+    deactivating: '#49beff',
+    'not-found': '#8b8b8b',
+    error: '#fa896b',
+    unknown: '#8b8b8b',
+}
+
+const UNIT_ENABLED_COLORS = {
+    enabled: '#13deb9',
+    disabled: '#ffae1f',
+    static: '#49beff',
+    indirect: '#13deb9',
+    'not-found': '#8b8b8b',
+    error: '#fa896b',
+    unknown: '#8b8b8b',
+}
+
+function stateLabel(state) {
+    const map = {
+        active: '运行中', inactive: '未运行', failed: '异常',
+        activating: '启动中', deactivating: '停止中',
+        'not-found': '未安装', error: '查询失败', unknown: '未知',
+    }
+    return map[state] || state
+}
+
+function enabledLabel(state) {
+    const map = {
+        enabled: '已启用', disabled: '已禁用', static: '静态',
+        indirect: '间接启用', 'not-found': '未安装', error: '查询失败', unknown: '未知',
+    }
+    return map[state] || state
+}
+
+function SystemdStatusCards() {
+    const [data, setData] = useState(null)
+    const [error, setError] = useState(null)
+
+    const fetchStatus = useCallback(() => {
+        fetch('/api/systemd/units', { cache: 'no-store' })
+            .then((r) => r.json())
+            .then(setData)
+            .catch(setError)
+    }, [])
+
+    useEffect(() => {
+        fetchStatus()
+        const timer = setInterval(fetchStatus, 60000)
+        return () => clearInterval(timer)
+    }, [fetchStatus])
+
+    if (error) {
+        return (
+            <Alert severity="info" sx={{ mt: 2 }}>
+                systemd 状态暂不可用（可能运行在非 systemd 环境）
+            </Alert>
+        )
+    }
+
+    if (!data || !data.available) {
+        return null
+    }
+
+    return (
+        <Card className="panel-card" sx={{ mt: 2 }}>
+            <CardContent>
+                <Stack direction="row" spacing={1} sx={{ alignItems: 'center', mb: 2 }}>
+                    <DnsRoundedIcon color="primary" />
+                    <Typography variant="h6">systemd 服务状态</Typography>
+                    <Chip size="small" label={`更新 ${dateTime(data.generatedAt)}`} variant="outlined" />
+                </Stack>
+                <Grid container spacing={2}>
+                    {data.units.map((unit) => (
+                        <Grid size={{ xs: 12, sm: 6, md: 4 }} key={unit.unit}>
+                            <Card variant="outlined" sx={{ height: '100%' }}>
+                                <CardContent sx={{ py: 1.5, px: 2, '&:last-child': { pb: 1.5 } }}>
+                                    <Typography variant="body2" fontWeight={700} noWrap>
+                                        {unit.label}
+                                    </Typography>
+                                    <Typography variant="caption" color="text.secondary" noWrap sx={{ display: 'block' }}>
+                                        {unit.unit}
+                                    </Typography>
+                                    <Stack direction="row" spacing={1.5} sx={{ mt: 1 }}>
+                                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                            <Box sx={{
+                                                width: 8, height: 8, borderRadius: '50%',
+                                                backgroundColor: UNIT_STATE_COLORS[unit.activeState] || '#8b8b8b',
+                                                flexShrink: 0,
+                                            }} />
+                                            <Typography variant="caption" fontWeight={600}>
+                                                {stateLabel(unit.activeState)}
+                                            </Typography>
+                                        </Box>
+                                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                            <Box sx={{
+                                                width: 8, height: 8, borderRadius: '50%',
+                                                backgroundColor: UNIT_ENABLED_COLORS[unit.enabledState] || '#8b8b8b',
+                                                flexShrink: 0,
+                                            }} />
+                                            <Typography variant="caption" fontWeight={600}>
+                                                {enabledLabel(unit.enabledState)}
+                                            </Typography>
+                                        </Box>
+                                    </Stack>
+                                </CardContent>
+                            </Card>
+                        </Grid>
+                    ))}
+                </Grid>
+            </CardContent>
+        </Card>
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Auto-refresh status (Tier 1 structured products)
+// ---------------------------------------------------------------------------
+function AutoRefreshStatusCard() {
+    const [status, setStatus] = useState(null)
+
+    const fetchStatus = useCallback(() => {
+        fetch('/api/structured-products-enrichment/status', { cache: 'no-store' })
+            .then((r) => r.json())
+            .then(setStatus)
+            .catch(() => {})
+    }, [])
+
+    useEffect(() => {
+        fetchStatus()
+        const timer = setInterval(fetchStatus, 30000)
+        return () => clearInterval(timer)
+    }, [fetchStatus])
+
+    if (!status) return null
+
+    const active = status.autoRefreshActive
+    const lastRefresh = status.lastScheduledRefreshAt
+    const lastActualRefresh = status.lastFinishedAt || status.lastStartedAt
+    const waitingForFirstSchedule = active && !lastRefresh
+
+    return (
+        <Card className="panel-card" sx={{ mt: 2 }}>
+            <CardContent>
+                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} sx={{ justifyContent: 'space-between', alignItems: { xs: 'flex-start', sm: 'center' } }}>
+                    <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+                        <RefreshRoundedIcon color={active ? 'success' : 'disabled'} />
+                        <Box>
+                            <Typography variant="h6" component="span">Tier 1 自动刷新</Typography>
+                            <Chip
+                                size="small"
+                                label={active ? '运行中' : '已停止'}
+                                color={active ? 'success' : 'default'}
+                                sx={{ ml: 1 }}
+                            />
+                        </Box>
+                    </Stack>
+                    <Stack direction="row" spacing={2} useFlexGap sx={{ flexWrap: 'wrap' }}>
+                        <Typography variant="body2" color="text.secondary">
+                            上次调度刷新：{lastRefresh ? dateTime(lastRefresh) : '—'}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                            上次实际刷新：{lastActualRefresh ? dateTime(lastActualRefresh) : '—'}
+                        </Typography>
+                        {status.running && (
+                            <Typography variant="body2" color="primary.main" fontWeight={600}>
+                                正在刷新中 ({status.progressPercent}%)
+                            </Typography>
+                        )}
+                    </Stack>
+                </Stack>
+                {waitingForFirstSchedule && (
+                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+                        尚未触发调度；自动刷新只在 XETRA 交易日 08:00–22:00 CET 内执行，周末和节假日会等待下一交易窗口。
+                    </Typography>
+                )}
+            </CardContent>
+        </Card>
+    )
+}
+
 export default function HermesCronTab() {
     const theme = useTheme()
     const { loading, error, data, refreshedAt } = useHermesCronData()
@@ -258,6 +447,9 @@ export default function HermesCronTab() {
                     <MetricCard title="异常" value={number.format(summary.error ?? 0)} sub={`${summary.withDeliveryError ?? 0} 个投递错误`} icon={ErrorRoundedIcon} color={theme.palette.error.main} />
                 </Grid>
             </Grid>
+
+            <SystemdStatusCards />
+            <AutoRefreshStatusCard />
 
             <Card className="panel-card">
                 <CardContent>
