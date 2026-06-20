@@ -100,17 +100,24 @@ async def enrich_structured_product_rows(
             if cache_store is not None:
                 cached_metadata = cache_store.get_metadata(isin)
                 cached_greek = cache_store.get_latest_greek(isin)
-                
-                # Check if greek is expired (older than 1 hour)
+
+                # Check if greek is expired or incomplete
                 if cached_greek is not None:
                     from datetime import datetime, timezone
                     g_time = cached_greek.timestamp
                     if g_time.tzinfo is None:
                         g_time = g_time.replace(tzinfo=timezone.utc)
                     age = datetime.now(timezone.utc) - g_time
-                    if age.total_seconds() > 3600: # 1 hour
+                    expired = age.total_seconds() > 3600  # 1 hour
+                    incomplete = any(
+                        getattr(cached_greek, field) is None
+                        for field in ("delta", "omega", "theta", "iv")
+                    )
+                    if expired or incomplete:
                         stale_cached_greek = cached_greek
                         cached_greek = None
+                        if incomplete and not expired:
+                            logger.debug("Cached greek for %s is fresh but incomplete, treating as stale", isin)
 
             metadata_sources: list[str] = []
             greek_sources: list[str] = []

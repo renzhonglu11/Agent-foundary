@@ -207,6 +207,32 @@ GS_TSMC_CALCULATOR_HTML = """
 </html>
 """
 
+GS_AMD_CALCULATOR_HTML = """
+<html>
+  <body>
+    <div id="root">
+      <h2>Optionsschein-Rechner</h2>
+      <span>WKN: HT0Q0Z</span>
+      <span>ISIN: DE000HT0Q0Z8</span>
+      <ul>
+        <li><div>Basispreis</div><div>160,00</div></li>
+        <li><div>Laufzeit</div><div>18.12.2026</div></li>
+        <li><div>Bezugsverhältnis</div><div>0,1</div></li>
+      </ul>
+      <div>Delta %</div>
+      <div>82,00</div>
+      <div>Hebel (Omega)</div>
+      <div>3,50</div>
+      <div>Theta (EUR)</div>
+      <div>-0,01</div>
+      <div>Volatilität (jährlich)</div>
+      <div>Aktuelle Indikation =</div>
+      <div>62,0</div>
+    </div>
+  </body>
+</html>
+"""
+
 
 def test_parse_gs_de_optionsschein_calculator_html_extracts_metadata_and_greeks():
     product = parse_gs_de_product_html(GS_OPTIONSSCHEIN_HTML)
@@ -262,15 +288,25 @@ async def test_gs_de_provider_prefers_graphql_product_by_isin():
 
     async def handler(request: httpx.Request) -> httpx.Response:
         seen.append((request.method, str(request.url)))
-        assert request.method == "POST"
-        return httpx.Response(200, json=GS_AMD_GRAPHQL, request=request)
+        if request.method == "POST":
+            return httpx.Response(200, json=GS_AMD_GRAPHQL, request=request)
+        # Calculator HTML fallback — GraphQL lacks theta, so fallback is triggered
+        return httpx.Response(
+            200,
+            text=GS_AMD_CALCULATOR_HTML,
+            request=request,
+        )
 
     provider = GsDeProductProvider(transport=httpx.MockTransport(handler))
     product = await provider.get_product_data("DE000HT0Q0Z8")
 
-    assert seen == [("POST", "https://www.gs.de/graphql")]
+    assert seen == [
+        ("POST", "https://www.gs.de/graphql"),
+        ("GET", "https://www.gs.de/de/optionsschein-rechner?isin=DE000HT0Q0Z8"),
+    ]
     assert product.metadata.isin == "DE000HT0Q0Z8"
-    assert product.greek.delta == 0.89
+    assert product.greek.delta == 0.89  # GraphQL value preferred
+    assert product.greek.theta == -0.01  # Filled from calculator fallback
     assert product.url == "https://www.gs.de/de/optionsschein-rechner?isin=DE000HT0Q0Z8"
     await provider.aclose()
 

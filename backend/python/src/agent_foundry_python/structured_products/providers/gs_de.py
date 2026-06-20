@@ -162,7 +162,7 @@ class GsDeProductProvider:
     async def _init_browser(self) -> Page:
         if self._page is not None:
             return self._page
-        
+
         self._playwright = await async_playwright().start()
         self._browser = await self._playwright.chromium.launch(
             headless=True,
@@ -180,15 +180,22 @@ class GsDeProductProvider:
         try:
             graphql_product = await self._fetch_graphql_product(isin, url)
             if graphql_product is not None and not _needs_calculator_fallback(graphql_product):
+                logger.debug("gs.de %s: GraphQL sufficient (theta=%s), skipping calculator", isin, getattr(graphql_product.greek, "theta", None) if graphql_product.greek else None)
                 return graphql_product
 
+            logger.debug("gs.de %s: fetching calculator fallback (graphql=%s)", isin, graphql_product is not None)
             calculator_product = await self._fetch_calculator_product(url)
             if calculator_product is not None and calculator_product.metadata.isin.upper() == isin.upper():
                 if graphql_product is not None:
                     product = _merge_product_data(graphql_product, calculator_product)
+                    final_theta = getattr(product.greek, "theta", None) if product.greek else None
+                    logger.debug("gs.de %s: merged GraphQL + calculator (theta=%s)", isin, final_theta)
                     return ProductData(metadata=product.metadata, greek=product.greek, source="gs.de", url=url)
+                final_theta = getattr(calculator_product.greek, "theta", None) if calculator_product.greek else None
+                logger.debug("gs.de %s: calculator only (theta=%s)", isin, final_theta)
                 return ProductData(metadata=calculator_product.metadata, greek=calculator_product.greek, source="gs.de", url=url)
 
+            logger.debug("gs.de %s: calculator returned no match, falling back to GraphQL", isin)
             return graphql_product
         except Exception as exc:
             logger.debug("gs.de product fallback failed for %s: %s", isin, exc)
@@ -335,7 +342,15 @@ def _needs_calculator_fallback(product: ProductData) -> bool:
     if product.metadata.product_type != "optionsschein":
         return False
     greek = product.greek
-    return greek is None or any(getattr(greek, field) is None for field in ("delta", "omega", "iv"))
+    if greek is None or any(
+        getattr(greek, field) is None for field in ("delta", "omega", "theta", "iv")
+    ):
+        return True
+    meta = product.metadata
+    return any(
+        getattr(meta, field) is None
+        for field in ("strike_price", "ratio", "expiry", "leverage", "break_even")
+    )
 
 
 def _merge_product_data(primary: ProductData, fallback: ProductData) -> ProductData:
