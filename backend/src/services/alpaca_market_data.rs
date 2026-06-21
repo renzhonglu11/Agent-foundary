@@ -359,6 +359,46 @@ impl AlpacaMarketDataService {
         )
     }
 
+    pub async fn persisted_quotes(&self, symbols_param: &str) -> AlpacaQuotesResponse {
+        let mut warnings = Vec::new();
+        let (symbols, rejected) =
+            parse_symbols_param(symbols_param, self.settings.max_symbols_per_request);
+        warnings.extend(rejected);
+
+        if symbols.is_empty() {
+            info!("Alpaca persisted quote read skipped because no valid symbols were requested");
+            return self.response(AlpacaQuoteStatus::EmptyRequest, Vec::new(), warnings);
+        }
+
+        match self
+            .market_data_repository
+            .load_quotes("alpaca", "iex", &symbols)
+            .await
+        {
+            Ok(records) => {
+                let quotes_by_symbol = records
+                    .iter()
+                    .map(|record| (record.symbol.clone(), quote_from_record(record, true)))
+                    .collect();
+                let quotes = ordered_quotes(&symbols, &quotes_by_symbol);
+                if !quotes.is_empty() {
+                    warnings.push("Returned persisted Alpaca quotes from SQLite".to_owned());
+                }
+                let status = if quotes.len() == symbols.len() {
+                    AlpacaQuoteStatus::Ok
+                } else {
+                    AlpacaQuoteStatus::Partial
+                };
+                self.response(status, quotes, warnings)
+            }
+            Err(error) => {
+                warn!(%error, "failed to read persisted Alpaca quotes");
+                warnings.push("Alpaca quote database cache read failed".to_owned());
+                self.response(AlpacaQuoteStatus::Error, Vec::new(), warnings)
+            }
+        }
+    }
+
     async fn stored_quotes_response(
         &self,
         status: AlpacaQuoteStatus,

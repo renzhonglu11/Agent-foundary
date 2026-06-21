@@ -213,49 +213,32 @@ impl StructuredProductsService {
         });
     }
 
-    pub async fn read_payload(&self) -> Value {
-        self.read_json_payload(
+    pub async fn read_persisted_payload(&self) -> Value {
+        self.read_persisted_json_payload(
             STRUCTURED_PRODUCTS_PAYLOAD_KEY,
-            &self.output_json_path,
             self.empty_enrichment_payload(None),
         )
         .await
     }
 
-    pub async fn read_risk_payload(&self) -> Value {
-        self.read_json_payload(
-            STRUCTURED_PRODUCTS_RISK_PAYLOAD_KEY,
-            &self.risk_json_path,
-            Value::Array(Vec::new()),
-        )
-        .await
+    pub async fn read_persisted_risk_payload(&self) -> Value {
+        self.read_persisted_json_payload(STRUCTURED_PRODUCTS_RISK_PAYLOAD_KEY, Value::Array(vec![]))
+            .await
     }
 
-    async fn read_json_payload(&self, payload_key: &str, path: &Path, fallback: Value) -> Value {
+    async fn read_persisted_json_payload(&self, payload_key: &str, fallback: Value) -> Value {
         match self.market_data_repository.load_payload(payload_key).await {
             Ok(Some(content)) => match serde_json::from_str::<Value>(&content) {
-                Ok(payload) => return payload,
-                Err(error) => {
-                    warn!(%error, payload_key, "failed to parse persisted realtime payload");
-                }
-            },
-            Ok(None) => {}
-            Err(error) => {
-                warn!(%error, payload_key, "failed to read persisted realtime payload");
-            }
-        }
-
-        match tokio::fs::read_to_string(path).await {
-            Ok(content) => match serde_json::from_str::<Value>(&content) {
                 Ok(payload) => payload,
                 Err(error) => self.payload_with_read_error(
                     fallback,
-                    format!("Failed to parse {}: {error}", path.display()),
+                    format!("Failed to parse persisted realtime payload {payload_key}: {error}"),
                 ),
             },
+            Ok(None) => fallback,
             Err(error) => self.payload_with_read_error(
                 fallback,
-                format!("File not found or unreadable: {} ({error})", path.display()),
+                format!("Failed to read persisted realtime payload {payload_key}: {error}"),
             ),
         }
     }

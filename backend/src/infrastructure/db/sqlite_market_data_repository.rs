@@ -169,7 +169,9 @@ impl SqliteMarketDataRepository {
             r#"
             SELECT group_index, symbol, pre_enrichment_tier, group_market_value,
                    net_equivalent_exposure, gross_equivalent_exposure, net_weight_pct,
-                   gross_weight_pct, group_action_label, action_group_action_label
+                   gross_weight_pct, derivative_net_equivalent_exposure,
+                   derivative_gross_equivalent_exposure, derivative_net_weight_pct,
+                   derivative_gross_weight_pct, group_action_label, action_group_action_label
             FROM structured_product_risk_groups
             WHERE payload_key = ?1
             ORDER BY group_index ASC
@@ -213,6 +215,26 @@ impl SqliteMarketDataRepository {
                 &mut group,
                 "grossWeightPct",
                 group_row.try_get("gross_weight_pct")?,
+            );
+            insert_f64(
+                &mut group,
+                "derivativeNetEquivalentExposure",
+                group_row.try_get("derivative_net_equivalent_exposure")?,
+            );
+            insert_f64(
+                &mut group,
+                "derivativeGrossEquivalentExposure",
+                group_row.try_get("derivative_gross_equivalent_exposure")?,
+            );
+            insert_f64(
+                &mut group,
+                "derivativeNetWeightPct",
+                group_row.try_get("derivative_net_weight_pct")?,
+            );
+            insert_f64(
+                &mut group,
+                "derivativeGrossWeightPct",
+                group_row.try_get("derivative_gross_weight_pct")?,
             );
             insert_string(
                 &mut group,
@@ -278,9 +300,10 @@ impl SqliteMarketDataRepository {
     ) -> anyhow::Result<Vec<Value>> {
         let rows = sqlx::query(
             r#"
-            SELECT isin, product_type, market_value, delta, delta_exposure, days_to_expiry,
-                   barrier_distance_pct, quote_age_hours, exposure_confidence,
-                   data_completeness_risk_score, leg_risk_status
+            SELECT isin, product_type, market_value, delta, leverage, delta_exposure,
+                   exposure_weight_pct, days_to_expiry, barrier_distance_pct, quote_age_hours,
+                   exposure_confidence, data_completeness_risk_score, leg_risk_status,
+                   primary_action, action_reason
             FROM structured_product_risk_legs
             WHERE payload_key = ?1 AND group_index = ?2
             ORDER BY leg_index ASC
@@ -298,7 +321,13 @@ impl SqliteMarketDataRepository {
             insert_string(&mut leg, "productType", row.try_get("product_type")?);
             insert_f64(&mut leg, "marketValue", row.try_get("market_value")?);
             insert_f64(&mut leg, "delta", row.try_get("delta")?);
+            insert_f64(&mut leg, "leverage", row.try_get("leverage")?);
             insert_f64(&mut leg, "deltaExposure", row.try_get("delta_exposure")?);
+            insert_f64(
+                &mut leg,
+                "exposureWeightPct",
+                row.try_get("exposure_weight_pct")?,
+            );
             insert_f64(&mut leg, "daysToExpiry", row.try_get("days_to_expiry")?);
             insert_f64(
                 &mut leg,
@@ -317,6 +346,8 @@ impl SqliteMarketDataRepository {
                 row.try_get("data_completeness_risk_score")?,
             );
             insert_string(&mut leg, "legRiskStatus", row.try_get("leg_risk_status")?);
+            insert_string(&mut leg, "primaryAction", row.try_get("primary_action")?);
+            insert_string(&mut leg, "actionReason", row.try_get("action_reason")?);
             legs.push(Value::Object(leg));
         }
 
@@ -673,9 +704,12 @@ async fn store_structured_products_risk(
             INSERT INTO structured_product_risk_groups (
                 payload_key, group_index, symbol, pre_enrichment_tier, group_market_value,
                 net_equivalent_exposure, gross_equivalent_exposure, net_weight_pct,
-                gross_weight_pct, group_action_label, action_group_action_label, updated_at
+                gross_weight_pct, derivative_net_equivalent_exposure,
+                derivative_gross_equivalent_exposure, derivative_net_weight_pct,
+                derivative_gross_weight_pct, group_action_label, action_group_action_label,
+                updated_at
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
             "#,
         )
         .bind(STRUCTURED_PRODUCTS_RISK_PAYLOAD_KEY)
@@ -687,6 +721,10 @@ async fn store_structured_products_risk(
         .bind(json_f64(group, "grossEquivalentExposure"))
         .bind(json_f64(group, "netWeightPct"))
         .bind(json_f64(group, "grossWeightPct"))
+        .bind(json_f64(group, "derivativeNetEquivalentExposure"))
+        .bind(json_f64(group, "derivativeGrossEquivalentExposure"))
+        .bind(json_f64(group, "derivativeNetWeightPct"))
+        .bind(json_f64(group, "derivativeGrossWeightPct"))
         .bind(json_string(group, "groupActionLabel"))
         .bind(json_string(action, "groupActionLabel"))
         .bind(updated_at)
@@ -706,10 +744,12 @@ async fn store_structured_products_risk(
                 r#"
                 INSERT INTO structured_product_risk_legs (
                     payload_key, group_index, leg_index, isin, product_type, market_value, delta,
-                    delta_exposure, days_to_expiry, barrier_distance_pct, quote_age_hours,
-                    exposure_confidence, data_completeness_risk_score, leg_risk_status, updated_at
+                    leverage, delta_exposure, exposure_weight_pct, days_to_expiry,
+                    barrier_distance_pct, quote_age_hours, exposure_confidence,
+                    data_completeness_risk_score, leg_risk_status, primary_action,
+                    action_reason, updated_at
                 )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
                 "#,
             )
             .bind(STRUCTURED_PRODUCTS_RISK_PAYLOAD_KEY)
@@ -719,13 +759,17 @@ async fn store_structured_products_risk(
             .bind(json_string(leg, "productType"))
             .bind(json_f64(leg, "marketValue"))
             .bind(json_f64(leg, "delta"))
+            .bind(json_f64(leg, "leverage"))
             .bind(json_f64(leg, "deltaExposure"))
+            .bind(json_f64(leg, "exposureWeightPct"))
             .bind(json_f64(leg, "daysToExpiry"))
             .bind(json_f64(leg, "barrierDistancePct"))
             .bind(json_f64(leg, "quoteAgeHours"))
             .bind(json_string(leg, "exposureConfidence"))
             .bind(json_f64(leg, "dataCompletenessRiskScore"))
             .bind(json_string(leg, "legRiskStatus"))
+            .bind(json_string(leg, "primaryAction"))
+            .bind(json_string(leg, "actionReason"))
             .bind(updated_at)
             .execute(&mut **tx)
             .await?;
@@ -934,6 +978,10 @@ mod tests {
             "grossEquivalentExposure": 120.0,
             "netWeightPct": 0.1,
             "grossWeightPct": 0.15,
+            "derivativeNetEquivalentExposure": 80.0,
+            "derivativeGrossEquivalentExposure": 120.0,
+            "derivativeNetWeightPct": 0.1,
+            "derivativeGrossWeightPct": 0.15,
             "groupActionLabel": "REDUCE_DERIVATIVE_RISK",
             "action": {
                 "groupActionLabel": "REDUCE_DERIVATIVE_RISK",
@@ -945,13 +993,17 @@ mod tests {
                 "productType": "optionsschein",
                 "marketValue": 100.0,
                 "delta": 0.5,
+                "leverage": 2.0,
                 "deltaExposure": 80.0,
+                "exposureWeightPct": 0.1,
                 "daysToExpiry": 30,
                 "barrierDistancePct": null,
                 "quoteAgeHours": 2.5,
                 "exposureConfidence": "greeks",
                 "dataCompletenessRiskScore": 1,
-                "legRiskStatus": "WATCH"
+                "legRiskStatus": "WATCH",
+                "primaryAction": "REDUCE_RISK",
+                "actionReason": "Product is on watch."
             }]
         }]"#;
 
@@ -986,7 +1038,12 @@ mod tests {
             loaded[0]["action"]["blockedActions"][0],
             "BUY_MORE_DERIVATIVE"
         );
+        assert_eq!(loaded[0]["derivativeGrossWeightPct"], 0.15);
+        assert_eq!(loaded[0]["legs"][0]["leverage"], 2.0);
+        assert_eq!(loaded[0]["legs"][0]["exposureWeightPct"], 0.1);
         assert_eq!(loaded[0]["legs"][0]["legRiskStatus"], "WATCH");
+        assert_eq!(loaded[0]["legs"][0]["primaryAction"], "REDUCE_RISK");
+        assert_eq!(loaded[0]["legs"][0]["actionReason"], "Product is on watch.");
 
         Ok(())
     }
@@ -1011,14 +1068,21 @@ mod tests {
         .execute(pool)
         .await?;
 
-        for statement in include_str!(
-            "../../../migrations/20260616224500_create_structured_product_realtime_tables.sql"
-        )
-        .split(';')
-        .map(str::trim)
-        .filter(|statement| !statement.is_empty())
-        {
-            sqlx::query(statement).execute(pool).await?;
+        for migration in [
+            include_str!(
+                "../../../migrations/20260616224500_create_structured_product_realtime_tables.sql"
+            ),
+            include_str!(
+                "../../../migrations/20260620215000_add_structured_product_risk_action_fields.sql"
+            ),
+        ] {
+            for statement in migration
+                .split(';')
+                .map(str::trim)
+                .filter(|statement| !statement.is_empty())
+            {
+                sqlx::query(statement).execute(pool).await?;
+            }
         }
 
         Ok(())

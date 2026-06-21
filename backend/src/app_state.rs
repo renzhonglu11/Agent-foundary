@@ -5,7 +5,7 @@ use crate::{
     services::{
         alpaca_market_data::AlpacaMarketDataService, apewisdom::ApeWisdomService,
         fred::FredService, hermes_cron_status::HermesCronStatusService,
-        structured_products_service::StructuredProductsService,
+        pnl_snapshots::PnlSnapshotService, structured_products_service::StructuredProductsService,
         systemd_status::SystemdStatusService,
     },
 };
@@ -20,6 +20,7 @@ pub struct AppState {
     pub fred_service: FredService,
     pub ape_wisdom_service: ApeWisdomService,
     pub systemd_status_service: SystemdStatusService,
+    pub pnl_snapshot_service: PnlSnapshotService,
 }
 
 impl AppState {
@@ -33,6 +34,7 @@ impl AppState {
         fred_service: FredService,
         ape_wisdom_service: ApeWisdomService,
         systemd_status_service: SystemdStatusService,
+        pnl_snapshot_service: PnlSnapshotService,
     ) -> Self {
         Self {
             portfolio_service,
@@ -43,6 +45,7 @@ impl AppState {
             fred_service,
             ape_wisdom_service,
             systemd_status_service,
+            pnl_snapshot_service,
         }
     }
 }

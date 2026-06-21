@@ -5,7 +5,7 @@ use axum::{
     Router,
     extract::DefaultBodyLimit,
     http::{HeaderValue, Method, header},
-    routing::{get, post},
+    routing::{delete, get, post},
 };
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
@@ -18,7 +18,7 @@ pub fn build(state: Arc<AppState>, frontend_origin: &str) -> anyhow::Result<Rout
                 .parse::<HeaderValue>()
                 .context("FRONTEND_ORIGIN must be a valid HTTP header value")?,
         )
-        .allow_methods([Method::GET, Method::POST])
+        .allow_methods([Method::GET, Method::POST, Method::DELETE])
         .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION]);
 
     Ok(Router::new()
@@ -37,16 +37,16 @@ pub fn build(state: Arc<AppState>, frontend_origin: &str) -> anyhow::Result<Rout
             get(handlers::hermes_cron_status),
         )
         .route(
-            "/data/structured-products-enrichment.json",
-            get(handlers::structured_products_enrichment),
-        )
-        .route(
-            "/data/structured-products-risk.json",
-            get(handlers::structured_products_risk),
-        )
-        .route(
             "/api/structured-products-enrichment/refresh",
             post(handlers::refresh_structured_products_enrichment),
+        )
+        .route(
+            "/api/structured-products-enrichment",
+            get(handlers::persisted_structured_products_enrichment),
+        )
+        .route(
+            "/api/structured-products-risk",
+            get(handlers::persisted_structured_products_risk),
         )
         .route(
             "/api/structured-products-enrichment/status",
@@ -55,6 +55,14 @@ pub fn build(state: Arc<AppState>, frontend_origin: &str) -> anyhow::Result<Rout
         .route(
             "/api/stock-analysis/alpaca-quotes",
             get(handlers::stock_analysis_alpaca_quotes),
+        )
+        .route(
+            "/api/pnl-snapshots",
+            get(handlers::list_pnl_snapshots).post(handlers::create_pnl_snapshot),
+        )
+        .route(
+            "/api/pnl-snapshots/{id}",
+            delete(handlers::delete_pnl_snapshot),
         )
         .route("/api/systemd/units", get(handlers::systemd_units))
         .route("/api/fred/macro-data", get(handlers::fred_macro_data))

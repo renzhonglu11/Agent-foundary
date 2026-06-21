@@ -40,14 +40,25 @@ pub async fn is_xetra_trading_day(date: NaiveDate) -> bool {
 // ---------------------------------------------------------------------------
 // FinCal API
 // ---------------------------------------------------------------------------
+
+fn fincal_api_key() -> Option<String> {
+    std::env::var("FINCAL_API_KEY")
+        .ok()
+        .filter(|k| !k.is_empty())
+}
+
 async fn fincal_check(date: NaiveDate, calendar: &str) -> Option<bool> {
     let url = format!(
         "https://fincalapi.com/v1/day_status?calendar={calendar}&date={}",
         date.format("%Y-%m-%d")
     );
-    let resp = reqwest::get(&url).await.ok()?;
+    let mut req = reqwest::Client::new().get(&url);
+    if let Some(key) = fincal_api_key() {
+        req = req.bearer_auth(key);
+    }
+    let resp = req.send().await.ok()?;
     if !resp.status().is_success() {
-        warn!(%url, status = %resp.status(), "FinCal API returned non-200");
+        warn!(status = %resp.status(), calendar, "FinCal API returned non-200");
         return None;
     }
     let json: serde_json::Value = resp.json().await.ok()?;

@@ -8,6 +8,25 @@ from agent_foundry_python.structured_products.agent_foundry import _canonical_gr
 from agent_foundry_python.structured_products.exposure import compute_delta_exposure
 from agent_foundry_python.structured_products.models import Greek, InstrumentMetadata, Position, Quote
 
+BUY_MORE_MAX_GROUP_GROSS_WEIGHT = 0.15
+BUY_MORE_MAX_LEG_EXPOSURE_WEIGHT = 0.015
+BUY_MORE_MIN_DTE = 90
+BUY_MORE_MIN_BARRIER_DISTANCE = 0.25
+BUY_MORE_MIN_ABS_DELTA = 0.25
+BUY_MORE_MAX_ABS_DELTA = 0.70
+BUY_MORE_MAX_OPTION_LEVERAGE = 6.0
+BUY_MORE_MAX_TURBO_LEVERAGE = 4.0
+BUY_MORE_MAX_FACTOR_LEVERAGE = 3.0
+
+ADD_ALLOWED_MAX_GROUP_GROSS_WEIGHT = 0.18
+ADD_ALLOWED_MAX_LEG_EXPOSURE_WEIGHT = 0.03
+ADD_ALLOWED_MIN_DTE = 60
+ADD_ALLOWED_MIN_BARRIER_DISTANCE = 0.20
+ADD_ALLOWED_MAX_LEVERAGE = 8.0
+
+GROUP_ADD_ALLOWED_MAX_SCORE = 4
+GROUP_REDUCE_CONCENTRATION_MIN_SCORE = 7
+
 @dataclass
 class RiskAction:
     group_action_label: str
@@ -20,13 +39,17 @@ class RiskLeg:
     product_type: str
     market_value: float
     delta: float | None
+    leverage: float | None
     delta_exposure: float
+    exposure_weight_pct: float
     days_to_expiry: int | None
     barrier_distance_pct: float | None
     quote_age_hours: float | None
     exposure_confidence: str
     data_completeness_risk_score: int
     leg_risk_status: str
+    primary_action: str
+    action_reason: str
 
 @dataclass
 class RiskGroup:
@@ -37,6 +60,10 @@ class RiskGroup:
     gross_equivalent_exposure: float
     net_weight_pct: float
     gross_weight_pct: float
+    derivative_net_equivalent_exposure: float
+    derivative_gross_equivalent_exposure: float
+    derivative_net_weight_pct: float
+    derivative_gross_weight_pct: float
     group_action_label: str
     action: RiskAction
     legs: list[RiskLeg] = field(default_factory=list)
@@ -77,18 +104,17 @@ def evaluate_portfolio_risk(
         group_market_value = stock_market_value
         net_exposure_sum = stock_market_value
         gross_exposure_sum = abs(stock_market_value)
+        derivative_net_exposure_sum = 0.0
+        derivative_gross_exposure_sum = 0.0
         
         legs: list[RiskLeg] = []
-        any_hard_blocked = False
-        any_days_to_expiry_under_7 = False
-        any_barrier_distance_under_5 = False
-
         for row in rows:
             isin = row.get("isin", "")
             market_value = _float_or_zero(row.get("market_value"))
             group_market_value += market_value
 
             delta = _optional_float(row.get("delta"))
+            leverage = _optional_float(row.get("leverage"))
             
             # Construct models to use compute_delta_exposure
             pos_model = Position(isin=isin, quantity=_float_or_zero(row.get("quantity")), avg_cost=0, source="risk")
@@ -97,7 +123,7 @@ def evaluate_portfolio_risk(
             meta_model = InstrumentMetadata(
                 isin=isin,
                 product_type=row.get("product_type"),
-                leverage=_optional_float(row.get("leverage")),
+                leverage=leverage,
                 ratio=_optional_float(row.get("ratio")),
                 option_type=row.get("option_type"),
                 reset_barrier=_optional_float(row.get("reset_barrier")),
@@ -113,6 +139,9 @@ def evaluate_portfolio_risk(
             delta_exposure = exposure_result.delta_exposure
             net_exposure_sum += delta_exposure
             gross_exposure_sum += abs(delta_exposure)
+            derivative_net_exposure_sum += delta_exposure
+            derivative_gross_exposure_sum += abs(delta_exposure)
+            exposure_weight_pct = abs(delta_exposure) / nav if nav > 0 else 0.0
 
             # Days to expiry
             expiry_str = row.get("expiry")
@@ -123,8 +152,6 @@ def evaluate_portfolio_risk(
                     if expiry_date.tzinfo is None:
                         expiry_date = expiry_date.replace(tzinfo=timezone.utc)
                     days_to_expiry = (expiry_date - now).days
-                    if days_to_expiry < 7:
-                        any_days_to_expiry_under_7 = True
                 except Exception:
                     pass
 
@@ -133,8 +160,6 @@ def evaluate_portfolio_risk(
             barrier_distance_pct = None
             if knockout_price and underlying_price > 0:
                 barrier_distance_pct = abs(underlying_price - knockout_price) / underlying_price
-                if barrier_distance_pct < 0.05:
-                    any_barrier_distance_under_5 = True
 
             # Quote Age
             quote_timestamp_str = row.get("quote_timestamp")
@@ -148,7 +173,6 @@ def evaluate_portfolio_risk(
                 except Exception:
                     pass
 
-            # Completeness & Status
             missing_score = _data_completeness_score(
                 row,
                 product_type=row.get("product_type"),
@@ -165,53 +189,64 @@ def evaluate_portfolio_risk(
                 underlying_price=underlying_price,
                 market_value=market_value,
             )
-            
-            status = "OK"
-            if confidence == "no_data" or (days_to_expiry is not None and days_to_expiry <= 0):
-                status = "HARD_BLOCKED"
-                any_hard_blocked = True
-            elif missing_score > 3 or (days_to_expiry is not None and days_to_expiry < 7) or (barrier_distance_pct and barrier_distance_pct < 0.10):
-                status = "WATCH"
-
+            status = _leg_risk_status(
+                confidence=confidence,
+                missing_score=missing_score,
+                days_to_expiry=days_to_expiry,
+                barrier_distance_pct=barrier_distance_pct,
+                exposure_weight_pct=exposure_weight_pct,
+            )
+            primary_action, action_reason = _leg_primary_action(
+                row,
+                status=status,
+                confidence=confidence,
+                missing_score=missing_score,
+                days_to_expiry=days_to_expiry,
+                barrier_distance_pct=barrier_distance_pct,
+                exposure_weight_pct=exposure_weight_pct,
+            )
             legs.append(RiskLeg(
                 isin=isin,
                 product_type=row.get("product_type", ""),
                 market_value=market_value,
                 delta=delta,
+                leverage=leverage,
                 delta_exposure=delta_exposure,
+                exposure_weight_pct=exposure_weight_pct,
                 days_to_expiry=days_to_expiry,
                 barrier_distance_pct=barrier_distance_pct,
                 quote_age_hours=quote_age_hours,
                 exposure_confidence=confidence,
                 data_completeness_risk_score=missing_score,
-                leg_risk_status=status
+                leg_risk_status=status,
+                primary_action=primary_action,
+                action_reason=action_reason,
             ))
 
         net_weight_pct = net_exposure_sum / nav if nav > 0 else 0.0
         gross_weight_pct = gross_exposure_sum / nav if nav > 0 else 0.0
+        derivative_net_weight_pct = derivative_net_exposure_sum / nav if nav > 0 else 0.0
+        derivative_gross_weight_pct = derivative_gross_exposure_sum / nav if nav > 0 else 0.0
 
-        # Group Risk Engine
-        group_action_label = "HOLD_MONITOR"
+        for leg in legs:
+            if leg.primary_action == "HOLD" and leg.leg_risk_status == "OK":
+                leg.primary_action, leg.action_reason = _leg_strategy_action(
+                    leg,
+                    group_derivative_gross_weight_pct=derivative_gross_weight_pct,
+                )
+
+        group_action_label = _group_action_from_score(
+            legs,
+            derivative_net_weight_pct=derivative_net_weight_pct,
+            derivative_gross_weight_pct=derivative_gross_weight_pct,
+        )
         blocked_actions = []
-        allowed_actions = ["HOLD", "REDUCE"]
+        allowed_actions = ["HOLD_MONITOR"]
 
-        if gross_weight_pct > 0.20:
-            group_action_label = "REDUCE_CONCENTRATION"
-            blocked_actions.append("BUY_MORE")
-        elif net_weight_pct > 0.15:
-            group_action_label = "REDUCE_CONCENTRATION"
-            blocked_actions.append("BUY_MORE")
-        elif any_hard_blocked:
-            group_action_label = "REDUCE_DERIVATIVE_RISK"
-            blocked_actions.append("BUY_MORE_DERIVATIVE")
-        elif any_days_to_expiry_under_7:
-            group_action_label = "CLOSE_OR_ROLL_DERIVATIVE"
-            allowed_actions.append("ROLL")
-        elif any_barrier_distance_under_5:
-            group_action_label = "REDUCE_DERIVATIVE_RISK"
-        else:
-            group_action_label = "ADD_ALLOWED"
-            allowed_actions.append("BUY_MORE")
+        if group_action_label == "REDUCE_CONCENTRATION":
+            blocked_actions.append("BUY")
+        elif group_action_label == "ADD_ALLOWED":
+            allowed_actions.append("BUY")
 
         action = RiskAction(
             group_action_label=group_action_label,
@@ -227,6 +262,10 @@ def evaluate_portfolio_risk(
             gross_equivalent_exposure=gross_exposure_sum,
             net_weight_pct=net_weight_pct,
             gross_weight_pct=gross_weight_pct,
+            derivative_net_equivalent_exposure=derivative_net_exposure_sum,
+            derivative_gross_equivalent_exposure=derivative_gross_exposure_sum,
+            derivative_net_weight_pct=derivative_net_weight_pct,
+            derivative_gross_weight_pct=derivative_gross_weight_pct,
             group_action_label=group_action_label,
             action=action,
             legs=legs
@@ -263,6 +302,248 @@ def _optional_float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _leg_risk_status(
+    *,
+    confidence: str,
+    missing_score: int,
+    days_to_expiry: int | None,
+    barrier_distance_pct: float | None,
+    exposure_weight_pct: float,
+) -> str:
+    if confidence == "no_data" or (days_to_expiry is not None and days_to_expiry <= 0):
+        return "HARD_BLOCKED"
+    if (
+        missing_score >= 6
+        or (days_to_expiry is not None and days_to_expiry < 7)
+        or (barrier_distance_pct is not None and barrier_distance_pct < 0.10)
+        or exposure_weight_pct > 0.08
+    ):
+        return "WATCH"
+    return "OK"
+
+
+def _group_action_from_score(
+    legs: list[RiskLeg],
+    *,
+    derivative_net_weight_pct: float,
+    derivative_gross_weight_pct: float,
+) -> str:
+    score = _group_risk_score(
+        legs,
+        derivative_net_weight_pct=derivative_net_weight_pct,
+        derivative_gross_weight_pct=derivative_gross_weight_pct,
+    )
+    if (
+        derivative_gross_weight_pct > 0.20
+        or abs(derivative_net_weight_pct) > 0.15
+        or score >= GROUP_REDUCE_CONCENTRATION_MIN_SCORE
+    ):
+        return "REDUCE_CONCENTRATION"
+
+    has_buy_candidate = any(leg.primary_action == "BUY" for leg in legs)
+    has_product_risk_action = any(leg.primary_action in {"SELL", "ROLL"} for leg in legs)
+    if has_buy_candidate and not has_product_risk_action and score <= GROUP_ADD_ALLOWED_MAX_SCORE:
+        return "ADD_ALLOWED"
+    return "HOLD_MONITOR"
+
+
+def _group_risk_score(
+    legs: list[RiskLeg],
+    *,
+    derivative_net_weight_pct: float,
+    derivative_gross_weight_pct: float,
+) -> int:
+    score = 0
+
+    if derivative_gross_weight_pct > 0.18:
+        score += 4
+    elif derivative_gross_weight_pct > 0.12:
+        score += 2
+    elif derivative_gross_weight_pct > 0.08:
+        score += 1
+
+    abs_net_weight = abs(derivative_net_weight_pct)
+    if abs_net_weight > 0.14:
+        score += 4
+    elif abs_net_weight > 0.10:
+        score += 2
+    elif abs_net_weight > 0.06:
+        score += 1
+
+    leverages = [abs(leg.leverage) for leg in legs if leg.leverage is not None and abs(leg.leverage) > 1]
+    leveraged_count = len(leverages)
+    if leveraged_count >= 5:
+        score += 2
+    elif leveraged_count >= 3:
+        score += 1
+
+    high_leverage_count = sum(1 for leverage in leverages if leverage > 6)
+    medium_leverage_count = sum(1 for leverage in leverages if leverage > 3)
+    score += min(high_leverage_count, 2)
+    if medium_leverage_count >= 3:
+        score += 1
+
+    max_leverage = max(leverages, default=0.0)
+    if max_leverage > 8:
+        score += 2
+    elif max_leverage > 5:
+        score += 1
+
+    return score
+
+
+def _leg_primary_action(
+    row: dict[str, Any],
+    *,
+    status: str,
+    confidence: str,
+    missing_score: int,
+    days_to_expiry: int | None,
+    barrier_distance_pct: float | None,
+    exposure_weight_pct: float,
+) -> tuple[str, str]:
+    if days_to_expiry is not None and days_to_expiry <= 0:
+        return "SELL", "Product is expired or expires today."
+    if barrier_distance_pct is not None and barrier_distance_pct < 0.05:
+        return "SELL", "Knock-out barrier is less than 5% away."
+    if status == "HARD_BLOCKED":
+        return "SELL", "Exposure cannot be trusted because required data is unavailable."
+    if days_to_expiry is not None and days_to_expiry < 7:
+        return "ROLL", "Expiry is less than 7 days away; roll or close the position."
+    if barrier_distance_pct is not None and barrier_distance_pct < 0.10:
+        return "SELL", "Knock-out barrier is less than 10% away."
+    if exposure_weight_pct > 0.08:
+        return "SELL", "Single product exposure is above 8% of NAV."
+    if status == "WATCH":
+        return "SELL", "Product is on watch due to data quality or risk limits."
+    if confidence == "estimated_market_value":
+        return "HOLD", "Exposure uses market-value fallback; do not add risk from this estimate alone."
+    if days_to_expiry is not None and days_to_expiry < 30:
+        return "HOLD", "Expiry is less than 30 days away."
+    if barrier_distance_pct is not None and barrier_distance_pct < 0.20:
+        return "HOLD", "Knock-out barrier is less than 20% away."
+    return "HOLD", "Risk is acceptable, but add criteria are not strong enough."
+
+
+def _leg_strategy_action(
+    leg: RiskLeg,
+    *,
+    group_derivative_gross_weight_pct: float,
+) -> tuple[str, str]:
+    if leg.exposure_confidence not in {"live_delta", "estimated_delta", "estimated_leverage", "estimated_omega"}:
+        return "HOLD", "Exposure confidence is not strong enough to add risk."
+    if leg.data_completeness_risk_score > 2:
+        return "HOLD", "Data completeness is acceptable for monitoring, not for adding."
+    if group_derivative_gross_weight_pct > ADD_ALLOWED_MAX_GROUP_GROSS_WEIGHT:
+        return "HOLD", "Derivative group exposure is already near the concentration limit."
+    if leg.exposure_weight_pct > ADD_ALLOWED_MAX_LEG_EXPOSURE_WEIGHT:
+        return "HOLD", "Single product exposure is already above the add budget."
+    if leg.days_to_expiry is not None and leg.days_to_expiry < ADD_ALLOWED_MIN_DTE:
+        return "HOLD", "Time to expiry is too short for adding risk."
+    if leg.barrier_distance_pct is not None and leg.barrier_distance_pct < ADD_ALLOWED_MIN_BARRIER_DISTANCE:
+        return "HOLD", "Knock-out barrier distance is too narrow for adding risk."
+    if not _leverage_allows_add(leg):
+        return "HOLD", "Leverage is too high or missing for this product type."
+
+    score = _buy_more_score(leg, group_derivative_gross_weight_pct=group_derivative_gross_weight_pct)
+    if score >= 7 and _buy_more_gates_pass(leg, group_derivative_gross_weight_pct=group_derivative_gross_weight_pct):
+        return "BUY", "Exposure, Delta, leverage, expiry and concentration support adding."
+    return "BUY", "Risk budget allows adding, but the buy score is lower priority."
+
+
+def _buy_more_gates_pass(leg: RiskLeg, *, group_derivative_gross_weight_pct: float) -> bool:
+    if group_derivative_gross_weight_pct > BUY_MORE_MAX_GROUP_GROSS_WEIGHT:
+        return False
+    if leg.exposure_weight_pct > BUY_MORE_MAX_LEG_EXPOSURE_WEIGHT:
+        return False
+    if leg.days_to_expiry is not None and leg.days_to_expiry < BUY_MORE_MIN_DTE:
+        return False
+    if leg.barrier_distance_pct is not None and leg.barrier_distance_pct < BUY_MORE_MIN_BARRIER_DISTANCE:
+        return False
+    if leg.product_type in {"open_end_turbo", "knock_out"} and leg.barrier_distance_pct is None:
+        return False
+    if not _delta_allows_buy_more(leg):
+        return False
+    return _leverage_profile_score(leg) > 0
+
+
+def _buy_more_score(leg: RiskLeg, *, group_derivative_gross_weight_pct: float) -> int:
+    score = 0
+
+    if group_derivative_gross_weight_pct <= BUY_MORE_MAX_GROUP_GROSS_WEIGHT / 2:
+        score += 2
+    elif group_derivative_gross_weight_pct <= BUY_MORE_MAX_GROUP_GROSS_WEIGHT:
+        score += 1
+
+    if leg.exposure_weight_pct <= BUY_MORE_MAX_LEG_EXPOSURE_WEIGHT / 2:
+        score += 2
+    elif leg.exposure_weight_pct <= BUY_MORE_MAX_LEG_EXPOSURE_WEIGHT:
+        score += 1
+
+    if leg.days_to_expiry is None or leg.days_to_expiry >= BUY_MORE_MIN_DTE * 2:
+        score += 2
+    elif leg.days_to_expiry >= BUY_MORE_MIN_DTE:
+        score += 1
+
+    if leg.barrier_distance_pct is None:
+        if leg.product_type not in {"open_end_turbo", "knock_out"}:
+            score += 1
+    elif leg.barrier_distance_pct >= BUY_MORE_MIN_BARRIER_DISTANCE * 1.4:
+        score += 2
+    elif leg.barrier_distance_pct >= BUY_MORE_MIN_BARRIER_DISTANCE:
+        score += 1
+
+    score += _delta_profile_score(leg)
+    score += _leverage_profile_score(leg)
+    return score
+
+
+def _delta_profile_score(leg: RiskLeg) -> int:
+    if leg.delta is None:
+        return 1 if leg.product_type in {"factor_certificate", "open_end_turbo", "knock_out"} else 0
+
+    abs_delta = abs(leg.delta)
+    if 0.35 <= abs_delta <= 0.60:
+        return 2
+    if BUY_MORE_MIN_ABS_DELTA <= abs_delta <= BUY_MORE_MAX_ABS_DELTA:
+        return 1
+    return 0
+
+
+def _delta_allows_buy_more(leg: RiskLeg) -> bool:
+    if leg.delta is None:
+        return leg.product_type in {"factor_certificate", "open_end_turbo", "knock_out"}
+    abs_delta = abs(leg.delta)
+    return BUY_MORE_MIN_ABS_DELTA <= abs_delta <= BUY_MORE_MAX_ABS_DELTA
+
+
+def _leverage_profile_score(leg: RiskLeg) -> int:
+    if leg.leverage is None:
+        return 1 if leg.product_type == "optionsschein" and leg.delta is not None else 0
+
+    leverage = abs(leg.leverage)
+    max_buy_more = _buy_more_leverage_limit(leg.product_type)
+    if leverage <= max_buy_more / 2:
+        return 2
+    if leverage <= max_buy_more:
+        return 1
+    return 0
+
+
+def _leverage_allows_add(leg: RiskLeg) -> bool:
+    if leg.leverage is None:
+        return leg.product_type == "optionsschein" and leg.delta is not None
+    return abs(leg.leverage) <= ADD_ALLOWED_MAX_LEVERAGE
+
+
+def _buy_more_leverage_limit(product_type: str) -> float:
+    if product_type == "factor_certificate":
+        return BUY_MORE_MAX_FACTOR_LEVERAGE
+    if product_type in {"open_end_turbo", "knock_out"}:
+        return BUY_MORE_MAX_TURBO_LEVERAGE
+    return BUY_MORE_MAX_OPTION_LEVERAGE
 
 
 def _positive_float(value: Any) -> float | None:

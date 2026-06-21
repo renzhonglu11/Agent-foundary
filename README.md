@@ -59,8 +59,8 @@ tools/              实用工具（预留）
 - `GET /api/fred/macro-data` — 选定投资组合代码的美国宏观指标（FRED）
 - `GET /data/macro-analysis.json` — 宏观分析缓存
 - `POST /api/macro-analysis/refresh` — 从 Python 侧车触发宏观分析
-- `GET /data/structured-products-enrichment.json` — 结构化产品详情（ISIN、基础资产、障碍、票息）
-- `GET /data/structured-products-risk.json` — 每个产品汇总的风险评估
+- `GET /api/structured-products-enrichment` — 结构化产品详情（ISIN、基础资产、障碍、票息），读取 SQLite 持久化数据
+- `GET /api/structured-products-risk` — 每个产品汇总的风险评估，读取 SQLite 持久化数据
 - `POST /api/structured-products-enrichment/refresh` — 触发富化 + 风险重新计算
 - `GET /api/structured-products-enrichment/status` — 检查富化流水线状态
 - `GET /data/hermes-cron-status.json` — Hermes Cron 作业状态快照

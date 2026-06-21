@@ -7,12 +7,24 @@ use crate::{
     api::error::ApiError, app_state::AppState, services::structured_products_service::RefreshMode,
 };
 
-pub async fn structured_products_enrichment(State(state): State<Arc<AppState>>) -> Json<Value> {
-    Json(state.structured_products_service.read_payload().await)
+pub async fn persisted_structured_products_enrichment(
+    State(state): State<Arc<AppState>>,
+) -> Json<Value> {
+    Json(
+        state
+            .structured_products_service
+            .read_persisted_payload()
+            .await,
+    )
 }
 
-pub async fn structured_products_risk(State(state): State<Arc<AppState>>) -> Json<Value> {
-    Json(state.structured_products_service.read_risk_payload().await)
+pub async fn persisted_structured_products_risk(State(state): State<Arc<AppState>>) -> Json<Value> {
+    Json(
+        state
+            .structured_products_service
+            .read_persisted_risk_payload()
+            .await,
+    )
 }
 
 pub async fn structured_products_enrichment_status(

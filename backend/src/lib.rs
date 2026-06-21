@@ -35,7 +35,7 @@ use crate::{
     services::{
         alpaca_market_data::AlpacaMarketDataService, apewisdom::ApeWisdomService,
         fred::FredService, hermes_cron_status::HermesCronStatusService,
-        structured_products_service::StructuredProductsService,
+        pnl_snapshots::PnlSnapshotService, structured_products_service::StructuredProductsService,
         systemd_status::SystemdStatusService,
     },
 };
@@ -87,6 +87,7 @@ impl App {
         );
         let hermes_cron_status_service = HermesCronStatusService::new();
         let systemd_status_service = SystemdStatusService::new();
+        let pnl_snapshot_service = PnlSnapshotService::new(pool.clone());
         let ape_wisdom_service = ApeWisdomService::new();
         if let Err(e) = ape_wisdom_service.load_cache_from_file().await {
             tracing::warn!(error = %e, "Failed to load pre-existing ApeWisdom cache from file on startup");
@@ -113,6 +114,7 @@ impl App {
             fred_service,
             ape_wisdom_service,
             systemd_status_service,
+            pnl_snapshot_service,
         ));
         let router = router::build(state, &settings.frontend_origin)?;
 
