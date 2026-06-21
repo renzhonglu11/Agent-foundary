@@ -5,7 +5,7 @@ import NotificationsIcon from '@mui/icons-material/Notifications';
 import SidebarNav, { navItems, sidebarCollapsedWidth, sidebarExpandedWidth } from './SidebarNav.jsx';
 import DataImportSpeedDial from './DataImportSpeedDial.jsx';
 
-export default function DashboardShell({ source, generatedAt, activeTab, onTabChange, children }) {
+export default function DashboardShell({ source, generatedAt, activeTab, onTabChange, children, pnlRecords = [], onRemovePnlRecord }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
   const sidebarWidth = sidebarCollapsed ? sidebarCollapsedWidth : sidebarExpandedWidth;
   const drawerOpen = !sidebarCollapsed;
@@ -105,7 +105,7 @@ export default function DashboardShell({ source, generatedAt, activeTab, onTabCh
           </Stack>
         </Container>
       </Box>
-      <DataImportSpeedDial />
+      <DataImportSpeedDial pnlRecords={pnlRecords} onRemovePnlRecord={onRemovePnlRecord} />
     </Box>
   );
 }

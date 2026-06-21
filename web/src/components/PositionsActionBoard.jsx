@@ -9,6 +9,7 @@ import {
   Stack,
   Tooltip,
   Typography,
+  keyframes,
 } from '@mui/material'
 import { DataGrid } from '@mui/x-data-grid'
 import AddCircleRoundedIcon from '@mui/icons-material/AddCircleRounded'
@@ -23,19 +24,32 @@ import { buildWatchlistGroups, canonicalGroupKey } from '../utils/watchlistGroup
 import ProductMonitoringDashboard from './ProductMonitoringDashboard.jsx'
 
 const actionDefinitions = [
-  { id: 'HOLD',     title: 'HOLD',     subtitle: '继续持有',         color: 'info',    icon: CheckCircleRoundedIcon },
-  { id: 'REDUCE',   title: 'REDUCE',   subtitle: '减持 / 降低仓位',  color: 'error',   icon: TrendingDownRoundedIcon },
-  { id: 'ROLL',     title: 'ROLL',     subtitle: '展期',             color: 'warning', icon: AutorenewRoundedIcon },
-  { id: 'BUY_MORE', title: 'BUY MORE', subtitle: '加仓',             color: 'success', icon: AddCircleRoundedIcon },
+  { id: 'SELL', title: 'SELL', subtitle: '卖出 / 降低风险', color: 'error', icon: TrendingDownRoundedIcon },
+  { id: 'ROLL', title: 'ROLL', subtitle: '展期 / 换仓', color: 'warning', icon: AutorenewRoundedIcon },
+  { id: 'HOLD', title: 'HOLD', subtitle: '继续持有并监控', color: 'info', icon: CheckCircleRoundedIcon },
+  { id: 'BUY', title: 'BUY', subtitle: '允许买入 / 加仓', color: 'success', icon: AddCircleRoundedIcon },
 ]
 
 const riskActionColors = {
+  EXIT_NOW: 'error',
   REDUCE_CONCENTRATION: 'error',
+  REDUCE_RISK: 'error',
   REDUCE_DERIVATIVE_RISK: 'error',
+  ROLL: 'warning',
   CLOSE_OR_ROLL_DERIVATIVE: 'warning',
   HOLD_MONITOR: 'warning',
+  SELL: 'error',
+  HOLD: 'info',
+  BUY: 'success',
   ADD_ALLOWED: 'success',
+  BUY_MORE: 'success',
 }
+
+const rowClickedPulse = keyframes`
+  0% { background-color: rgba(19, 222, 185, 0.28); }
+  70% { background-color: rgba(19, 222, 185, 0.14); }
+  100% { background-color: transparent; }
+`
 
 // ---- signal light helpers ----
 
@@ -76,9 +90,10 @@ function riskTooltipLines(leg) {
 
 // ========================================================
 
-export default function PositionsActionBoard({ data, riskData, riskLoading, riskError, structuredProducts, structuredProductsLoading, alpacaQuotes }) {
-  const [expandedActionIds, setExpandedActionIds] = useState(() => new Set(['REDUCE', 'ROLL']))
+export default function PositionsActionBoard({ data, riskData, riskLoading, riskError, structuredProducts, structuredProductsLoading, alpacaQuotes, onAddPnlRecord }) {
+  const [expandedActionIds, setExpandedActionIds] = useState(() => new Set(['SELL', 'ROLL']))
   const [selectedProduct, setSelectedProduct] = useState(null)
+  const [clickedRowId, setClickedRowId] = useState(null)
   const totalMarketValue = Number(data?.summary?.totalMarketValue) || 0
   const tier1Groups = useMemo(() => buildWatchlistGroups(data, structuredProducts, alpacaQuotes).tier1, [data, structuredProducts, alpacaQuotes])
   const riskByKey = useMemo(() => buildRiskMap(riskData), [riskData])
@@ -109,6 +124,8 @@ export default function PositionsActionBoard({ data, riskData, riskLoading, risk
   }
 
   const handleRowClick = (row) => {
+    setClickedRowId(row.id)
+    window.setTimeout(() => setClickedRowId((current) => (current === row.id ? null : current)), 650)
     setSelectedProduct((current) => {
       if (current?.item?.id === row.item.id) return null
       return row
@@ -153,6 +170,7 @@ export default function PositionsActionBoard({ data, riskData, riskLoading, risk
                 expanded={expandedActionIds.has(section.id)}
                 onToggle={() => toggleSection(section.id)}
                 onRowClick={handleRowClick}
+                clickedRowId={clickedRowId}
               />
             ))}
           </Stack>
@@ -176,6 +194,7 @@ export default function PositionsActionBoard({ data, riskData, riskLoading, risk
               item={selectedProduct?.item ?? null}
               riskLeg={selectedProduct?.riskLeg ?? null}
               onClose={() => setSelectedProduct(null)}
+              onAddPnlRecord={onAddPnlRecord}
             />
           </Box>
         </Box>
@@ -186,7 +205,7 @@ export default function PositionsActionBoard({ data, riskData, riskLoading, risk
 
 // ---- section ----
 
-function ActionSection({ definition, entries, expanded, onToggle, onRowClick }) {
+function ActionSection({ definition, entries, expanded, onToggle, onRowClick, clickedRowId }) {
   const Icon = definition.icon
 
   return (
@@ -217,7 +236,7 @@ function ActionSection({ definition, entries, expanded, onToggle, onRowClick }) 
 
       <Collapse in={expanded} timeout="auto" unmountOnExit>
         {entries.length ? (
-          <ProductActionTable entries={entries} onRowClick={onRowClick} />
+          <ProductActionTable entries={entries} onRowClick={onRowClick} clickedRowId={clickedRowId} />
         ) : (
           <Box sx={{ px: 1.5, py: 1.5 }}>
             <Typography variant="body2" color="text.secondary">当前没有匹配的 Tier 1 产品。</Typography>
@@ -231,11 +250,18 @@ function ActionSection({ definition, entries, expanded, onToggle, onRowClick }) 
 // ---- table columns ----
 
 const actionDescriptions = {
+  SELL: '产品风险、到期、障碍价、数据质量或单品敞口触发卖出/减仓',
+  BUY: '产品风险预算、Delta、杠杆、期限和敞口满足买入/加仓条件',
+  HOLD: '当前无紧急风险，但买入条件不够强',
+  EXIT_NOW: '风险已越过退出阈值，优先平仓或清理该产品',
   REDUCE_CONCENTRATION: '该标的敞口集中度过高，建议减持',
+  REDUCE_RISK: '衍生品数据质量、杠杆、障碍价或单腿敞口触发风险降档',
   REDUCE_DERIVATIVE_RISK: '衍生品数据缺失或障碍价临近，建议降低风险敞口',
+  ROLL: '产品临近到期，建议展期或换到更远期限',
   CLOSE_OR_ROLL_DERIVATIVE: '衍生品临近到期，建议平仓或展期',
   HOLD_MONITOR: '当前无紧急风险，继续持有并监控',
-  ADD_ALLOWED: '风险可控，允许加仓',
+  ADD_ALLOWED: '风险检查通过，允许加仓但不是主动买入建议',
+  BUY_MORE: '敞口、Delta、杠杆、期限和组级仓位均满足主动加仓条件',
 }
 
 const tableColumns = [
@@ -245,15 +271,21 @@ const tableColumns = [
   {
     field: 'productName',
     headerName: '产品名称',
-    flex: 1,
-    minWidth: 140,
-    valueGetter: (_, row) => row.item?.stockName || row.item?.symbol || '',
+    flex: 2.2,
+    minWidth: 260,
+    valueGetter: (_, row) => productDisplayName(row.item),
     renderCell: ({ row }) => {
-      const fullName = row.item.stockName || row.item.symbol
+      const fullName = productDisplayName(row.item)
       return (
         <Tooltip title={fullName} arrow placement="top" slotProps={{ tooltip: { sx: { cursor: 'default' } } }}>
-          <Box sx={{ minWidth: 0 }}>
-            <Typography variant="body2" fontWeight={700} noWrap>{cleanName(fullName)}</Typography>
+          <Box sx={{ minWidth: 0, py: 0.25 }}>
+            <Typography
+              variant="body2"
+              fontWeight={700}
+              sx={{ whiteSpace: 'normal', overflowWrap: 'anywhere', lineHeight: 1.25 }}
+            >
+              {fullName}
+            </Typography>
             <Typography variant="caption" color="text.secondary" noWrap>{row.item.symbol}</Typography>
           </Box>
         </Tooltip>
@@ -408,7 +440,7 @@ const tableColumns = [
 
 // ---- table ----
 
-function ProductActionTable({ entries, onRowClick }) {
+function ProductActionTable({ entries, onRowClick, clickedRowId }) {
   const rows = useMemo(() => entries.map((entry, index) => ({
     id: `${entry.primaryAction}-${entry.item.id ?? index}`,
     ...entry,
@@ -423,7 +455,8 @@ function ProductActionTable({ entries, onRowClick }) {
         disableRowSelectionOnClick
         onRowClick={({ row }) => onRowClick?.(row)}
         autoHeight
-        rowHeight={48}
+        getRowHeight={() => 'auto'}
+        getEstimatedRowHeight={() => 56}
         hideFooter={rows.length <= 25}
         initialState={{
           sorting: { sortModel: [{ field: 'marketValue', sort: 'desc' }] },
@@ -434,8 +467,14 @@ function ProductActionTable({ entries, onRowClick }) {
           border: 'none',
           fontSize: '0.8rem',
           '& .MuiDataGrid-columnHeaders': { fontSize: '0.75rem' },
-          '& .MuiDataGrid-cell': { py: 0.5, px: 1 },
+          '& .MuiDataGrid-row': { cursor: 'pointer' },
+          '& .MuiDataGrid-cell': { py: 0.75, px: 1, display: 'flex', alignItems: 'center' },
           '& .MuiDataGrid-columnHeader': { backgroundColor: '#f8fafc', px: 1 },
+          ...(clickedRowId && {
+            [`& .MuiDataGrid-row[data-id="${clickedRowId}"]`]: {
+              animation: `${rowClickedPulse} 650ms ease-out`,
+            },
+          }),
         }}
       />
     </Box>
@@ -506,12 +545,30 @@ function primaryActionForProduct(riskGroup, riskLeg) {
   const status = riskLeg?.legRiskStatus
   const confidence = riskLeg?.exposureConfidence
   const allowed = new Set(Array.isArray(riskGroup?.action?.allowedActions) ? riskGroup.action.allowedActions : [])
+  const legAction = normalizeProductAction(riskLeg?.primaryAction)
 
+  if (['SELL', 'ROLL', 'HOLD', 'BUY'].includes(legAction)) return legAction
   if (allowed.has('ROLL') && Number.isFinite(daysToExpiry) && daysToExpiry >= 0 && daysToExpiry < 7) return 'ROLL'
-  if (status === 'HARD_BLOCKED' || status === 'WATCH') return 'REDUCE'
-  if (groupAction === 'REDUCE_CONCENTRATION' || groupAction === 'REDUCE_DERIVATIVE_RISK') return 'REDUCE'
-  if (allowed.has('BUY_MORE') && status === 'OK' && confidence !== 'no_data') return 'BUY_MORE'
+  if (status === 'HARD_BLOCKED') return 'SELL'
+  if (status === 'WATCH') return 'SELL'
+  if (groupAction === 'REDUCE_DERIVATIVE_RISK') return 'SELL'
+  if (groupAction === 'CLOSE_OR_ROLL_DERIVATIVE') return 'HOLD'
+  if (groupAction === 'ADD_ALLOWED' || ((allowed.has('BUY_MORE') || allowed.has('BUY')) && status === 'OK' && confidence !== 'no_data')) return 'HOLD'
   return 'HOLD'
+}
+
+function normalizeProductAction(action) {
+  if (action === 'SELL' || action === 'ROLL' || action === 'HOLD' || action === 'BUY') return action
+  if (action === 'EXIT_NOW' || action === 'REDUCE_RISK' || action === 'REDUCE_DERIVATIVE_RISK') return 'SELL'
+  if (action === 'HOLD_MONITOR' || action === 'CLOSE_OR_ROLL_DERIVATIVE') return 'HOLD'
+  if (action === 'ADD_ALLOWED' || action === 'BUY_MORE') return 'BUY'
+  return null
+}
+
+function productDisplayName(item) {
+  const instrument = String(item?.instrument || '').trim()
+  if (instrument) return instrument
+  return String(item?.stockName || item?.symbol || '').split(' · ')[0]
 }
 
 function formatSignedWeight(value) {
@@ -519,8 +576,4 @@ function formatSignedWeight(value) {
   if (!Number.isFinite(numeric)) return '—'
   const sign = numeric * 100 > 0 ? '+' : ''
   return `${sign}${number.format(numeric * 100)}%`
-}
-
-function cleanName(value) {
-  return String(value || '').split(' · ')[0]
 }

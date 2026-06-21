@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { buildWatchlistGroups, canonicalGroupKey, collectTier1AlpacaSymbols } from './watchlistGrouping.js'
+import {
+  buildWatchlistGroups,
+  canonicalGroupKey,
+  collectTier1AlpacaSymbols,
+  collectTier1MonitoringAlpacaSymbols,
+} from './watchlistGrouping.js'
 
 const portfolio = {
   summary: { totalMarketValue: 10000 },
@@ -311,6 +316,18 @@ test('does not collect Alpaca symbols from tier1 derivative-only groups', () => 
   )
 
   assert.deepEqual(collectTier1AlpacaSymbols(groupsWithoutQuotes), [])
+})
+
+test('collects derivative-only underlying symbols for monitoring quotes', () => {
+  const groupsWithoutQuotes = buildWatchlistGroups(
+    { summary: { totalMarketValue: 10000 }, positions: [] },
+    [
+      { isin: 'DE000FD09AS1', display_name: 'Call Micron', instrument: 'Call 18.09.26 Micron 200', asset_class: 'DERIVATIVE', product_type: 'optionsschein', underlying: 'Micron Technology Inc', enrichment_tier: 'tier1', live_enrichment_enabled: true, quote_source: 'boerse_frankfurt', quantity: 41, market_value: 3000, strike_price: 200, ratio: 0.1 },
+      { isin: 'DE000SX0MG56', display_name: 'Call AMD', instrument: 'Call 18.09.26 AMD 109', asset_class: 'DERIVATIVE', product_type: 'optionsschein', underlying: 'AMD - Advanced Micro Devices', enrichment_tier: 'tier1', live_enrichment_enabled: true, quote_source: 'boerse_frankfurt', quantity: 33, market_value: 1200, strike_price: 109, ratio: 0.1 },
+    ],
+  )
+
+  assert.deepEqual(collectTier1MonitoringAlpacaSymbols(groupsWithoutQuotes), ['MU', 'AMD'])
 })
 
 test('does not request Alpaca quotes for derivative-only broker underlying shorthands', () => {

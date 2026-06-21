@@ -1,30 +1,24 @@
-import { useEffect, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { queryKeys } from './queryKeys.js'
 
 export async function loadStructuredProducts() {
-  const response = await fetch('/data/structured-products-enrichment.json', { cache: 'no-store' })
+  const response = await fetch('/api/structured-products-enrichment', { cache: 'no-store' })
   if (!response.ok) return []
   const payload = await response.json()
   return Array.isArray(payload?.items) ? payload.items : []
 }
 
 export function useStructuredProducts() {
-  const [state, setState] = useState({ loading: true, error: null, data: [] })
+  const query = useQuery({
+    queryKey: queryKeys.structuredProducts,
+    queryFn: loadStructuredProducts,
+    staleTime: 30_000,
+  })
 
-  useEffect(() => {
-    let cancelled = false
-
-    loadStructuredProducts()
-      .then((data) => {
-        if (!cancelled) setState({ loading: false, error: null, data })
-      })
-      .catch((error) => {
-        if (!cancelled) setState({ loading: false, error, data: [] })
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  return state
+  return {
+    loading: query.isPending,
+    error: query.error,
+    data: query.data ?? [],
+    refresh: query.refetch,
+  }
 }

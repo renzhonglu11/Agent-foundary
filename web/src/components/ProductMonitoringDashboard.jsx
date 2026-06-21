@@ -4,6 +4,7 @@ import {
   Chip,
   IconButton,
   InputAdornment,
+  Snackbar,
   Stack,
   Table,
   TableBody,
@@ -15,6 +16,7 @@ import {
   ToggleButtonGroup,
   Tooltip,
   Typography,
+  keyframes,
 } from '@mui/material'
 import CloseRoundedIcon from '@mui/icons-material/CloseRounded'
 
@@ -66,6 +68,11 @@ const fxRateNumber = new Intl.NumberFormat('de-DE', {
 })
 
 const FALLBACK_USD_EUR_RATE = 0.92
+const rowAddedPulse = keyframes`
+  0% { background-color: rgba(19, 222, 185, 0.28); }
+  70% { background-color: rgba(19, 222, 185, 0.14); }
+  100% { background-color: transparent; }
+`
 
 function roundOne(value) {
   const n = Number(value)
@@ -84,6 +91,26 @@ function formatPnlPct(value) {
   if (!Number.isFinite(n)) return '—'
   const sign = n >= 0 ? '+' : ''
   return `${sign}${oneDecimalNumber.format(n)}%`
+}
+
+function productDisplayName(item) {
+  const instrument = String(item?.instrument || '').trim()
+  if (instrument) return instrument
+  return String(item?.stockName || item?.symbol || '未知产品').split(' · ')[0]
+}
+
+function buildPnlRecord(type, item, row) {
+  const pnl = Number(row?.result?.pnl)
+  if (!Number.isFinite(pnl)) return null
+
+  const productKey = item?.id || item?.symbol || productDisplayName(item)
+  return {
+    id: `${type}:${productKey}:${row.id}`,
+    type,
+    productName: productDisplayName(item),
+    pnl,
+    underlyingMovePct: Number(row.pct),
+  }
 }
 
 function usdRateForItem(item) {
@@ -153,8 +180,9 @@ function formatStrikeDisplay(value, item) {
 
 // ========================================================
 
-export default function ProductMonitoringDashboard({ item, riskLeg, onClose }) {
+export default function ProductMonitoringDashboard({ item, riskLeg, onClose, onAddPnlRecord }) {
   const [activeTab, setActiveTab] = useState('expiry')
+  const [pnlFeedback, setPnlFeedback] = useState({ open: false, message: '' })
 
   const direction = item ? getOptionDirection(item) : null
   const hasStrike = item ? Number.isFinite(Number(item.strikePrice)) && Number(item.strikePrice) > 0 : false
@@ -165,6 +193,13 @@ export default function ProductMonitoringDashboard({ item, riskLeg, onClose }) {
   const isFactorCert = item?.productType === 'factor_certificate'
   const isOpenEnd = item?.productType === 'open_end_turbo'
   const productKey = item?.id || item?.symbol || item?.stockName
+  const handleAddPnlRecord = (record) => {
+    onAddPnlRecord?.(record)
+    setPnlFeedback({
+      open: true,
+      message: `已加入 P&L 模拟器：${record.productName}`,
+    })
+  }
 
   return (
     <Box sx={{ border: '1px solid #e5eaef', borderRadius: 2, overflow: 'hidden', backgroundColor: '#ffffff' }}>
@@ -221,7 +256,7 @@ export default function ProductMonitoringDashboard({ item, riskLeg, onClose }) {
           <>
             {activeTab === 'expiry' && (
               hasStrike && hasRatio
-                ? <ExpiryPnlTable key={productKey} item={item} direction={direction} hasSpot={hasSpot} />
+                ? <ExpiryPnlTable key={productKey} item={item} direction={direction} hasSpot={hasSpot} onAddPnlRecord={handleAddPnlRecord} />
                 : <UnavailableMessage reason={isFactorCert ? 'Factor Certificate 无行权价，不适用到期收益计算' : '缺少行权价或比例(Bezugsverhältnis)数据'} />
             )}
             {activeTab === 'time' && (
@@ -231,12 +266,26 @@ export default function ProductMonitoringDashboard({ item, riskLeg, onClose }) {
             )}
             {activeTab === 'drawdown' && (
               hasPrice && hasSpot
-                ? <DrawdownTable key={productKey} item={item} />
+                ? <DrawdownTable key={productKey} item={item} onAddPnlRecord={handleAddPnlRecord} />
                 : <UnavailableMessage reason={!hasSpot ? '缺少标的价格数据' : '产品无当前报价'} />
             )}
           </>
         )}
       </Box>
+      <Snackbar
+        open={pnlFeedback.open}
+        autoHideDuration={1500}
+        onClose={() => setPnlFeedback((current) => ({ ...current, open: false }))}
+        message={pnlFeedback.message}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        ContentProps={{
+          sx: {
+            fontWeight: 800,
+            bgcolor: '#2a3547',
+            boxShadow: '0 10px 28px rgba(42, 53, 71, 0.22)',
+          },
+        }}
+      />
     </Box>
   )
 }
@@ -395,7 +444,8 @@ function MethodChip({ method }) {
 // Tab 1: Expiry P&L
 // ========================================================
 
-function ExpiryPnlTable({ item, direction, hasSpot }) {
+function ExpiryPnlTable({ item, direction, hasSpot, onAddPnlRecord }) {
+  const [addedRowId, setAddedRowId] = useState(null)
   const spot = Number(item?.underlyingSpot) || 0
   const spotUsd = underlyingEurToUsd(spot, item)
   const usdEurRate = usdRateForItem(item)
@@ -485,6 +535,14 @@ function ExpiryPnlTable({ item, direction, hasSpot }) {
     }))
   }
 
+  const addRowToSimulator = (row) => {
+    const record = buildPnlRecord('expiry', item, row)
+    if (!record) return
+    onAddPnlRecord?.(record)
+    setAddedRowId(row.id)
+    window.setTimeout(() => setAddedRowId((current) => (current === row.id ? null : current)), 650)
+  }
+
   return (
     <Stack spacing={1.5}>
       <TableContainer sx={{ border: '1px solid #e5eaef', borderRadius: 1, overflowX: 'auto' }}>
@@ -500,16 +558,29 @@ function ExpiryPnlTable({ item, direction, hasSpot }) {
           </TableHead>
           <TableBody>
             {rows.map((row) => (
-              <TableRow key={row.id} sx={{ backgroundColor: row.isCurrent ? '#f0f7ff' : undefined }}>
+              <TableRow
+                key={row.id}
+                hover={Boolean(row.result)}
+                onClick={() => addRowToSimulator(row)}
+                sx={{
+                  cursor: row.result ? 'pointer' : 'default',
+                  backgroundColor: row.isCurrent ? '#f0f7ff' : undefined,
+                  ...(addedRowId === row.id && {
+                    animation: `${rowAddedPulse} 650ms ease-out`,
+                  }),
+                }}
+              >
                 <TableCell sx={tdSx}>
-                  <NumberField
-                    ariaLabel="情景价格"
-                    value={row.priceUsd}
-                    onChange={(value) => updateScenarioPrice(row.id, value)}
-                    startAdornment={<InputAdornment position="start" sx={{ '& .MuiTypography-root': { fontSize: '0.72rem' } }}>{underlyingCurrencySymbol}</InputAdornment>}
-                    width={118}
-                    inputSx={{ fontWeight: row.isCurrent ? 800 : 500 }}
-                  />
+                  <Box onClick={(event) => event.stopPropagation()}>
+                    <NumberField
+                      ariaLabel="情景价格"
+                      value={row.priceUsd}
+                      onChange={(value) => updateScenarioPrice(row.id, value)}
+                      startAdornment={<InputAdornment position="start" sx={{ '& .MuiTypography-root': { fontSize: '0.72rem' } }}>{underlyingCurrencySymbol}</InputAdornment>}
+                      width={118}
+                      inputSx={{ fontWeight: row.isCurrent ? 800 : 500 }}
+                    />
+                  </Box>
                 </TableCell>
                 <TableCell sx={tdSx}>
                   <Typography variant="body2" sx={{ fontVariantNumeric: 'tabular-nums' }}>
@@ -541,15 +612,17 @@ function ExpiryPnlTable({ item, direction, hasSpot }) {
                   )}
                 </TableCell>
                 <TableCell sx={tdSx}>
-                  <NumberField
-                    ariaLabel="变动百分比"
-                    value={row.pct}
-                    onChange={(value) => updateScenarioPct(row.id, value)}
-                    suffix="%"
-                    width={104}
-                    inputSx={{ fontWeight: row.isCurrent ? 800 : 500 }}
-                    format={{ signDisplay: 'exceptZero' }}
-                  />
+                  <Box onClick={(event) => event.stopPropagation()}>
+                    <NumberField
+                      ariaLabel="变动百分比"
+                      value={row.pct}
+                      onChange={(value) => updateScenarioPct(row.id, value)}
+                      suffix="%"
+                      width={104}
+                      inputSx={{ fontWeight: row.isCurrent ? 800 : 500 }}
+                      format={{ signDisplay: 'exceptZero' }}
+                    />
+                  </Box>
                 </TableCell>
               </TableRow>
             ))}
@@ -687,7 +760,8 @@ function TimeDecayTable({ item, riskLeg, direction, hasStrike, hasRatio }) {
 // Tab 3: Short-Term Scenarios
 // ========================================================
 
-function DrawdownTable({ item }) {
+function DrawdownTable({ item, onAddPnlRecord }) {
+  const [addedRowId, setAddedRowId] = useState(null)
   const spot = Number(item?.underlyingSpot) || 0
   const quantity = Number(item?.quantity) || 0
   const [scenarios, setScenarios] = useState(() => (
@@ -717,6 +791,14 @@ function DrawdownTable({ item }) {
     return <UnavailableMessage reason="无法计算短期情景 — 缺少价格和标的价格数据" />
   }
 
+  const addRowToSimulator = (row) => {
+    const record = buildPnlRecord('drawdown', item, row)
+    if (!record) return
+    onAddPnlRecord?.(record)
+    setAddedRowId(row.id)
+    window.setTimeout(() => setAddedRowId((current) => (current === row.id ? null : current)), 650)
+  }
+
   return (
     <Stack spacing={1.5}>
       <TableContainer sx={{ border: '1px solid #e5eaef', borderRadius: 1, overflowX: 'auto' }}>
@@ -735,22 +817,34 @@ function DrawdownTable({ item }) {
           <TableBody>
             {rows.map((row) => {
               return (
-                <TableRow key={row.id}>
+                <TableRow
+                  key={row.id}
+                  hover={Boolean(row.result)}
+                  onClick={() => addRowToSimulator(row)}
+                  sx={{
+                    cursor: row.result ? 'pointer' : 'default',
+                    ...(addedRowId === row.id && {
+                      animation: `${rowAddedPulse} 650ms ease-out`,
+                    }),
+                  }}
+                >
                   <TableCell sx={tdSx}>
-                    <NumberField
-                      ariaLabel="标的变动百分比"
-                      value={row.pct}
-                      onChange={(value) => updateScenarioPct(row.id, value)}
-                      suffix="%"
-                      width={104}
-                      inputSx={{
-                        fontWeight: Math.abs(Number(row.pct) || 0) < 0.05 ? 800 : 500,
-                        '& .MuiOutlinedInput-input': {
-                          color: row.pct < 0 ? 'error.main' : row.pct > 0 ? 'success.main' : 'text.primary',
-                        },
-                      }}
-                      format={{ signDisplay: 'exceptZero' }}
-                    />
+                    <Box onClick={(event) => event.stopPropagation()}>
+                      <NumberField
+                        ariaLabel="标的变动百分比"
+                        value={row.pct}
+                        onChange={(value) => updateScenarioPct(row.id, value)}
+                        suffix="%"
+                        width={104}
+                        inputSx={{
+                          fontWeight: Math.abs(Number(row.pct) || 0) < 0.05 ? 800 : 500,
+                          '& .MuiOutlinedInput-input': {
+                            color: row.pct < 0 ? 'error.main' : row.pct > 0 ? 'success.main' : 'text.primary',
+                          },
+                        }}
+                        format={{ signDisplay: 'exceptZero' }}
+                      />
+                    </Box>
                   </TableCell>
                   <TableCell sx={tdSx}>
                     {row.result ? (

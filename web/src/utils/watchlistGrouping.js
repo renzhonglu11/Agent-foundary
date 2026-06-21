@@ -514,7 +514,24 @@ export function collectTier1AlpacaSymbols(stockRows) {
   const seen = new Set()
 
   tier1.forEach((group) => {
-    // Stocks (non-derivative positions) in the group
+    group.stocks.forEach((row) => {
+      const symbol = row.alpacaSymbol
+      if (symbol && !seen.has(symbol)) {
+        seen.add(symbol)
+        symbols.push(symbol)
+      }
+    })
+  })
+
+  return symbols
+}
+
+export function collectTier1MonitoringAlpacaSymbols(stockRows) {
+  const tier1 = Array.isArray(stockRows?.tier1) ? stockRows.tier1 : []
+  const symbols = []
+  const seen = new Set()
+
+  tier1.forEach((group) => {
     group.stocks.forEach((row) => {
       const symbol = row.alpacaSymbol
       if (symbol && !seen.has(symbol)) {
@@ -523,7 +540,6 @@ export function collectTier1AlpacaSymbols(stockRows) {
       }
     })
 
-    // For derivative-only groups, resolve Alpaca symbol from the group's underlying
     const groupSymbol = resolveAlpacaSymbolForGroup(group)
     if (groupSymbol && !seen.has(groupSymbol)) {
       seen.add(groupSymbol)

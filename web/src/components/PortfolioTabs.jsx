@@ -1,5 +1,5 @@
 import { Grid } from '@mui/material';
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import SummaryCards from './SummaryCards.jsx';
 import PortfolioCharts from './PortfolioCharts.jsx';
 import PositionsActionBoard from './PositionsActionBoard.jsx';
@@ -7,7 +7,8 @@ import PositionsTable from './PositionsTable.jsx';
 import RecentActivity from './RecentActivity.jsx';
 import { useRiskData } from '../hooks/useRiskData.js';
 import { useStructuredProducts } from '../hooks/useStructuredProducts.js';
-import { buildWatchlistGroups, collectTier1AlpacaSymbols } from '../utils/watchlistGrouping.js';
+import { useAlpacaQuotes } from '../hooks/useAlpacaQuotes.js';
+import { buildWatchlistGroups, collectTier1MonitoringAlpacaSymbols } from '../utils/watchlistGrouping.js';
 
 export function OverviewTab({ data }) {
   return (
@@ -26,54 +27,19 @@ export function OverviewTab({ data }) {
   );
 }
 
-export function PositionsTab({ data }) {
+export function PositionsTab({ data, onAddPnlRecord }) {
   const { loading: riskLoading, error: riskError, data: riskData } = useRiskData();
   const { loading: structuredProductsLoading, data: structuredProducts } = useStructuredProducts();
-  const [alpacaQuotes, setAlpacaQuotes] = useState([]);
 
   const stockRowsWithoutAlpaca = useMemo(
     () => (structuredProducts ? buildWatchlistGroups(data, structuredProducts) : {}),
     [data, structuredProducts],
   );
   const tier1AlpacaSymbols = useMemo(
-    () => (stockRowsWithoutAlpaca ? collectTier1AlpacaSymbols(stockRowsWithoutAlpaca) : []),
+    () => (stockRowsWithoutAlpaca ? collectTier1MonitoringAlpacaSymbols(stockRowsWithoutAlpaca) : []),
     [stockRowsWithoutAlpaca],
   );
-  const tier1AlpacaSymbolKey = tier1AlpacaSymbols.join(',');
-
-  useEffect(() => {
-    let cancelled = false;
-    let timer = null;
-
-    if (!tier1AlpacaSymbolKey) {
-      setAlpacaQuotes([]);
-      return () => { cancelled = true; };
-    }
-
-    const load = async () => {
-      try {
-        const query = tier1AlpacaSymbols.map((s) => String(s).trim()).filter(Boolean).join(',');
-        const response = await fetch(`/api/stock-analysis/alpaca-quotes?symbols=${encodeURIComponent(query)}`, { cache: 'no-store' });
-        if (cancelled) return;
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const payload = await response.json();
-        setAlpacaQuotes(Array.isArray(payload?.quotes) ? payload.quotes : []);
-        const cacheTtlSeconds = Math.max(Number(payload?.cacheTtlSeconds) || 60, 60) * 1000;
-        timer = window.setTimeout(load, cacheTtlSeconds);
-      } catch {
-        if (cancelled) return;
-        setAlpacaQuotes([]);
-        timer = window.setTimeout(load, 60_000);
-      }
-    };
-
-    load();
-
-    return () => {
-      cancelled = true;
-      if (timer) window.clearTimeout(timer);
-    };
-  }, [tier1AlpacaSymbolKey]);
+  const { data: alpacaQuotes } = useAlpacaQuotes(tier1AlpacaSymbols, { cacheOnly: true });
 
   return (
     <PositionsActionBoard
@@ -84,6 +50,7 @@ export function PositionsTab({ data }) {
       structuredProducts={structuredProducts}
       structuredProductsLoading={structuredProductsLoading}
       alpacaQuotes={alpacaQuotes}
+      onAddPnlRecord={onAddPnlRecord}
     />
   );
 }
