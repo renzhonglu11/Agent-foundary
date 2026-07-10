@@ -231,6 +231,50 @@ test('uses ratio-based delta exposure and estimates option break-even when provi
   assert.equal(Math.round(derivative.breakEvenDistancePct * 100) / 100, 6.5)
 })
 
+test('converts USD provider break-even to EUR before comparing it with EUR spot', () => {
+  const groups = buildWatchlistGroups(
+    {
+      summary: { totalMarketValue: 10000 },
+      positions: [
+        { symbol: 'DE000SJ7BZY8', displayName: 'Call Micron 104', assetClass: 'DERIVATIVE', quantity: 82, marketValue: 6304.98, costBasis: 153.13, lastPrice: 77.51 },
+      ],
+    },
+    [
+      { isin: 'DE000SJ7BZY8', display_name: 'Call Micron 104', instrument: 'Call 18.12.26 Micron 104', asset_class: 'DERIVATIVE', product_type: 'optionsschein', underlying: 'Micron', enrichment_tier: 'tier1', live_enrichment_enabled: true, quote_source: 'boerse_frankfurt', quantity: 82, quote_price: 77.51, market_value: 6304.98, break_even: 979.3, strike_price: 104, ratio: 0.1 },
+    ],
+    [
+      { symbol: 'MU', price: 862.029117, rawPrice: 985.3, rawCurrency: 'USD', currency: 'EUR', usdEurRate: 0.87489, priceSource: 'alpaca_iex' },
+    ],
+  )
+
+  const derivative = groups.tier1[0].derivatives[0]
+  assert.equal(Math.round(derivative.calculatedBreakEven * 100) / 100, 856.78)
+  assert.equal(Math.round(derivative.breakEvenDistancePct * 100) / 100, 0.61)
+  assert.equal(derivative.breakEvenStatus, 'above')
+})
+
+test('converts a USD strike to EUR when estimating a missing break-even', () => {
+  const groups = buildWatchlistGroups(
+    {
+      summary: { totalMarketValue: 10000 },
+      positions: [
+        { symbol: 'DE000HM0T297', displayName: 'TurboC O.End Micron', assetClass: 'DERIVATIVE', quantity: 378, marketValue: 2385.18, costBasis: 636.55, lastPrice: 6.4 },
+      ],
+    },
+    [
+      { isin: 'DE000HM0T297', display_name: 'TurboC O.End Micron', instrument: 'TurboC O.End Micron', asset_class: 'DERIVATIVE', product_type: 'open_end_turbo', underlying: 'Micron Technology', enrichment_tier: 'tier1', live_enrichment_enabled: true, quote_source: 'boerse_frankfurt', quantity: 378, quote_price: 6.4, market_value: 2385.18, strike_price: 259.3532, ratio: 0.01 },
+    ],
+    [
+      { symbol: 'MU', price: 862.029117, rawPrice: 985.3, rawCurrency: 'USD', currency: 'EUR', usdEurRate: 0.87489, priceSource: 'alpaca_iex' },
+    ],
+  )
+
+  const derivative = groups.tier1[0].derivatives[0]
+  assert.equal(Math.round(derivative.calculatedBreakEven * 100) / 100, 866.91)
+  assert.equal(Math.round(derivative.breakEvenDistancePct * 100) / 100, -0.56)
+  assert.equal(derivative.breakEvenStatus, 'below')
+})
+
 test('estimates derivative leverage from spot, ratio and product quote when omega is missing', () => {
   const groups = buildWatchlistGroups(
     {

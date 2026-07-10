@@ -387,9 +387,9 @@ function calculateBreakEvenStatus(distanceAbs) {
 
 function breakEvenForRow(row) {
   const explicitBreakEven = finiteNumber(row.breakEven)
-  if (explicitBreakEven != null) return explicitBreakEven
+  if (explicitBreakEven != null) return underlyingLevelInEur(row, explicitBreakEven)
 
-  const strike = finiteNumber(row.strikePrice)
+  const strike = underlyingLevelInEur(row, row.strikePrice)
   const ratio = positiveNumber(row.ratio)
   const price = positiveNumber(row.price)
   if ([strike, ratio, price].some((value) => value == null)) return null
@@ -398,6 +398,21 @@ function breakEvenForRow(row) {
   if (direction === 'put') return strike - (price / ratio)
   if (direction === 'call') return strike + (price / ratio)
   return null
+}
+
+function underlyingLevelInEur(row, value) {
+  const level = finiteNumber(value)
+  if (level == null) return null
+  if (String(row.underlyingSpotRawCurrency || '').toUpperCase() !== 'USD') return level
+
+  const explicitRate = positiveNumber(row.underlyingSpotUsdEurRate)
+  if (explicitRate != null) return level * explicitRate
+
+  const rawSpot = positiveNumber(row.underlyingSpotRaw)
+  const eurSpot = positiveNumber(row.underlyingSpot)
+  if (rawSpot != null && eurSpot != null) return level * (eurSpot / rawSpot)
+
+  return level
 }
 
 function optionDirection(row) {
