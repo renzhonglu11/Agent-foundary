@@ -409,3 +409,49 @@ async def test_enrich_rows_uses_expired_cached_greeks_as_stale_fallback():
     assert enriched[0]["omega"] == 15.0
     assert enriched[0]["iv"] == 0.4
     assert len(cache.inserted_greeks) == 0
+
+
+@pytest.mark.asyncio
+async def test_enrich_rows_treats_fresh_incomplete_cached_greeks_as_stale_fallback():
+    from datetime import datetime, timezone
+
+    rows = [
+        {
+            "isin": "DE000INCOMPLETE",
+            "display_name": "Call NVIDIA 220",
+            "instrument": "Call NVIDIA 220",
+            "product_type": "optionsschein",
+            "quantity": 1,
+            "quote_price": 3.21,
+            "quote_currency": "EUR",
+            "market_value": 3.21,
+        },
+    ]
+    cached_greek = Greek(
+        isin="DE000INCOMPLETE",
+        delta=0.9,
+        omega=15.0,
+        iv=0.4,
+        timestamp=datetime.now(timezone.utc),
+    )
+    cached_metadata = InstrumentMetadata(
+        isin="DE000INCOMPLETE",
+        leverage=12.0,
+        break_even=230.0,
+        ratio=0.1,
+        expiry="2026-12-18",
+        underlying="NVIDIA",
+    )
+    cache = FakeCacheStore(
+        metadata={"DE000INCOMPLETE": cached_metadata},
+        greeks={"DE000INCOMPLETE": cached_greek},
+    )
+
+    enriched = await enrich_structured_product_rows(rows, cache_store=cache)
+
+    assert enriched[0]["metadata_source"] == "cache"
+    assert enriched[0]["greeks_source"] == "cache_stale"
+    assert enriched[0]["delta"] == 0.9
+    assert enriched[0]["omega"] == 15.0
+    assert enriched[0]["iv"] == 0.4
+    assert len(cache.inserted_greeks) == 0

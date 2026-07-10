@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from typing import Any, Callable, Protocol
 
 from agent_foundry_python.structured_products.models import Greek, InstrumentMetadata, Quote
 from agent_foundry_python.structured_products.storage import StructuredProductStore
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
