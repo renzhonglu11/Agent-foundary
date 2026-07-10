@@ -26,6 +26,10 @@ export default function App() {
     setPnlRecords((current) => current.filter((record) => record.id !== recordId));
   };
 
+  const handleClearPnlRecords = () => {
+    setPnlRecords([]);
+  };
+
   if (loading) {
     return (
       <Box sx={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}>
@@ -62,6 +66,7 @@ export default function App() {
       onTabChange={setActiveTab}
       pnlRecords={pnlRecords}
       onRemovePnlRecord={handleRemovePnlRecord}
+      onClearPnlRecords={handleClearPnlRecords}
     >
       {tabs[activeTab] ?? tabs.overview}
     </DashboardShell>

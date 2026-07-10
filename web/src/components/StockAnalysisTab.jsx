@@ -5,7 +5,7 @@ import { Stack } from '@mui/material'
 import RealtimeEnrichmentSnackbar from './stock-analysis/RealtimeEnrichmentSnackbar.jsx'
 import StockAnalysisHeader from './stock-analysis/StockAnalysisHeader.jsx'
 import WatchlistTable from './stock-analysis/WatchlistTable.jsx'
-import { tiers } from './stock-analysis/stockAnalysisUi.js'
+import { groupAttentionState, tiers } from './stock-analysis/stockAnalysisUi.js'
 import { buildWatchlistGroups, collectTier1MonitoringAlpacaSymbols } from '../utils/watchlistGrouping.js'
 import { useRiskData } from '../hooks/useRiskData.js'
 import { useStructuredProducts } from '../hooks/useStructuredProducts.js'
@@ -18,7 +18,7 @@ const initialLiveProgress = { percent: 0, current: 0, total: 0, label: 'Starting
 export default function StockAnalysisTab({ data }) {
   const queryClient = useQueryClient()
   const [search, setSearch] = useState('')
-  const [ratingFilter, setRatingFilter] = useState('全部评级')
+  const [attentionFilter, setAttentionFilter] = useState('action')
   const [liveRefreshing, setLiveRefreshing] = useState(false)
   const [liveProgress, setLiveProgress] = useState(initialLiveProgress)
   const { data: structuredProducts } = useStructuredProducts()
@@ -61,6 +61,13 @@ export default function StockAnalysisTab({ data }) {
   const totalRows = Object.values(stockRows).reduce((sum, rows) => sum + rows.length, 0)
   const totalInstruments = Object.values(stockRows).flat().reduce((sum, group) => sum + group.instruments.length, 0)
   const enrichedRows = structuredProducts.length
+  const attentionCounts = useMemo(() => (Array.isArray(riskData) ? riskData : []).reduce((counts, group) => {
+    const state = groupAttentionState(group)
+    if (state.needsAction) counts.action += 1
+    if (state.expiryCount > 0) counts.expiry += 1
+    if (state.dataIssueCount > 0) counts.data += 1
+    return counts
+  }, { action: 0, expiry: 0, data: 0, all: totalRows }), [riskData, totalRows])
 
   return (
     <Stack spacing={2.5}>
@@ -68,8 +75,9 @@ export default function StockAnalysisTab({ data }) {
       <StockAnalysisHeader
         search={search}
         onSearchChange={setSearch}
-        ratingFilter={ratingFilter}
-        onRatingFilterChange={setRatingFilter}
+        attentionFilter={attentionFilter}
+        onAttentionFilterChange={setAttentionFilter}
+        attentionCounts={attentionCounts}
         liveRefreshing={liveRefreshing}
         onRealtimeRefresh={handleRealtimeRefresh}
         totalRows={totalRows}
@@ -78,7 +86,14 @@ export default function StockAnalysisTab({ data }) {
       />
 
       {tiers.map((tier) => (
-        <WatchlistTable key={tier.id} tier={tier} rows={stockRows[tier.id]} search={search} ratingFilter={ratingFilter} riskData={riskData} />
+        <WatchlistTable
+          key={tier.id}
+          tier={tier}
+          rows={stockRows[tier.id]}
+          search={search}
+          attentionFilter={attentionFilter}
+          riskData={riskData}
+        />
       ))}
     </Stack>
   )

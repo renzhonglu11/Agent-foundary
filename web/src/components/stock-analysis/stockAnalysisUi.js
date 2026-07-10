@@ -1,15 +1,55 @@
-export const ratingMeta = {
-  强烈买入: { color: '#13deb9', bg: '#e9fff9', border: '#9bf3df' },
-  买入: { color: '#5d87ff', bg: '#eef3ff', border: '#c5d4ff' },
-  持有: { color: '#49beff', bg: '#edf8ff', border: '#a9dcff' },
-  观望: { color: '#ffae1f', bg: '#fff9df', border: '#ffe18a' },
-  卖出: { color: '#fa896b', bg: '#fff1ee', border: '#ffc9bd' },
+export const attentionFilters = [
+  { id: 'action', label: '需要操作' },
+  { id: 'expiry', label: '临近到期' },
+  { id: 'data', label: '数据异常' },
+  { id: 'all', label: '全部' },
+]
+
+const actionMeta = {
+  REDUCE_CONCENTRATION: { label: '降低集中度', color: 'error' },
+  REDUCE_DERIVATIVE_RISK: { label: '降低衍生品风险', color: 'error' },
+  CLOSE_OR_ROLL_DERIVATIVE: { label: '平仓或展期', color: 'warning' },
+  HOLD_MONITOR: { label: '继续观察', color: 'warning' },
+  ADD_ALLOWED: { label: '可继续持有', color: 'success' },
+  'N/A': { label: '暂无建议', color: 'default' },
+}
+
+export function riskActionMeta(action) {
+  return actionMeta[action] || { label: String(action || '暂无建议').replace(/_/g, ' '), color: 'default' }
+}
+
+export function hasDataIssue(leg) {
+  const score = Number(leg?.dataCompletenessRiskScore)
+  return leg?.exposureConfidence === 'no_data' || (Number.isFinite(score) && score > 3)
+}
+
+export function hasExpiryRisk(leg) {
+  const days = Number(leg?.daysToExpiry)
+  return Number.isFinite(days) && days >= 0 && days < 90
+}
+
+export function groupAttentionState(riskGroup) {
+  const legs = Array.isArray(riskGroup?.legs) ? riskGroup.legs : []
+  const action = riskGroup?.groupActionLabel
+  return {
+    needsAction: Boolean(action && action !== 'ADD_ALLOWED' && action !== 'N/A'),
+    expiryCount: legs.filter(hasExpiryRisk).length,
+    dataIssueCount: legs.filter(hasDataIssue).length,
+  }
+}
+
+export function matchesAttentionFilter(riskGroup, filter) {
+  if (filter === 'all') return true
+  const state = groupAttentionState(riskGroup)
+  if (filter === 'expiry') return state.expiryCount > 0
+  if (filter === 'data') return state.dataIssueCount > 0
+  return state.needsAction
 }
 
 export const tiers = [
-  { id: 'tier1', title: 'Tier 1 Watchlist', subtitle: '核心标的组；普通股票批量使用 Alpaca IEX，金融衍生品使用 Onvista/Börse Frankfurt enrichment' },
-  { id: 'tier2', title: 'Tier 2 Watchlist', subtitle: '其余金融衍生品按 underlying 聚合；默认使用 Rust summary / 已缓存 JSON 数据' },
-  { id: 'tier3', title: 'Tier 3 Watchlist', subtitle: '股票、ETF、Bond 等普通持仓；先使用 Rust portfolio JSON fallback，不触发衍生品实时抓取' },
+  { id: 'tier1', title: 'Tier 1 · 核心关注', subtitle: '实时行情与完整衍生品风险数据' },
+  { id: 'tier2', title: 'Tier 2 · 衍生品观察', subtitle: '按标的聚合的其他衍生品持仓' },
+  { id: 'tier3', title: 'Tier 3 · 普通持仓', subtitle: '股票、ETF 与债券持仓' },
 ]
 
 const twoDecimalNumber = new Intl.NumberFormat('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })

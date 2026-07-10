@@ -23,28 +23,12 @@ import UnfoldMoreRoundedIcon from '@mui/icons-material/UnfoldMoreRounded'
 
 import { preciseCurrency } from '../../utils/formatters.js'
 import GroupDetailPanel from './GroupDetailPanel.jsx'
-import Pill from './Pill.jsx'
 import StockNameCell from './StockNameCell.jsx'
-import { ratingMeta } from './stockAnalysisUi.js'
+import { groupAttentionState, matchesAttentionFilter, riskActionMeta } from './stockAnalysisUi.js'
 import { canonicalGroupKey } from '../../utils/watchlistGrouping.js'
 
-const riskActionColors = {
-  'REDUCE_CONCENTRATION': 'error',
-  'REDUCE_DERIVATIVE_RISK': 'error',
-  'CLOSE_OR_ROLL_DERIVATIVE': 'warning',
-  'HOLD_MONITOR': 'warning',
-  'ADD_ALLOWED': 'success',
-}
-
-export default function WatchlistTable({ tier, rows, search, ratingFilter, riskData }) {
+export default function WatchlistTable({ tier, rows, search, attentionFilter, riskData }) {
   const [expandedRowIds, setExpandedRowIds] = useState(() => new Set())
-
-  const filteredRows = useMemo(() => rows.filter((row) => {
-    const searchText = `${row.groupName} ${row.symbol} ${row.rating} ${row.apiStatus} ${row.holdingStatus} ${row.instruments.map((item) => `${item.stockName} ${item.symbol}`).join(' ')}`
-    const matchesSearch = !search || searchText.toLowerCase().includes(search.toLowerCase())
-    const matchesRating = ratingFilter === '全部评级' || row.rating === ratingFilter
-    return matchesSearch && matchesRating
-  }), [ratingFilter, rows, search])
 
   const riskByKey = useMemo(() => {
     const map = new Map()
@@ -57,6 +41,13 @@ export default function WatchlistTable({ tier, rows, search, ratingFilter, riskD
 
     return map
   }, [riskData])
+
+  const filteredRows = useMemo(() => rows.filter((row) => {
+    const searchText = `${row.groupName} ${row.symbol} ${row.apiStatus} ${row.holdingStatus} ${row.instruments.map((item) => `${item.stockName} ${item.symbol}`).join(' ')}`
+    const matchesSearch = !search || searchText.toLowerCase().includes(search.toLowerCase())
+    const riskGroup = riskByKey.get(row.key) || riskByKey.get(canonicalGroupKey(row.groupName))
+    return matchesSearch && matchesAttentionFilter(riskGroup, attentionFilter)
+  }), [attentionFilter, riskByKey, rows, search])
 
   const toggleRow = (rowId) => {
     setExpandedRowIds((current) => {
@@ -90,6 +81,8 @@ export default function WatchlistTable({ tier, rows, search, ratingFilter, riskD
   const expandedVisibleCount = filteredRows.reduce((count, row) => count + (expandedRowIds.has(row.id) ? 1 : 0), 0)
   const allVisibleExpanded = filteredRows.length > 0 && expandedVisibleCount === filteredRows.length
 
+  if (!filteredRows.length && attentionFilter !== 'all') return null
+
   return (
     <Card className="panel-card">
       <CardContent>
@@ -99,7 +92,7 @@ export default function WatchlistTable({ tier, rows, search, ratingFilter, riskD
             <Typography variant="body2" color="text.secondary">{tier.subtitle}</Typography>
           </Box>
           <Stack direction="row" spacing={1} useFlexGap sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
-            <Tooltip title={allVisibleExpanded ? '全收起' : '全展开'}>
+            <Tooltip title={allVisibleExpanded ? '收起全部标的' : '展开全部标的'}>
               <span>
                 <IconButton
                   aria-label={allVisibleExpanded ? `收起 ${tier.title} 当前标的组` : `展开 ${tier.title} 当前标的组`}
@@ -131,17 +124,15 @@ export default function WatchlistTable({ tier, rows, search, ratingFilter, riskD
             overflowX: 'auto',
           }}
         >
-          <Table size="small" sx={{ minWidth: 960 }} aria-label={`${tier.title} collapsible stock table`}>
+          <Table size="small" sx={{ minWidth: 880 }} aria-label={`${tier.title} collapsible stock table`}>
             <TableHead>
               <TableRow sx={{ backgroundColor: '#f8fafc' }}>
                 <TableCell sx={{ width: 56 }} />
                 <TableCell sx={{ fontWeight: 800 }}>标的总览</TableCell>
-                <TableCell align="right" sx={{ fontWeight: 800 }}>总市值</TableCell>
-                <TableCell align="right" sx={{ fontWeight: 800 }}>Delta Exposure</TableCell>
-                <TableCell sx={{ fontWeight: 800 }}>Risk Action</TableCell>
-                <TableCell sx={{ fontWeight: 800 }}>实时状态</TableCell>
-                <TableCell sx={{ fontWeight: 800 }}>组成</TableCell>
-                <TableCell align="right" sx={{ fontWeight: 800 }}>最近交易</TableCell>
+                <TableCell align="right" sx={{ fontWeight: 800 }}>仓位</TableCell>
+                <TableCell sx={{ fontWeight: 800 }}>核心风险</TableCell>
+                <TableCell sx={{ fontWeight: 800 }}>建议操作</TableCell>
+                <TableCell sx={{ fontWeight: 800 }}>状态</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -149,6 +140,8 @@ export default function WatchlistTable({ tier, rows, search, ratingFilter, riskD
                 const open = expandedRowIds.has(row.id)
                 const riskGroup = riskByKey.get(row.key) || riskByKey.get(canonicalGroupKey(row.groupName))
                 const actionLabel = riskGroup?.groupActionLabel || 'N/A'
+                const action = riskActionMeta(actionLabel)
+                const attention = groupAttentionState(riskGroup)
                 
                 return (
                   <Fragment key={row.id}>
@@ -175,33 +168,29 @@ export default function WatchlistTable({ tier, rows, search, ratingFilter, riskD
                       <TableCell><StockNameCell row={row} /></TableCell>
                       <TableCell align="right">
                         <Typography variant="body2" fontWeight={700}>{preciseCurrency.format(row.marketValue)}</Typography>
-                        {riskGroup && <Typography variant="caption" color="text.secondary">Gross: {(riskGroup.grossWeightPct * 100).toFixed(1)}%</Typography>}
+                        {riskGroup && <Typography variant="caption" color="text.secondary">组合占比 {formatWeight(riskGroup.grossWeightPct)}</Typography>}
                       </TableCell>
-                      <TableCell align="right"><Typography variant="body2" fontWeight={700}>{row.deltaExposure ? preciseCurrency.format(row.deltaExposure) : '—'}</Typography></TableCell>
+                      <TableCell>
+                        <Typography variant="body2" fontWeight={700}>Delta 敞口 {row.deltaExposure != null ? preciseCurrency.format(row.deltaExposure) : '—'}</Typography>
+                        {attention.expiryCount > 0 ? <Typography variant="caption" color="warning.main">{attention.expiryCount} 个产品将在 90 天内到期</Typography> : null}
+                        {!attention.expiryCount && attention.dataIssueCount > 0 ? <Typography variant="caption" color="warning.main">{attention.dataIssueCount} 个产品数据异常</Typography> : null}
+                      </TableCell>
                       <TableCell>
                         <Chip 
                           size="small" 
-                          label={actionLabel.replace(/_/g, ' ')} 
-                          color={riskActionColors[actionLabel] || 'default'} 
+                          label={action.label}
+                          color={action.color}
                           variant={actionLabel === 'N/A' ? 'outlined' : 'filled'}
+                          sx={{ fontWeight: 800 }}
                         />
                       </TableCell>
                       <TableCell>
-                        <Stack direction="row" spacing={0.75} useFlexGap sx={{ flexWrap: 'wrap' }}>
-                          <Chip size="small" color={row.liveStockQuoteCount ? 'success' : 'default'} variant="outlined" label={`Alpaca ${row.liveStockQuoteCount}/${row.stockCount}`} />
-                          <Chip size="small" color={row.liveDerivativeCount ? 'success' : 'default'} variant="outlined" label={`衍生品 ${row.liveDerivativeCount}/${row.derivativeCount}`} />
-                        </Stack>
+                        <Typography variant="body2" fontWeight={700}>实时 {row.liveQuoteCount}/{row.instruments.length}</Typography>
+                        <Typography variant="caption" color="text.secondary">股票 {row.stockCount} · 衍生品 {row.derivativeCount}</Typography>
                       </TableCell>
-                      <TableCell>
-                        <Stack direction="row" spacing={0.75} useFlexGap sx={{ flexWrap: 'wrap' }}>
-                          <Chip size="small" variant="outlined" label={`股票/ETF ${row.stockCount}`} />
-                          <Chip size="small" color={row.derivativeCount ? 'info' : 'default'} variant="outlined" label={`衍生品 ${row.derivativeCount}`} />
-                        </Stack>
-                      </TableCell>
-                      <TableCell align="right"><Typography variant="body2">{row.holdingDays === null ? '—' : `${row.holdingDays} 天前`}</Typography></TableCell>
                     </TableRow>
                     <TableRow>
-                      <TableCell colSpan={8} sx={{ p: 0, borderBottom: open ? '1px solid #edf2f7' : 0 }}>
+                      <TableCell colSpan={6} sx={{ p: 0, borderBottom: open ? '1px solid #edf2f7' : 0 }}>
                         <Collapse in={open} timeout="auto" unmountOnExit>
                           <Box sx={{ px: 2, pb: 2, backgroundColor: '#ffffff' }}>
                             <GroupDetailPanel group={row} riskGroup={riskGroup} />
@@ -214,8 +203,8 @@ export default function WatchlistTable({ tier, rows, search, ratingFilter, riskD
               })}
               {!filteredRows.length ? (
                 <TableRow>
-                  <TableCell colSpan={8} sx={{ py: 4, textAlign: 'center' }}>
-                    <Typography color="text.secondary">没有匹配的股票</Typography>
+                  <TableCell colSpan={6} sx={{ py: 4, textAlign: 'center' }}>
+                    <Typography color="text.secondary">当前筛选下没有标的</Typography>
                   </TableCell>
                 </TableRow>
               ) : null}
@@ -225,4 +214,9 @@ export default function WatchlistTable({ tier, rows, search, ratingFilter, riskD
       </CardContent>
     </Card>
   )
+}
+
+function formatWeight(value) {
+  const numeric = Number(value)
+  return Number.isFinite(numeric) ? `${(numeric * 100).toFixed(1)}%` : '—'
 }

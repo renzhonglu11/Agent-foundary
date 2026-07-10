@@ -6,21 +6,20 @@ import {
   Chip,
   Divider,
   InputAdornment,
-  MenuItem,
   Stack,
   TextField,
-  Tooltip,
   Typography,
 } from '@mui/material'
 import BusinessCenterRoundedIcon from '@mui/icons-material/BusinessCenterRounded'
 import SearchRoundedIcon from '@mui/icons-material/SearchRounded'
-import TuneRoundedIcon from '@mui/icons-material/TuneRounded'
+import { attentionFilters } from './stockAnalysisUi.js'
 
 export default function StockAnalysisHeader({
   search,
   onSearchChange,
-  ratingFilter,
-  onRatingFilterChange,
+  attentionFilter,
+  onAttentionFilterChange,
+  attentionCounts,
   liveRefreshing,
   onRealtimeRefresh,
   totalRows,
@@ -41,11 +40,11 @@ export default function StockAnalysisHeader({
                 onClick={onRealtimeRefresh}
                 sx={{ minWidth: 96, textTransform: 'none' }}
               >
-                real time
+                刷新实时数据
               </Button>
             </Stack>
-            <Typography color="text.secondary" mt={0.5}>
-              当前 watchlist 按 underlying / 标的聚合展示；real time 只刷新 Tier1 金融衍生品的 Onvista/Börse Frankfurt 数据，Tier1 分组里的股票由 Alpaca 按周期自动更新。
+            <Typography variant="body2" color="text.secondary" mt={0.5}>
+              优先查看需要操作的标的；实时刷新仅更新 Tier 1 衍生品行情。
             </Typography>
           </Box>
           <Chip icon={<BusinessCenterRoundedIcon />} color="primary" label={`${totalRows} 个标的组 · ${totalInstruments} 个持仓行 · ${enrichedRows} 个结构化产品`} />
@@ -54,28 +53,23 @@ export default function StockAnalysisHeader({
         <Divider sx={{ my: 2.5 }} />
 
         <Stack direction={{ xs: 'column', xl: 'row' }} spacing={2} sx={{ alignItems: { xs: 'stretch', xl: 'center' }, justifyContent: 'space-between' }}>
-          <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap' }}>
-            <Tooltip title="预留给后续按股票名称筛选" arrow>
-              <Button variant="outlined" startIcon={<TuneRoundedIcon />} sx={{ borderStyle: 'dashed' }}>股票名称</Button>
-            </Tooltip>
-            <TextField
-              select
-              size="small"
-              value={ratingFilter}
-              onChange={(event) => onRatingFilterChange(event.target.value)}
-              sx={{ minWidth: 160 }}
-            >
-              {['全部评级', '强烈买入', '买入', '持有', '观望', '卖出'].map((rating) => (
-                <MenuItem key={rating} value={rating}>{rating}</MenuItem>
-              ))}
-            </TextField>
-            <Button variant="outlined" sx={{ borderStyle: 'dashed' }}>价格</Button>
-            <Button variant="outlined" sx={{ borderStyle: 'dashed' }}>目标价格</Button>
-            <Button variant="outlined" sx={{ borderStyle: 'dashed' }}>持有状态</Button>
+          <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap', alignItems: 'center' }}>
+            {attentionFilters.map((filter) => (
+              <Button
+                key={filter.id}
+                size="small"
+                variant={attentionFilter === filter.id ? 'contained' : 'outlined'}
+                color={filter.id === 'action' && attentionCounts.action > 0 ? 'error' : filter.id === 'expiry' && attentionCounts.expiry > 0 ? 'warning' : 'primary'}
+                onClick={() => onAttentionFilterChange(filter.id)}
+                sx={{ textTransform: 'none' }}
+              >
+                {filter.label} {attentionCounts[filter.id] ?? 0}
+              </Button>
+            ))}
           </Stack>
           <TextField
             size="small"
-            placeholder="Search stock, symbol, rating..."
+            placeholder="搜索标的、代码或产品…"
             value={search}
             onChange={(event) => onSearchChange(event.target.value)}
             sx={{ minWidth: { xs: '100%', md: 360 } }}

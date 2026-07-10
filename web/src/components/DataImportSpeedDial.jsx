@@ -112,7 +112,7 @@ function snapshotFingerprint(records) {
   );
 }
 
-export default function DataImportSpeedDial({ pnlRecords = [], onRemovePnlRecord }) {
+export default function DataImportSpeedDial({ pnlRecords = [], onRemovePnlRecord, onClearPnlRecords }) {
   const inputRef = useRef(null);
   const [activeDialog, setActiveDialog] = useState(null);
   const [files, setFiles] = useState([]);
@@ -239,6 +239,7 @@ export default function DataImportSpeedDial({ pnlRecords = [], onRemovePnlRecord
       setSnapshotMessage(payload.id && snapshots.some((snapshot) => snapshot.id === payload.id)
         ? '当前 Snapshot 已存在'
         : 'Snapshot 已保存');
+      onClearPnlRecords?.();
     } catch (saveError) {
       setSnapshotError(saveError.message || '保存 snapshot 失败');
     } finally {
