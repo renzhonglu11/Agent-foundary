@@ -74,13 +74,20 @@ impl StructuredProductsService {
         settings: StructuredProductsSettings,
         market_data_repository: Arc<dyn MarketDataRepository>,
     ) -> anyhow::Result<Self> {
+        let uv_cache_path = std::env::var("AGENT_FOUNDRY_UV_CACHE_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("data/uv-cache"));
+        let playwright_browsers_path = std::env::var("AGENT_FOUNDRY_PLAYWRIGHT_BROWSERS_PATH")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("data/playwright-browsers"));
+
         Ok(Self {
             output_json_path: absolute_path(&settings.output_json_path)?,
             risk_json_path: absolute_path(&settings.risk_json_path)?,
             output_csv_path: absolute_path(&settings.output_csv_path)?,
             output_db_path: absolute_path(&settings.output_db_path)?,
-            uv_cache_path: absolute_path(Path::new("data/uv-cache"))?,
-            playwright_browsers_path: absolute_path(Path::new("data/playwright-browsers"))?,
+            uv_cache_path: absolute_path(&uv_cache_path)?,
+            playwright_browsers_path: absolute_path(&playwright_browsers_path)?,
             settings,
             market_data_repository,
             refresh_lock: Arc::new(Mutex::new(())),

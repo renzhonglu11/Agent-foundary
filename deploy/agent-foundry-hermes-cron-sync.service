@@ -1,6 +1,6 @@
 [Unit]
 Description=Sync Hermes cron jobs snapshot for Agent Foundry backend
-Documentation=file:/home/rz/Agent-Foundry/bin/sync-hermes-cron-jobs.sh
+Documentation=file:/home/rz/Agent-Foundry/current/bin/sync-hermes-cron-jobs.sh
 After=local-fs.target
 
 [Service]
@@ -8,10 +8,10 @@ Type=oneshot
 User=rz
 Group=rz
 Environment="HERMES_SOURCE_CRON_JOBS_PATH=/home/rz/.hermes/cron/jobs.json"
-Environment="AGENT_FOUNDRY_CRON_JOBS_PATH=/home/rz/Agent-Foundry/data/hermes-cron/jobs.json"
-ExecStart=/home/rz/Agent-Foundry/bin/sync-hermes-cron-jobs.sh
+Environment="AGENT_FOUNDRY_CRON_JOBS_PATH=/home/rz/Agent-Foundry/shared/data/hermes-cron/jobs.json"
+ExecStart=/home/rz/Agent-Foundry/current/bin/sync-hermes-cron-jobs.sh
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=false
-ReadWritePaths=/home/rz/Agent-Foundry/data/hermes-cron
+ReadWritePaths=/home/rz/Agent-Foundry/shared/data/hermes-cron

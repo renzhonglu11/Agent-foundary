@@ -7,18 +7,19 @@ Wants=network-online.target
 Type=simple
 User=rz
 Group=rz
-WorkingDirectory=/home/rz/Agent-Foundry
-EnvironmentFile=/home/rz/Agent-Foundry/.env
+WorkingDirectory=/home/rz/Agent-Foundry/shared
+EnvironmentFile=/home/rz/Agent-Foundry/shared/.env
+EnvironmentFile=/home/rz/Agent-Foundry/current/runtime.env
 Environment=PATH=/home/rz/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/bin
 Environment=PYTHONDONTWRITEBYTECODE=1
-ExecStart=/home/rz/Agent-Foundry/bin/agent-foundry-backend
+ExecStart=/home/rz/Agent-Foundry/current/bin/agent-foundry-backend
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=false
-ReadWritePaths=/home/rz/Agent-Foundry/data
+ReadWritePaths=/home/rz/Agent-Foundry/shared
 
 [Install]
 WantedBy=multi-user.target

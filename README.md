@@ -166,9 +166,44 @@ cd web && npm run build
 ### 使用部署脚本（推荐）
 
 ```bash
-# 构建并 rsync 到 VPS，重启 systemd 服务
+# 在本机构建 Rust、Python 和前端产物，上传为一个带版本的 release，
+# 原子切换 current 软链接，并重启 systemd 服务。
 ./deploy/deploy-backend.sh
 ```
+
+生产环境目录保持在一个根目录下：
+
+```text
+/home/rz/Agent-Foundry/
+├── current -> releases/<release-id>
+├── releases/<release-id>/      # 可回滚的后端、Python venv 与 web/dist
+└── shared/
+    ├── .env                    # 仅在 VPS 上维护，部署脚本绝不覆盖
+    ├── data/                   # SQLite、上传文件与 Hermes cron 快照
+    └── cache/                  # uv 与 Playwright 可再生缓存
+```
+
+首次运行会将旧的 `.env` 和 `data/` 迁移到 `shared/`。之后如需改密钥或环境变量，直接在 VPS 编辑 `shared/.env`；部署脚本不会读取、上传或改写它。每个 release 都含有 `REVISION` 文件，可用来确认线上实际运行的提交。
+
+脚本还会移除旧的 `# agent-foundry-cron-data` 用户 crontab 条目。它原本指向已不存在的根目录 `package.json`，会每分钟失败一次。
+
+### 通过 SSH 隧道访问前端（无域名）
+
+VPS 安装 Caddy 后，在本地运行一次：
+
+```bash
+./deploy/install-caddy-ssh-tunnel.sh
+```
+
+该脚本将 Caddy 配置为只监听 VPS 的 `127.0.0.1:3000`，提供当前 release 的 `web/dist`，并将 `/api/*` 和 `/data/*` 转发到后端。它不会开放公网 HTTP 端口。
+
+每次访问时，在本地保持以下命令运行：
+
+```bash
+ssh -N -L 3000:127.0.0.1:3000 hermes-do
+```
+
+然后浏览器打开 `http://127.0.0.1:3000`。
 
 ### 手动步骤
 
