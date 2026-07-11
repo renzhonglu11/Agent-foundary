@@ -2,21 +2,21 @@ import { useMemo, useState } from 'react'
 import {
   Alert,
   Box,
+  Button,
   Chip,
-  Collapse,
-  IconButton,
+  Drawer,
   LinearProgress,
   Stack,
   Tooltip,
   Typography,
   keyframes,
+  useMediaQuery,
+  useTheme,
 } from '@mui/material'
 import { DataGrid } from '@mui/x-data-grid'
 import AddCircleRoundedIcon from '@mui/icons-material/AddCircleRounded'
 import AutorenewRoundedIcon from '@mui/icons-material/AutorenewRounded'
 import CheckCircleRoundedIcon from '@mui/icons-material/CheckCircleRounded'
-import KeyboardArrowDownRoundedIcon from '@mui/icons-material/KeyboardArrowDownRounded'
-import KeyboardArrowRightRoundedIcon from '@mui/icons-material/KeyboardArrowRightRounded'
 import TrendingDownRoundedIcon from '@mui/icons-material/TrendingDownRounded'
 
 import { compactCurrency, number } from '../utils/formatters.js'
@@ -91,7 +91,10 @@ function riskTooltipLines(leg) {
 // ========================================================
 
 export default function PositionsActionBoard({ data, riskData, riskLoading, riskError, structuredProducts, structuredProductsLoading, alpacaQuotes, onAddPnlRecord }) {
-  const [expandedActionIds, setExpandedActionIds] = useState(() => new Set(['SELL', 'ROLL']))
+  const theme = useTheme()
+  const isDesktopLayout = useMediaQuery(theme.breakpoints.up('lg'))
+  const isMobileDrawer = useMediaQuery('(max-width:799.95px)')
+  const [activeActionId, setActiveActionId] = useState(null)
   const [selectedProduct, setSelectedProduct] = useState(null)
   const [clickedRowId, setClickedRowId] = useState(null)
   const totalMarketValue = Number(data?.summary?.totalMarketValue) || 0
@@ -112,15 +115,16 @@ export default function PositionsActionBoard({ data, riskData, riskLoading, risk
       entries: productEntries.filter((entry) => entry.primaryAction === definition.id),
     }))
   ), [productEntries])
+  const defaultActionId = sections.find((section) => section.entries.length > 0)?.id || 'SELL'
+  const resolvedActiveActionId = activeActionId ?? defaultActionId
+  const activeSection = sections.find((section) => section.id === resolvedActiveActionId) || sections[0]
 
   const loading = Boolean(riskLoading || structuredProductsLoading)
-  const toggleSection = (actionId) => {
-    setExpandedActionIds((current) => {
-      const next = new Set(current)
-      if (next.has(actionId)) next.delete(actionId)
-      else next.add(actionId)
-      return next
-    })
+  const handleActionChange = (actionId) => {
+    if (actionId === resolvedActiveActionId) return
+    setActiveActionId(actionId)
+    setSelectedProduct(null)
+    setClickedRowId(null)
   }
 
   const handleRowClick = (row) => {
@@ -139,7 +143,6 @@ export default function PositionsActionBoard({ data, riskData, riskLoading, risk
         <Stack direction={{ xs: 'column', md: 'row' }} spacing={1} sx={{ justifyContent: 'space-between', alignItems: { xs: 'flex-start', md: 'center' } }}>
           <Box>
             <Typography variant="h6" fontSize="1rem">Tier 1 仓位监控</Typography>
-            <Typography variant="caption" color="text.secondary">按产品主动作展示当前 Tier 1 衍生品 — 紧凑列表视图</Typography>
           </Box>
           <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap' }}>
             <Chip size="small" color="primary" label={`${groupsWithRisk.length} 标的组`} />
@@ -156,93 +159,164 @@ export default function PositionsActionBoard({ data, riskData, riskLoading, risk
         <Box
           sx={{
             display: 'grid',
-            gridTemplateColumns: { xs: '1fr', xl: 'minmax(0, 0.9fr) minmax(680px, 1fr)' },
+            gridTemplateColumns: { xs: '1fr', lg: 'minmax(0, 3fr) minmax(440px, 2fr)' },
             gap: 1.5,
             alignItems: 'start',
           }}
         >
-          <Stack spacing={1.5} sx={{ minWidth: 0, order: { xs: 2, xl: 1 } }}>
-            {sections.map((section) => (
-              <ActionSection
-                key={section.id}
-                definition={section}
-                entries={section.entries}
-                expanded={expandedActionIds.has(section.id)}
-                onToggle={() => toggleSection(section.id)}
-                onRowClick={handleRowClick}
-                clickedRowId={clickedRowId}
-              />
-            ))}
+          <Stack spacing={1} sx={{ minWidth: 0 }}>
+            <ActionFilterBar
+              sections={sections}
+              activeActionId={resolvedActiveActionId}
+              onChange={handleActionChange}
+            />
+            <Box sx={{ border: '1px solid #e5eaef', borderRadius: 2, overflow: 'hidden' }}>
+              {activeSection.entries.length ? (
+                <ProductActionTable
+                  entries={activeSection.entries}
+                  onRowClick={handleRowClick}
+                  clickedRowId={clickedRowId}
+                />
+              ) : (
+                <Box sx={{ px: 1.5, py: 2 }}>
+                  <Typography variant="body2" color="text.secondary">
+                    当前没有匹配的 Tier 1 产品。
+                  </Typography>
+                </Box>
+              )}
+            </Box>
           </Stack>
 
-          <Box
-            sx={{
-              position: { xs: 'static', xl: 'sticky' },
-              top: { xl: 72 },
-              zIndex: 5,
-              maxHeight: { xl: 'calc(100vh - 80px)' },
-              overflowY: { xl: 'auto' },
-              backgroundColor: '#ffffff',
-              borderRadius: 2,
-              boxShadow: { xs: 'none', xl: '0 8px 24px rgba(15, 23, 42, 0.08)' },
-              overscrollBehavior: 'contain',
-              minWidth: 0,
-              order: { xs: 1, xl: 2 },
-            }}
-          >
-            <ProductMonitoringDashboard
-              item={selectedProduct?.item ?? null}
-              riskLeg={selectedProduct?.riskLeg ?? null}
-              onClose={() => setSelectedProduct(null)}
-              onAddPnlRecord={onAddPnlRecord}
-            />
-          </Box>
+          {isDesktopLayout ? (
+            <Box
+              sx={{
+                position: 'sticky',
+                top: 72,
+                zIndex: 5,
+                maxHeight: 'calc(100vh - 80px)',
+                overflowY: 'auto',
+                backgroundColor: '#ffffff',
+                borderRadius: 2,
+                boxShadow: '0 8px 24px rgba(15, 23, 42, 0.08)',
+                overscrollBehavior: 'contain',
+                minWidth: 0,
+              }}
+            >
+              <ProductMonitoringDashboard
+                item={selectedProduct?.item ?? null}
+                riskLeg={selectedProduct?.riskLeg ?? null}
+                onClose={() => setSelectedProduct(null)}
+                onAddPnlRecord={onAddPnlRecord}
+              />
+            </Box>
+          ) : null}
         </Box>
       </Stack>
+
+      {!isDesktopLayout ? (
+        <Drawer
+          anchor={isMobileDrawer ? 'bottom' : 'right'}
+          open={Boolean(selectedProduct)}
+          onClose={() => setSelectedProduct(null)}
+          sx={{ zIndex: (currentTheme) => currentTheme.zIndex.modal }}
+          slotProps={{
+            paper: {
+              'aria-label': '产品实时监控',
+              sx: isMobileDrawer
+                ? {
+                    width: '100%',
+                    height: '85vh',
+                    borderRadius: '16px 16px 0 0',
+                    p: 1,
+                    backgroundColor: '#f5f7fa',
+                  }
+                : {
+                    width: 'clamp(520px, 62vw, 720px)',
+                    p: 1.5,
+                    backgroundColor: '#f5f7fa',
+                  },
+            },
+          }}
+        >
+          <ProductMonitoringDashboard
+            item={selectedProduct?.item ?? null}
+            riskLeg={selectedProduct?.riskLeg ?? null}
+            onClose={() => setSelectedProduct(null)}
+            onAddPnlRecord={onAddPnlRecord}
+          />
+        </Drawer>
+      ) : null}
     </Box>
   )
 }
 
-// ---- section ----
+// ---- action filter ----
 
-function ActionSection({ definition, entries, expanded, onToggle, onRowClick, clickedRowId }) {
-  const Icon = definition.icon
-
+function ActionFilterBar({ sections, activeActionId, onChange }) {
   return (
-    <Box sx={{ border: '1px solid #e5eaef', borderRadius: 2, overflow: 'hidden' }}>
-      {/* section header */}
-      <Box
-        role="button" tabIndex={0}
-        onClick={onToggle}
-        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle() } }}
+    <Box sx={{ border: '1px solid #e5eaef', borderRadius: 2, backgroundColor: '#f8fafc', overflow: 'hidden' }}>
+      <Stack
+        direction="row"
+        spacing={0.75}
         sx={{
-          px: 1.5, py: 1, cursor: 'pointer', backgroundColor: '#f8fafc',
-          borderBottom: expanded ? '1px solid #e5eaef' : 0,
-          '&:hover': { backgroundColor: '#f3f7fb' },
+          p: 1,
+          overflowX: 'auto',
+          overscrollBehaviorX: 'contain',
+          scrollbarWidth: 'thin',
+          '&::-webkit-scrollbar': { height: 5 },
+          '&::-webkit-scrollbar-thumb': { backgroundColor: '#cbd5e1', borderRadius: 999 },
         }}
       >
-        <Stack direction="row" spacing={1} sx={{ alignItems: 'center', justifyContent: 'space-between' }}>
-          <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-            <IconButton size="small" onClick={(e) => { e.stopPropagation(); onToggle() }} sx={{ width: 24, height: 24 }}>
-              {expanded ? <KeyboardArrowDownRoundedIcon fontSize="small" /> : <KeyboardArrowRightRoundedIcon fontSize="small" />}
-            </IconButton>
-            <Icon fontSize="small" color={definition.color} />
-            <Typography variant="body2" fontWeight={900}>{definition.title}</Typography>
-            <Typography variant="caption" color="text.secondary">{definition.subtitle}</Typography>
-          </Stack>
-          <Chip size="small" color={definition.color} label={`${entries.length}`} sx={{ minWidth: 32, height: 20, '& .MuiChip-label': { px: 1 } }} />
-        </Stack>
-      </Box>
+        {sections.map((section) => {
+          const Icon = section.icon
+          const active = section.id === activeActionId
 
-      <Collapse in={expanded} timeout="auto" unmountOnExit>
-        {entries.length ? (
-          <ProductActionTable entries={entries} onRowClick={onRowClick} clickedRowId={clickedRowId} />
-        ) : (
-          <Box sx={{ px: 1.5, py: 1.5 }}>
-            <Typography variant="body2" color="text.secondary">当前没有匹配的 Tier 1 产品。</Typography>
-          </Box>
-        )}
-      </Collapse>
+          return (
+            <Tooltip key={section.id} title={section.subtitle} arrow enterDelay={400}>
+              <Button
+                size="small"
+                variant={active ? 'contained' : 'outlined'}
+                color={section.color}
+                startIcon={(
+                  <Icon
+                    fontSize="small"
+                    sx={{ color: active ? 'inherit' : `${section.color}.main` }}
+                  />
+                )}
+                onClick={() => onChange(section.id)}
+                aria-pressed={active}
+                aria-label={`${section.title} ${section.subtitle}，${section.entries.length} 个产品`}
+                sx={{
+                  minWidth: 'max-content',
+                  px: 1.25,
+                  py: 0.6,
+                  borderRadius: 1.5,
+                  borderColor: active ? undefined : '#d8e0e8',
+                  color: active ? undefined : 'text.primary',
+                  boxShadow: 'none',
+                  textTransform: 'none',
+                  whiteSpace: 'nowrap',
+                  '&:hover': {
+                    borderColor: `${section.color}.main`,
+                    backgroundColor: active ? undefined : `${section.color}.light`,
+                    boxShadow: 'none',
+                  },
+                  '& .MuiButton-startIcon': { mr: 0.75 },
+                }}
+              >
+                <Typography
+                  component="span"
+                  variant="body2"
+                  fontWeight={900}
+                  sx={{ fontVariantNumeric: 'tabular-nums' }}
+                >
+                  {section.title} {section.entries.length}
+                </Typography>
+              </Button>
+            </Tooltip>
+          )
+        })}
+      </Stack>
     </Box>
   )
 }
