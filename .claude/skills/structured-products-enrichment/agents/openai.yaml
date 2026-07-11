@@ -1,0 +1,4 @@
+interface:
+  display_name: "Structured Products Enrichment"
+  short_description: "Onvista and gs.de enrichment rules"
+  default_prompt: "Use $structured-products-enrichment to debug structured product provider enrichment and risk fallback issues."

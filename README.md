@@ -165,6 +165,8 @@ cd web && npm run build
 
 ### 使用部署脚本（推荐）
 
+完整的发布、回滚与 SSH 隧道操作说明见 [部署运行手册](docs/deployment-runbook.md)。
+
 ```bash
 # 在本机构建 Rust、Python 和前端产物，上传为一个带版本的 release，
 # 原子切换 current 软链接，并重启 systemd 服务。
