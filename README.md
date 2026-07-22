@@ -141,6 +141,8 @@ npm run dev
 # 运行 scripts/dev-with-backend.sh — 在端口 8080 启动后端，前端 Vite 在端口 5173 并代理 API 调用
 ```
 
+使用独立 worktree 进行纯前端开发时，请改用[前端 Worktree 开发指南](docs/frontend-worktree-development.md)，以复用主工作区的后端与 `.env`。
+
 ### 4. 检查
 
 ```bash
@@ -178,10 +180,11 @@ cd web && npm run build
 ```text
 /home/rz/Agent-Foundry/
 ├── current -> releases/<release-id>
-├── releases/<release-id>/      # 可回滚的后端、Python venv 与 web/dist
+├── releases/<release-id>/      # 可回滚的后端、Python 环境链接与 web/dist
 └── shared/
     ├── .env                    # 仅在 VPS 上维护，部署脚本绝不覆盖
     ├── data/                   # SQLite、上传文件与 Hermes cron 快照
+    ├── python-envs/            # 按内容哈希复用的不可变 Python 环境
     └── cache/                  # uv 与 Playwright 可再生缓存
 ```
 
@@ -202,7 +205,7 @@ VPS 安装 Caddy 后，在本地运行一次：
 每次访问时，在本地保持以下命令运行：
 
 ```bash
-ssh -N -L 3000:127.0.0.1:3000 hermes-do
+ssh -N -L 3000:127.0.0.1:3000 cx33
 ```
 
 然后浏览器打开 `http://127.0.0.1:3000`。

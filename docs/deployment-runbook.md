@@ -27,13 +27,14 @@ The default remote root is `/home/rz/Agent-Foundry`:
 ├── releases/
 │   └── <release-id>/
 │       ├── bin/                 # Rust backend and Hermes sync script
-│       ├── python/.venv/        # release-specific Python environment
+│       ├── python/.venv ->      # symlink to shared/python-envs/<env-id>
 │       ├── web/dist/            # static frontend
 │       ├── runtime.env          # paths into this release/shared state
 │       └── REVISION             # Git revision, release ID, build timestamp
 └── shared/
     ├── .env                     # VPS-only secrets and settings
     ├── data/                    # SQLite, uploads, Hermes cron snapshot
+    ├── python-envs/             # immutable, content-addressed Python envs
     └── cache/                   # uv and Playwright caches
 ```
 
@@ -42,7 +43,7 @@ The default remote root is `/home/rz/Agent-Foundry`:
 On the build machine:
 
 - Rust, `uv`, Node/npm, `ssh`, and `scp` are available.
-- The SSH host alias `hermes-do` works, or `SSH_HOST` is set.
+- The SSH host alias `cx33` works, or `SSH_HOST` is set.
 - The checkout is at the intended revision. A dirty checkout is allowed, but
   the generated `REVISION` explicitly records `worktree_dirty=true`.
 
@@ -51,6 +52,13 @@ On the VPS:
 - The deploy user can authenticate with `sudo` through an SSH TTY.
 - `uv` is available at `/home/rz/.local/bin/uv`, unless `REMOTE_UV_BIN` is
   provided.
+- Python 3.12 is discoverable through `uv python find 3.12`; its exact version
+  participates in the shared environment identity.
+- Chromium's Linux runtime libraries are installed. On Ubuntu 26.04,
+  Playwright is automatically mapped to its Ubuntu 24.04 browser build until
+  upstream publishes a native Ubuntu 26.04 build. Override the automatic
+  choice with `REMOTE_PLAYWRIGHT_HOST_PLATFORM_OVERRIDE` when deploying from
+  another machine.
 - Before the first deployment, create the real server-side `.env` at either
   `<remote-root>/.env` (it will be migrated once) or
   `<remote-root>/shared/.env`. It must contain the application configuration
@@ -70,8 +78,11 @@ The script performs these steps:
    frontend bundle locally.
 2. Creates a release ID from the current Git SHA and UTC timestamp, then
    uploads all artifacts plus rendered systemd units to a temporary VPS path.
-3. On the VPS, creates a new `releases/<release-id>` directory, creates its
-   Python venv, installs dependencies, and installs Playwright Chromium.
+3. On the VPS, creates a new `releases/<release-id>` directory and links it to
+   an immutable Python environment keyed by effective requirements, wheel
+   content, Python version, and CPU architecture. An existing matching
+   environment is reused; otherwise it is built before activation. Playwright
+   Chromium remains in the shared browser cache.
 4. On the first migration only, moves legacy `<remote-root>/data` to
    `shared/data` after the new release has been fully prepared. It refuses to
    choose if both locations already contain data.
@@ -125,7 +136,7 @@ Automatic rollback covers failed restart/health checks during a deployment.
 For a later regression, pick a known-good release and switch back explicitly:
 
 ```bash
-ssh hermes-do
+ssh cx33
 sudo ln -sfn /home/rz/Agent-Foundry/releases/<known-good-release> \
   /home/rz/Agent-Foundry/current
 sudo systemctl restart agent-foundry-backend
@@ -134,7 +145,9 @@ curl -fsS http://127.0.0.1:8080/health
 
 Do not delete releases until the active release and a rollback candidate have
 been identified. Release cleanup is intentionally manual; no deploy script
-prunes historical releases.
+prunes historical releases. Python environment cleanup is also manual: never
+delete a directory under `shared/python-envs/` while any retained release's
+`python/.venv` symlink points to it.
 
 ## Loopback-only Caddy frontend
 
@@ -157,7 +170,7 @@ FRONTEND_PORT=3001 ./deploy/install-caddy-ssh-tunnel.sh
 To browse it, keep a local SSH tunnel open:
 
 ```bash
-ssh -N -L 3000:127.0.0.1:3000 hermes-do
+ssh -N -L 3000:127.0.0.1:3000 cx33
 ```
 
 Then open `http://127.0.0.1:3000`. Do not change the Caddy listener to a public
@@ -168,10 +181,12 @@ address unless public HTTP exposure has been explicitly approved.
 Before modifying deployment code, verify that the change preserves all of the
 following:
 
-1. The activated release is self-contained and immutable after activation.
+1. The activated release and its referenced content-addressed Python
+   environment are immutable after activation.
 2. No deployment command overwrites `shared/.env` or `shared/data`.
-3. All systemd paths resolve through `current/` for release artifacts and
-   through `shared/` for mutable state.
+3. Systemd paths resolve through `current/` for release artifacts, through
+   `shared/python-envs/` for immutable Python environments, and through the
+   remaining `shared/` paths for mutable state.
 4. A failed activation either leaves `current` untouched or restores the
    previous release.
 5. `bash -n` passes for every changed deployment script; run a local frontend
