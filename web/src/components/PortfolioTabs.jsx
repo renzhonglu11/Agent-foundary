@@ -17,7 +17,12 @@ export function OverviewTab({ data }) {
       <PortfolioCharts allocation={data.allocation} monthly={data.monthly} />
       <Grid container spacing={2}>
         <Grid size={{ xs: 12, lg: 8 }}>
-          <PositionsTable positions={data.positions} totalMarketValue={data.summary.totalMarketValue} compact />
+          <PositionsTable
+            positions={data.positions}
+            totalMarketValue={data.summary.totalMarketValue}
+            totalCostBasis={data.summary.totalCostBasis}
+            compact
+          />
         </Grid>
         <Grid size={{ xs: 12, lg: 4 }}>
           <RecentActivity transactions={data.recentTransactions} />

@@ -21,6 +21,7 @@ import TrendingDownRoundedIcon from '@mui/icons-material/TrendingDownRounded'
 
 import { compactCurrency, number } from '../utils/formatters.js'
 import { buildWatchlistGroups, canonicalGroupKey } from '../utils/watchlistGrouping.js'
+import PortfolioStressTestPanel from './PortfolioStressTestPanel.jsx'
 import ProductMonitoringDashboard from './ProductMonitoringDashboard.jsx'
 
 const actionDefinitions = [
@@ -98,6 +99,7 @@ export default function PositionsActionBoard({ data, riskData, riskLoading, risk
   const [selectedProduct, setSelectedProduct] = useState(null)
   const [clickedRowId, setClickedRowId] = useState(null)
   const totalMarketValue = Number(data?.summary?.totalMarketValue) || 0
+  const totalCostBasis = Number(data?.summary?.totalCostBasis) || 0
   const tier1Groups = useMemo(() => buildWatchlistGroups(data, structuredProducts, alpacaQuotes).tier1, [data, structuredProducts, alpacaQuotes])
   const riskByKey = useMemo(() => buildRiskMap(riskData), [riskData])
   const groupsWithRisk = useMemo(() => (
@@ -211,6 +213,13 @@ export default function PositionsActionBoard({ data, riskData, riskLoading, risk
             </Box>
           ) : null}
         </Box>
+
+        <PortfolioStressTestPanel
+          entries={productEntries}
+          loading={loading}
+          totalMarketValue={totalMarketValue}
+          totalCostBasis={totalCostBasis}
+        />
       </Stack>
 
       {!isDesktopLayout ? (

@@ -2,13 +2,14 @@ import { Box, Card, CardContent, Chip, LinearProgress, Stack, Typography, useThe
 import { DataGrid, GridToolbar } from '@mui/x-data-grid';
 import { number, percent, preciseCurrency, pnlColor } from '../utils/formatters.js';
 
-export default function PositionsTable({ positions, totalMarketValue, compact = false }) {
+export default function PositionsTable({ positions, totalMarketValue, totalCostBasis, compact = false }) {
   const theme = useTheme();
 
   const rows = positions.map((position) => ({
     id: position.symbol,
     ...position,
     weight: totalMarketValue ? (position.marketValue / totalMarketValue) * 100 : 0,
+    capitalWeight: totalCostBasis ? ((Number(position.costBasis) || 0) / totalCostBasis) * 100 : 0,
   }));
 
   const columns = [
@@ -50,13 +51,16 @@ export default function PositionsTable({ positions, totalMarketValue, compact = 
     },
     {
       field: 'weight',
-      headerName: '占比',
+      headerName: '组合占比',
       type: 'number',
       width: 160,
       valueFormatter: (value) => `${number.format(value ?? 0)}%`,
       renderCell: ({ row }) => (
         <Box sx={{ width: '100%' }}>
-          <Typography variant="body2" mb={0.5}>{number.format(row.weight ?? 0)}%</Typography>
+          <Typography variant="body2">市值 {number.format(row.weight ?? 0)}%</Typography>
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+            本金 {number.format(row.capitalWeight ?? 0)}%
+          </Typography>
           <LinearProgress variant="determinate" value={Math.min(100, row.weight ?? 0)} sx={{ height: 6, borderRadius: 10 }} />
         </Box>
       ),

@@ -64,6 +64,11 @@ pub fn build(state: Arc<AppState>, frontend_origin: &str) -> anyhow::Result<Rout
             "/api/pnl-snapshots/{id}",
             delete(handlers::delete_pnl_snapshot),
         )
+        .route(
+            "/api/portfolio-stress/hermes-review",
+            get(handlers::portfolio_stress_hermes_status)
+                .post(handlers::portfolio_stress_hermes_review),
+        )
         .route("/api/systemd/units", get(handlers::systemd_units))
         .route("/api/fred/macro-data", get(handlers::fred_macro_data))
         .route(
