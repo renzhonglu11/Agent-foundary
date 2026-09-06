@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SSH_HOST="${SSH_HOST:-hermes-do}"
+SSH_HOST="${SSH_HOST:-cx33}"
 REMOTE_ROOT="${REMOTE_ROOT:-/home/rz/Agent-Foundry}"
 REMOTE_USER="${REMOTE_USER:-rz}"
 REMOTE_GROUP="${REMOTE_GROUP:-rz}"
@@ -11,6 +11,7 @@ SYNC_SERVICE_NAME="${SYNC_SERVICE_NAME:-agent-foundry-hermes-cron-sync}"
 REMOTE_UV_BIN="${REMOTE_UV_BIN:-/home/rz/.local/bin/uv}"
 REMOTE_UV_DIR="$(dirname -- "${REMOTE_UV_BIN}")"
 HERMES_CRON_SOURCE_PATH="${HERMES_CRON_SOURCE_PATH:-/home/${SYNC_USER}/.hermes/cron/jobs.json}"
+REMOTE_PLAYWRIGHT_HOST_PLATFORM_OVERRIDE="${REMOTE_PLAYWRIGHT_HOST_PLATFORM_OVERRIDE:-}"
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
@@ -115,7 +116,7 @@ scp "${REVISION_FILE}" "${SSH_HOST}:${TMP_DIR}/REVISION"
 scp "${REMOTE_INSTALL_SCRIPT}" "${SSH_HOST}:${TMP_DIR}/install-release-remote.sh"
 
 echo "Installing release on VPS..."
-printf -v remote_command 'bash %q %q %q %q %q %q %q %q %q %q' \
+printf -v remote_command 'bash %q %q %q %q %q %q %q %q %q %q %q' \
   "${TMP_DIR}/install-release-remote.sh" \
   "${REMOTE_ROOT}" \
   "${REMOTE_USER}" \
@@ -125,7 +126,8 @@ printf -v remote_command 'bash %q %q %q %q %q %q %q %q %q %q' \
   "${SYNC_SERVICE_NAME}" \
   "${REMOTE_UV_BIN}" \
   "${TMP_DIR}" \
-  "${RELEASE_ID}"
+  "${RELEASE_ID}" \
+  "${REMOTE_PLAYWRIGHT_HOST_PLATFORM_OVERRIDE}"
 ssh -tt "${SSH_HOST}" "${remote_command}"
 
 echo "Deployment complete: ${RELEASE_ID}"

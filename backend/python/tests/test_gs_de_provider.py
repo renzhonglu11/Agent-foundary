@@ -1,4 +1,5 @@
 import json
+import logging
 
 import httpx
 import pytest
@@ -359,7 +360,39 @@ async def test_gs_de_provider_falls_back_to_optionsschein_calculator_by_isin():
 
 
 @pytest.mark.asyncio
-async def test_gs_de_provider_ignores_mismatched_isin_response():
+async def test_gs_de_provider_retries_transient_incomplete_lookup(caplog):
+    calls = {"graphql": 0, "calculator": 0}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            calls["graphql"] += 1
+            if calls["graphql"] == 1:
+                return httpx.Response(503, request=request)
+            return httpx.Response(200, json=GS_AMD_GRAPHQL, request=request)
+
+        calls["calculator"] += 1
+        if calls["calculator"] == 1:
+            return httpx.Response(503, request=request)
+        return httpx.Response(200, text=GS_AMD_CALCULATOR_HTML, request=request)
+
+    provider = GsDeProductProvider(
+        transport=httpx.MockTransport(handler),
+        retry_delay_seconds=0,
+    )
+    with caplog.at_level(logging.WARNING):
+        product = await provider.get_product_data("DE000HT0Q0Z8")
+
+    assert product is not None
+    assert product.metadata.ratio == 0.1
+    assert product.metadata.expiry == "2026-12-18"
+    assert calls == {"graphql": 2, "calculator": 2}
+    assert "attempt 1/3" in caplog.text
+    assert "retrying" in caplog.text
+    await provider.aclose()
+
+
+@pytest.mark.asyncio
+async def test_gs_de_provider_ignores_mismatched_isin_response(caplog):
     async def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "POST":
             payload = json.loads(json.dumps(GS_AMD_GRAPHQL))
@@ -367,8 +400,13 @@ async def test_gs_de_provider_ignores_mismatched_isin_response():
             return httpx.Response(200, json=payload, request=request)
         return httpx.Response(200, text=GS_OPTIONSSCHEIN_HTML, request=request)
 
-    provider = GsDeProductProvider(transport=httpx.MockTransport(handler))
-    product = await provider.get_product_data("DE000OTHER01")
+    provider = GsDeProductProvider(
+        transport=httpx.MockTransport(handler),
+        max_attempts=1,
+    )
+    with caplog.at_level(logging.WARNING):
+        product = await provider.get_product_data("DE000OTHER01")
 
     assert product is None
+    assert "incomplete for DE000OTHER01 after 1 attempts" in caplog.text
     await provider.aclose()

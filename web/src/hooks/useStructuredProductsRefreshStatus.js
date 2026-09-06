@@ -11,7 +11,9 @@ export function useStructuredProductsRefreshStatus() {
   return useQuery({
     queryKey: queryKeys.structuredProductsRefreshStatus,
     queryFn: fetchStructuredProductsRefreshStatus,
-    refetchInterval: (query) => (query.state.data?.running ? 3_000 : 30_000),
+    refetchInterval: (query) => (
+      query.state.data?.running || query.state.data?.queued ? 3_000 : 30_000
+    ),
     refetchIntervalInBackground: true,
   })
 }
@@ -30,6 +32,7 @@ export function useStructuredProductsDataSync() {
       queryClient.invalidateQueries({ queryKey: queryKeys.structuredProducts })
       queryClient.invalidateQueries({ queryKey: queryKeys.structuredProductsRisk })
       queryClient.invalidateQueries({ queryKey: ['alpacaQuotes'] })
+      queryClient.invalidateQueries({ queryKey: queryKeys.portfolio })
     }
 
     initializedRef.current = true

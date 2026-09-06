@@ -35,6 +35,8 @@ import InsertDriveFileRoundedIcon from '@mui/icons-material/InsertDriveFileRound
 import KeyboardArrowDownRoundedIcon from '@mui/icons-material/KeyboardArrowDownRounded';
 import KeyboardArrowRightRoundedIcon from '@mui/icons-material/KeyboardArrowRightRounded';
 import QueryStatsRoundedIcon from '@mui/icons-material/QueryStatsRounded';
+import { useQueryClient } from '@tanstack/react-query';
+import { queryKeys } from '../hooks/queryKeys.js';
 
 const allowedTypes = new Set(['csv', 'pdf']);
 const pnlSectionDefinitions = [
@@ -113,6 +115,7 @@ function snapshotFingerprint(records) {
 }
 
 export default function DataImportSpeedDial({ pnlRecords = [], onRemovePnlRecord, onClearPnlRecords }) {
+  const queryClient = useQueryClient();
   const inputRef = useRef(null);
   const [activeDialog, setActiveDialog] = useState(null);
   const [files, setFiles] = useState([]);
@@ -167,9 +170,6 @@ export default function DataImportSpeedDial({ pnlRecords = [], onRemovePnlRecord
     if (uploading) return;
 
     setActiveDialog(null);
-    if (result?.saved?.length) {
-      window.location.reload();
-    }
   };
 
   const addFiles = (fileList) => {
@@ -212,6 +212,10 @@ export default function DataImportSpeedDial({ pnlRecords = [], onRemovePnlRecord
       }
       setResult(payload);
       setFiles([]);
+      await Promise.all([
+        queryClient.refetchQueries({ queryKey: queryKeys.portfolio, type: 'active' }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.structuredProductsRefreshStatus }),
+      ]);
     } catch (uploadError) {
       setError(uploadError.message || '上传失败');
     } finally {

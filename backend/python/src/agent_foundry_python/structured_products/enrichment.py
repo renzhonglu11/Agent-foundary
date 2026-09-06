@@ -197,6 +197,8 @@ async def enrich_structured_product_rows(
                         break_even=enriched.get("break_even"),
                         ratio=enriched.get("ratio"),
                         expiry=enriched.get("expiry"),
+                        option_type=enriched.get("option_type"),
+                        reset_barrier=enriched.get("reset_barrier"),
                     )
                     if not _is_metadata_invalid(metadata_to_save, name):
                         cache_store.upsert_metadata(metadata_to_save)

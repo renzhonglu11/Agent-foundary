@@ -23,6 +23,7 @@ function entry(overrides = {}) {
     ratio: 0.1,
     delta: 0.5,
     theta: -0.01,
+    iv: 0.42,
     expiry: '2099-12-31',
     ...overrides.item,
   }
@@ -87,6 +88,8 @@ test('factor certificate uses signed leverage without option history', () => {
     item: {
       productType: 'factor_certificate',
       leverage: 3,
+      strikePrice: 500,
+      ratio: 1,
       delta: null,
       theta: null,
     },
@@ -96,6 +99,30 @@ test('factor certificate uses signed leverage without option history', () => {
   assert.ok(result)
   assert.equal(result.method, 'factor_leverage')
   assert.equal(result.returnPct, 15)
+})
+
+test('short factor stress reverses the endpoint shock and ignores option strike', () => {
+  const product = entry({
+    item: {
+      productType: 'factor_certificate',
+      optionType: 'put',
+      price: 0.76,
+      quantity: 772,
+      marketValue: 586.72,
+      underlyingSpot: 4.49,
+      strikePrice: 10.538,
+      ratio: 1,
+      leverage: 2,
+      delta: null,
+      theta: null,
+    },
+  })
+  const result = calculatePositionStress(product, { id: 'up', label: '+5%', movePct: 5 }, 30)
+
+  assert.ok(result)
+  assert.equal(result.method, 'factor_leverage')
+  assert.equal(result.projectedPrice, 0.684)
+  assert.equal(result.returnPct, -10)
 })
 
 test('portfolio report excludes blocked legs from candidate combinations but keeps the baseline', () => {
@@ -117,6 +144,16 @@ test('portfolio report excludes blocked legs from candidate combinations but kee
   assert.equal(payload.modelMode, 'stress_only')
   assert.equal(payload.portfolios.length, 4)
   assert.ok(payload.portfolios.every((portfolio) => portfolio.scenarios.length === 5))
+  const product = payload.portfolios[0].products.find((item) => item.id === 'A')
+  assert.equal(product.delta, 0.5)
+  assert.equal(product.theta, -0.01)
+  assert.equal(product.ivPct, 42)
+  assert.equal(product.daysToExpiry, 365)
+  assert.deepEqual(
+    product.scenarioMethods.map(({ scenarioId }) => scenarioId),
+    payload.portfolios[0].scenarios.map(({ id }) => id),
+  )
+  assert.ok(product.scenarioMethods.every(({ method }) => method === 'delta+theta'))
 })
 
 test('portfolio candidates manage WATCH reasons separately and register ROLL opportunities', () => {

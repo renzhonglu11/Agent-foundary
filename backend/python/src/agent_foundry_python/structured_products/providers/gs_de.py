@@ -150,10 +150,23 @@ class GsDeProductProvider:
     BASE_URL = "https://www.gs.de/de/optionsschein-rechner"
     GRAPHQL_URL = "https://www.gs.de/graphql"
 
-    def __init__(self, *, timeout: float = 20.0, transport: Any | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        timeout: float = 20.0,
+        transport: Any | None = None,
+        max_attempts: int = 3,
+        retry_delay_seconds: float = 0.5,
+    ) -> None:
+        if max_attempts < 1:
+            raise ValueError("max_attempts must be at least 1")
+        if retry_delay_seconds < 0:
+            raise ValueError("retry_delay_seconds must not be negative")
         self._timeout_seconds = timeout
         self._playwright_timeout = timeout * 1000
         self._transport = transport
+        self._max_attempts = max_attempts
+        self._retry_delay_seconds = retry_delay_seconds
         self._playwright: Playwright | None = None
         self._browser: Browser | None = None
         self._page: Page | None = None
@@ -177,25 +190,109 @@ class GsDeProductProvider:
 
     async def get_product_data(self, isin: str) -> ProductData | None:
         url = f"{self.BASE_URL}?isin={isin}"
+        best_product: ProductData | None = None
+        missing_fields: tuple[str, ...] = ("product_data",)
+
+        for attempt in range(1, self._max_attempts + 1):
+            product = await self._get_product_data_once(isin, url)
+            if product is not None:
+                best_product = (
+                    product
+                    if best_product is None
+                    else _merge_product_data(best_product, product)
+                )
+                missing_fields = _missing_required_monitoring_fields(best_product)
+                if not missing_fields:
+                    return best_product
+            else:
+                missing_fields = (
+                    ("product_data",)
+                    if best_product is None
+                    else _missing_required_monitoring_fields(best_product)
+                )
+
+            if attempt < self._max_attempts:
+                delay = self._retry_delay_seconds * (2 ** (attempt - 1))
+                logger.warning(
+                    "gs.de lookup incomplete for %s on attempt %d/%d "
+                    "(missing: %s); retrying in %.1fs",
+                    isin,
+                    attempt,
+                    self._max_attempts,
+                    ", ".join(missing_fields),
+                    delay,
+                )
+                if delay > 0:
+                    await asyncio.sleep(delay)
+
+        logger.warning(
+            "gs.de lookup incomplete for %s after %d attempts (missing: %s)",
+            isin,
+            self._max_attempts,
+            ", ".join(missing_fields),
+        )
+        return best_product
+
+    async def _get_product_data_once(
+        self,
+        isin: str,
+        url: str,
+    ) -> ProductData | None:
         try:
             graphql_product = await self._fetch_graphql_product(isin, url)
             if graphql_product is not None and not _needs_calculator_fallback(graphql_product):
-                logger.debug("gs.de %s: GraphQL sufficient (theta=%s), skipping calculator", isin, getattr(graphql_product.greek, "theta", None) if graphql_product.greek else None)
+                logger.debug(
+                    "gs.de %s: GraphQL sufficient (theta=%s), skipping calculator",
+                    isin,
+                    getattr(graphql_product.greek, "theta", None)
+                    if graphql_product.greek
+                    else None,
+                )
                 return graphql_product
 
-            logger.debug("gs.de %s: fetching calculator fallback (graphql=%s)", isin, graphql_product is not None)
+            logger.debug(
+                "gs.de %s: fetching calculator fallback (graphql=%s)",
+                isin,
+                graphql_product is not None,
+            )
             calculator_product = await self._fetch_calculator_product(url)
-            if calculator_product is not None and calculator_product.metadata.isin.upper() == isin.upper():
+            if (
+                calculator_product is not None
+                and calculator_product.metadata.isin.upper() == isin.upper()
+            ):
                 if graphql_product is not None:
                     product = _merge_product_data(graphql_product, calculator_product)
-                    final_theta = getattr(product.greek, "theta", None) if product.greek else None
-                    logger.debug("gs.de %s: merged GraphQL + calculator (theta=%s)", isin, final_theta)
-                    return ProductData(metadata=product.metadata, greek=product.greek, source="gs.de", url=url)
-                final_theta = getattr(calculator_product.greek, "theta", None) if calculator_product.greek else None
+                    final_theta = (
+                        getattr(product.greek, "theta", None) if product.greek else None
+                    )
+                    logger.debug(
+                        "gs.de %s: merged GraphQL + calculator (theta=%s)",
+                        isin,
+                        final_theta,
+                    )
+                    return ProductData(
+                        metadata=product.metadata,
+                        greek=product.greek,
+                        source="gs.de",
+                        url=url,
+                    )
+                final_theta = (
+                    getattr(calculator_product.greek, "theta", None)
+                    if calculator_product.greek
+                    else None
+                )
                 logger.debug("gs.de %s: calculator only (theta=%s)", isin, final_theta)
-                return ProductData(metadata=calculator_product.metadata, greek=calculator_product.greek, source="gs.de", url=url)
+                return ProductData(
+                    metadata=calculator_product.metadata,
+                    greek=calculator_product.greek,
+                    source="gs.de",
+                    url=url,
+                )
 
-            logger.debug("gs.de %s: calculator returned no match, falling back to GraphQL", isin)
+            logger.debug(
+                "gs.de %s: calculator returned no match, falling back to GraphQL",
+                isin,
+            )
             return graphql_product
         except Exception as exc:
             logger.debug("gs.de product fallback failed for %s: %s", isin, exc)
@@ -350,6 +447,17 @@ def _needs_calculator_fallback(product: ProductData) -> bool:
     return any(
         getattr(meta, field) is None
         for field in ("strike_price", "ratio", "expiry", "leverage", "break_even")
+    )
+
+
+def _missing_required_monitoring_fields(product: ProductData) -> tuple[str, ...]:
+    metadata = product.metadata
+    if metadata.product_type not in (None, "", "optionsschein"):
+        return ()
+    return tuple(
+        field
+        for field in ("strike_price", "ratio", "expiry")
+        if getattr(metadata, field) in (None, "")
     )
 
 

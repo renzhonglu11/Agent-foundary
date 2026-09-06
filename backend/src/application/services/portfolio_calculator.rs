@@ -3,7 +3,7 @@ use std::{
     path::Path,
 };
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use regex::Regex;
 
 use crate::domain::{
@@ -20,6 +20,7 @@ pub struct CalculatorInput {
     pub csv_source: String,
     pub pdf_source: String,
     pub pdf_text_source: Option<String>,
+    pub pdf_created_at: Option<DateTime<Utc>>,
     pub isin_names: HashMap<String, PdfSecurityInfo>,
     pub price_overrides: HashMap<String, PriceOverride>,
 }
@@ -39,6 +40,7 @@ pub struct PdfSecurityInfo {
 pub struct PriceOverride {
     pub price: f64,
     pub source: String,
+    pub quote_timestamp: Option<DateTime<Utc>>,
 }
 
 pub fn calculate_portfolio(
@@ -623,17 +625,33 @@ fn non_zero(value: f64, fallback: f64) -> f64 {
 }
 
 fn price_for_position(position: &Position, input: &CalculatorInput) -> Option<f64> {
-    if let Some(override_) = input.price_overrides.get(&position.symbol) {
-        if override_.price > 0.0 {
-            return Some(override_.price);
-        }
-    }
-
-    input
+    let pdf_price = input
         .isin_names
-        .get(&position.symbol)?
-        .quote_price
-        .filter(|value| *value > 0.0)
+        .get(&position.symbol)
+        .and_then(|info| info.quote_price)
+        .filter(|value| *value > 0.0);
+
+    let override_ = input
+        .price_overrides
+        .get(&position.symbol)
+        .filter(|override_| override_.price > 0.0);
+
+    match (override_, pdf_price) {
+        (Some(override_), None) => Some(override_.price),
+        (Some(override_), Some(pdf_price)) => {
+            let override_is_current = match (override_.quote_timestamp, input.pdf_created_at) {
+                (Some(quote_timestamp), Some(pdf_created_at)) => quote_timestamp >= pdf_created_at,
+                (Some(_), None) => true,
+                (None, Some(_)) => false,
+                (None, None) => true,
+            };
+
+            override_is_current
+                .then_some(override_.price)
+                .or(Some(pdf_price))
+        }
+        (None, pdf_price) => pdf_price,
+    }
 }
 
 fn market_value_for_position(position: &Position, input: &CalculatorInput) -> Option<f64> {
@@ -772,6 +790,7 @@ mod tests {
             PriceOverride {
                 price: 12.0,
                 source: "boerse_frankfurt".to_owned(),
+                quote_timestamp: None,
             },
         );
 
@@ -786,6 +805,92 @@ mod tests {
         assert_eq!(output.positions[0].last_price, 12.0);
         assert_eq!(output.positions[0].market_value, 120.0);
         assert_eq!(output.summary.unrealized_pnl, 20.0);
+    }
+
+    #[test]
+    fn newer_pdf_quote_wins_over_stale_market_override() -> anyhow::Result<()> {
+        let transactions = vec![
+            TestTx::new("1", "BUY")
+                .symbol("US0000000001")
+                .amount(-100.0)
+                .shares(10.0)
+                .price(10.0)
+                .build(),
+        ];
+        let mut isin_names = HashMap::new();
+        isin_names.insert(
+            "US0000000001".to_owned(),
+            PdfSecurityInfo {
+                quote_price: Some(15.0),
+                ..PdfSecurityInfo::default()
+            },
+        );
+        let mut price_overrides = HashMap::new();
+        price_overrides.insert(
+            "US0000000001".to_owned(),
+            PriceOverride {
+                price: 12.0,
+                source: "boerse_frankfurt".to_owned(),
+                quote_timestamp: Some("2026-07-25T12:00:00Z".parse()?),
+            },
+        );
+
+        let output = calculate_portfolio(
+            &transactions,
+            CalculatorInput {
+                pdf_created_at: Some("2026-08-25T12:00:00Z".parse()?),
+                isin_names,
+                price_overrides,
+                ..CalculatorInput::default()
+            },
+        );
+
+        assert_eq!(output.positions[0].last_price, 15.0);
+        assert_eq!(output.positions[0].market_value, 150.0);
+        Ok(())
+    }
+
+    #[test]
+    fn newer_market_override_wins_over_pdf_quote() -> anyhow::Result<()> {
+        let transactions = vec![
+            TestTx::new("1", "BUY")
+                .symbol("US0000000001")
+                .amount(-100.0)
+                .shares(10.0)
+                .price(10.0)
+                .build(),
+        ];
+        let mut isin_names = HashMap::new();
+        isin_names.insert(
+            "US0000000001".to_owned(),
+            PdfSecurityInfo {
+                quote_price: Some(15.0),
+                ..PdfSecurityInfo::default()
+            },
+        );
+        let mut price_overrides = HashMap::new();
+        price_overrides.insert(
+            "US0000000001".to_owned(),
+            PriceOverride {
+                price: 18.0,
+                source: "boerse_frankfurt".to_owned(),
+                quote_timestamp: Some("2026-08-25T12:01:00Z".parse()?),
+            },
+        );
+
+        let output = calculate_portfolio(
+            &transactions,
+            CalculatorInput {
+                pdf_created_at: Some("2026-08-25T12:00:00Z".parse()?),
+                isin_names,
+                price_overrides,
+                ..CalculatorInput::default()
+            },
+        );
+
+        assert_eq!(output.positions[0].last_price, 18.0);
+        assert_eq!(output.positions[0].market_value, 180.0);
+        Ok(())
     }
 
     #[test]

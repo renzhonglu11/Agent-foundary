@@ -1,6 +1,9 @@
 use std::{
     path::{Path, PathBuf},
-    sync::{Arc, RwLock},
+    sync::{
+        Arc, RwLock,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -10,7 +13,7 @@ use serde_json::{Value, json};
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
     process::Command,
-    sync::Mutex,
+    sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
 };
 use tracing::{info, warn};
 
@@ -27,7 +30,7 @@ use crate::{
 const STRUCTURED_PRODUCTS_PAYLOAD_KEY: &str = "structured_products_enrichment";
 const STRUCTURED_PRODUCTS_RISK_PAYLOAD_KEY: &str = "structured_products_risk";
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RefreshMode {
     FallbackOnly,
     Live,
@@ -43,8 +46,16 @@ pub struct StructuredProductsService {
     output_db_path: PathBuf,
     uv_cache_path: PathBuf,
     playwright_browsers_path: PathBuf,
-    refresh_lock: Arc<Mutex<()>>,
+    refresh_sender: UnboundedSender<RefreshRequest>,
+    queued_requests: Arc<AtomicUsize>,
     status: Arc<RwLock<RefreshStatus>>,
+}
+
+#[derive(Debug, Clone)]
+struct RefreshRequest {
+    summary: PortfolioSummaryResponse,
+    reason: &'static str,
+    mode: RefreshMode,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -81,7 +92,8 @@ impl StructuredProductsService {
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("data/playwright-browsers"));
 
-        Ok(Self {
+        let (refresh_sender, refresh_receiver) = unbounded_channel();
+        let service = Self {
             output_json_path: absolute_path(&settings.output_json_path)?,
             risk_json_path: absolute_path(&settings.risk_json_path)?,
             output_csv_path: absolute_path(&settings.output_csv_path)?,
@@ -90,9 +102,12 @@ impl StructuredProductsService {
             playwright_browsers_path: absolute_path(&playwright_browsers_path)?,
             settings,
             market_data_repository,
-            refresh_lock: Arc::new(Mutex::new(())),
+            refresh_sender,
+            queued_requests: Arc::new(AtomicUsize::new(0)),
             status: Arc::new(RwLock::new(RefreshStatus::default())),
-        })
+        };
+        service.start_refresh_worker(refresh_receiver);
+        Ok(service)
     }
 
     pub async fn refresh_if_missing(&self, summary: PortfolioSummaryResponse) {
@@ -129,10 +144,53 @@ impl StructuredProductsService {
             return;
         }
 
+        self.queued_requests.fetch_add(1, Ordering::SeqCst);
+        if self
+            .refresh_sender
+            .send(RefreshRequest {
+                summary,
+                reason,
+                mode,
+            })
+            .is_err()
+        {
+            self.queued_requests.fetch_sub(1, Ordering::SeqCst);
+            warn!(reason, "structured products refresh queue is unavailable");
+        }
+    }
+
+    fn start_refresh_worker(&self, mut receiver: UnboundedReceiver<RefreshRequest>) {
         let service = self.clone();
         tokio::spawn(async move {
-            if let Err(error) = service.refresh(summary, reason, mode).await {
-                warn!(%error, reason, "structured products enrichment refresh failed");
+            while let Some(mut request) = receiver.recv().await {
+                service.queued_requests.fetch_sub(1, Ordering::SeqCst);
+
+                let mut coalesced_count = 1usize;
+                while let Ok(next) = receiver.try_recv() {
+                    service.queued_requests.fetch_sub(1, Ordering::SeqCst);
+                    request = request.coalesce(next);
+                    coalesced_count += 1;
+                }
+
+                if coalesced_count > 1 {
+                    info!(
+                        coalesced_count,
+                        reason = request.reason,
+                        mode = request.mode.as_str(),
+                        "coalesced pending structured products refresh requests"
+                    );
+                }
+
+                if let Err(error) = service
+                    .refresh(request.summary, request.reason, request.mode)
+                    .await
+                {
+                    warn!(
+                        %error,
+                        reason = request.reason,
+                        "structured products enrichment refresh failed"
+                    );
+                }
             }
         });
     }
@@ -254,6 +312,8 @@ impl StructuredProductsService {
         match self.status.read() {
             Ok(status) => json!({
                 "running": status.running,
+                "queued": self.queued_requests.load(Ordering::SeqCst) > 0,
+                "queuedRequests": self.queued_requests.load(Ordering::SeqCst),
                 "mode": status.mode,
                 "progressCurrent": status.progress_current,
                 "progressTotal": status.progress_total,
@@ -278,14 +338,6 @@ impl StructuredProductsService {
         reason: &'static str,
         mode: RefreshMode,
     ) -> anyhow::Result<()> {
-        let Ok(_guard) = self.refresh_lock.try_lock() else {
-            info!(
-                reason,
-                "structured products enrichment refresh already running"
-            );
-            return Ok(());
-        };
-
         self.mark_started(mode);
         let result = async {
             let summary_path = self.write_temporary_summary(&summary).await?;
@@ -481,6 +533,13 @@ impl StructuredProductsService {
                 "structured products generator exited with {status}: {stderr}",
             ));
         }
+        if !stderr.trim().is_empty() {
+            warn!(
+                reason,
+                stderr = %stderr.trim(),
+                "structured products generator reported warnings"
+            );
+        }
 
         let payload_json = tokio::fs::read_to_string(&output_paths.enrichment_json)
             .await
@@ -636,6 +695,22 @@ impl RefreshMode {
     }
 }
 
+impl RefreshRequest {
+    fn coalesce(self, next: Self) -> Self {
+        let mode = if self.mode == RefreshMode::Live || next.mode == RefreshMode::Live {
+            RefreshMode::Live
+        } else {
+            RefreshMode::FallbackOnly
+        };
+
+        Self {
+            summary: next.summary,
+            reason: next.reason,
+            mode,
+        }
+    }
+}
+
 fn absolute_path(path: &Path) -> anyhow::Result<PathBuf> {
     if path.is_absolute() {
         return Ok(path.to_path_buf());
@@ -660,4 +735,54 @@ fn resolve_command_path(command: &str, working_dir: &Path) -> anyhow::Result<Pat
     }
 
     absolute_path(&working_dir.join(path))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::portfolio::{Dividend, DividendSummary, SourceInfo, Summary};
+
+    #[test]
+    fn coalescing_keeps_latest_summary_and_strongest_refresh_mode() {
+        let merged = RefreshRequest {
+            summary: empty_summary("older"),
+            reason: "scheduled",
+            mode: RefreshMode::Live,
+        }
+        .coalesce(RefreshRequest {
+            summary: empty_summary("newer"),
+            reason: "upload_data_success",
+            mode: RefreshMode::FallbackOnly,
+        });
+
+        assert_eq!(merged.summary.generated_at, "newer");
+        assert_eq!(merged.reason, "upload_data_success");
+        assert_eq!(merged.mode, RefreshMode::Live);
+    }
+
+    fn empty_summary(generated_at: &str) -> PortfolioSummaryResponse {
+        PortfolioSummaryResponse {
+            generated_at: generated_at.to_owned(),
+            source: SourceInfo {
+                csv: String::new(),
+                pdf: String::new(),
+                pdf_text: None,
+                isin_name_matches: 0,
+                rows: 0,
+                first_date: None,
+                last_date: None,
+            },
+            summary: Summary::default(),
+            allocation: Vec::new(),
+            positions: Vec::new(),
+            monthly: Vec::new(),
+            dividend: Dividend {
+                summary: DividendSummary::default(),
+                monthly: Vec::new(),
+                top_symbols: Vec::new(),
+                records: Vec::new(),
+            },
+            recent_transactions: Vec::new(),
+        }
+    }
 }

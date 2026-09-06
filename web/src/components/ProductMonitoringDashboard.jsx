@@ -41,6 +41,10 @@ const MONITOR_TABS = [
   { id: 'drawdown', label: '短期情景' },
 ]
 
+const FACTOR_MONITOR_TABS = [
+  { id: 'drawdown', label: '杠杆情景' },
+]
+
 // ---- helpers ----
 
 const oneDecimalNumber = new Intl.NumberFormat('de-DE', {
@@ -181,7 +185,9 @@ function formatStrikeDisplay(value, item) {
 // ========================================================
 
 export default function ProductMonitoringDashboard({ item, riskLeg, onClose, onAddPnlRecord }) {
-  const [activeTab, setActiveTab] = useState('expiry')
+  const [activeTab, setActiveTab] = useState(() => (
+    item?.productType === 'factor_certificate' ? 'drawdown' : 'expiry'
+  ))
   const [pnlFeedback, setPnlFeedback] = useState({ open: false, message: '' })
 
   const direction = item ? getOptionDirection(item) : null
@@ -193,6 +199,12 @@ export default function ProductMonitoringDashboard({ item, riskLeg, onClose, onA
   const isFactorCert = item?.productType === 'factor_certificate'
   const isOpenEnd = item?.productType === 'open_end_turbo'
   const productKey = item?.id || item?.symbol || item?.stockName
+  const monitorTabs = isFactorCert ? FACTOR_MONITOR_TABS : MONITOR_TABS
+
+  useEffect(() => {
+    setActiveTab(isFactorCert ? 'drawdown' : 'expiry')
+  }, [isFactorCert, productKey])
+
   const handleAddPnlRecord = (record) => {
     onAddPnlRecord?.(record)
     setPnlFeedback({
@@ -233,7 +245,7 @@ export default function ProductMonitoringDashboard({ item, riskLeg, onClose, onA
             },
           }}
         >
-          {MONITOR_TABS.map((tab) => (
+          {monitorTabs.map((tab) => (
             <ToggleButton key={tab.id} value={tab.id}>
               {tab.label}
             </ToggleButton>
@@ -255,12 +267,16 @@ export default function ProductMonitoringDashboard({ item, riskLeg, onClose, onA
         ) : (
           <>
             {activeTab === 'expiry' && (
-              hasStrike && hasRatio
+              isFactorCert
+                ? <UnavailableMessage reason="Factor Certificate 为 Open End 每日复位产品，不适用到期内在价值计算" />
+                : hasStrike && hasRatio
                 ? <ExpiryPnlTable key={productKey} item={item} direction={direction} hasSpot={hasSpot} onAddPnlRecord={handleAddPnlRecord} />
-                : <UnavailableMessage reason={isFactorCert ? 'Factor Certificate 无行权价，不适用到期收益计算' : '缺少行权价或比例(Bezugsverhältnis)数据'} />
+                : <UnavailableMessage reason="缺少行权价或比例(Bezugsverhältnis)数据" />
             )}
             {activeTab === 'time' && (
-              hasPrice
+              isFactorCert
+                ? <UnavailableMessage reason="Factor Certificate 没有普通期权 Theta；持有结果受每日复位、路径和融资成本影响" />
+                : hasPrice
                 ? <TimeDecayTable key={productKey} item={item} riskLeg={riskLeg} direction={direction} hasStrike={hasStrike} hasRatio={hasRatio} />
                 : <UnavailableMessage reason="产品无当前报价" />
             )}
@@ -313,6 +329,9 @@ function DashboardHeader({ item, direction, onClose }) {
 
   const name = item.stockName || item.symbol || '未知产品'
   const productType = item.productType
+  const directionLabel = productType === 'factor_certificate'
+    ? direction === 'put' ? 'SHORT' : 'LONG'
+    : direction === 'call' ? 'CALL' : 'PUT'
 
   return (
     <Box sx={{ px: 1.5, py: 1, backgroundColor: '#f8fafc', borderBottom: '1px solid #e5eaef' }}>
@@ -327,7 +346,7 @@ function DashboardHeader({ item, direction, onClose }) {
           {direction && (
             <Chip
               size="small"
-              label={direction === 'call' ? 'CALL' : 'PUT'}
+              label={directionLabel}
               color={direction === 'call' ? 'success' : 'error'}
               variant="filled"
               sx={{ height: 18, '& .MuiChip-label': { px: 0.75, fontSize: '0.65rem', fontWeight: 700 } }}
@@ -366,6 +385,8 @@ function DashboardContextBar({ item, riskLeg, direction }) {
   const expiry = item.expiry
   const quantity = item.quantity
   const dte = riskLeg?.daysToExpiry
+  const isFactorCert = item.productType === 'factor_certificate'
+  const resetBarrier = item.resetBarrier
 
   return (
     <Stack direction="row" spacing={1} useFlexGap sx={{ px: 1.5, py: 0.75, flexWrap: 'wrap', borderBottom: '1px solid #e5eaef', backgroundColor: '#fafbfc' }}>
@@ -373,7 +394,13 @@ function DashboardContextBar({ item, riskLeg, direction }) {
         <ContextChip label="标的价格" value={formatUnderlyingUsd(spot, item)} />
       )}
       {strike != null && Number.isFinite(Number(strike)) && (
-        <ContextChip label="行权价" value={formatStrikeDisplay(strike, item)} />
+        <ContextChip label={isFactorCert ? '当前基准价' : '行权价'} value={formatStrikeDisplay(strike, item)} />
+      )}
+      {isFactorCert && resetBarrier != null && Number.isFinite(Number(resetBarrier)) && (
+        <ContextChip label="Reset Barrier" value={formatStrikeDisplay(resetBarrier, item)} />
+      )}
+      {isFactorCert && item.leverage != null && Number.isFinite(Number(item.leverage)) && (
+        <ContextChip label="Factor" value={`${oneDecimalNumber.format(item.leverage)}×`} />
       )}
       {expiry && (
         <ContextChip label="到期日" value={new Date(expiry).toLocaleDateString('de-DE', { dateStyle: 'medium' })} />
@@ -769,6 +796,7 @@ function DrawdownTable({ item, onAddPnlRecord }) {
   ))
   const calcItem = useMemo(() => productCalculationItem(item), [item])
   const underlyingCurrencySymbol = hasUsdUnderlying(item) ? '$' : '€'
+  const isFactorCert = item?.productType === 'factor_certificate'
 
   const rows = useMemo(() => (
     scenarios.map((scenario) => {
@@ -927,13 +955,25 @@ function DrawdownTable({ item, onAddPnlRecord }) {
             Omega: <b>{oneDecimalNumber.format(item.omega)}</b>
           </Typography>
         )}
+        {isFactorCert && item.leverage != null && Number.isFinite(Number(item.leverage)) && (
+          <Typography variant="caption" color="text.secondary">
+            Factor: <b>{oneDecimalNumber.format(item.leverage)}× {getOptionDirection(item) === 'put' ? 'Short' : 'Long'}</b>
+          </Typography>
+        )}
+        {isFactorCert && item.resetBarrier != null && Number.isFinite(Number(item.resetBarrier)) && (
+          <Typography variant="caption" color="text.secondary">
+            Reset Barrier: <b>{formatStrikeDisplay(item.resetBarrier, item)}</b>
+          </Typography>
+        )}
         <Typography variant="caption" color="text.secondary">
           标的价格: <b>{formatUnderlyingUsd(spot, item)}</b>
         </Typography>
       </Box>
 
       <Typography variant="caption" color="text.secondary">
-        短期情景估算 — 假设当前剩余时间价值仍在。优先使用 Delta 估算；无 Delta 时用 Omega；均无时用内在价值近似。注意：Delta 线性估算忽略 Gamma 曲率效应，实际大幅波动时偏差较大。
+        {isFactorCert
+          ? 'Factor 单周期情景估算 — 按当前产品价格 × (1 + 方向 × Factor × 标的涨跌幅) 计算。产品每日复位且具有路径依赖；多日实际结果还受盘中调整、融资成本和发行人定价影响。'
+          : '短期情景估算 — 假设当前剩余时间价值仍在。优先使用 Delta 估算；无 Delta 时用 Omega；均无时用内在价值近似。注意：Delta 线性估算忽略 Gamma 曲率效应，实际大幅波动时偏差较大。'}
       </Typography>
     </Stack>
   )

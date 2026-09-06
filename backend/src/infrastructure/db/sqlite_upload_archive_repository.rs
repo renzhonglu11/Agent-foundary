@@ -61,7 +61,7 @@ impl UploadArchiveRepository for SqliteUploadArchiveRepository {
     async fn latest_pdf_text(&self) -> anyhow::Result<Option<LatestPdfText>> {
         let Some(row) = sqlx::query(
             r#"
-            SELECT stored_path, extracted_text
+            SELECT stored_path, extracted_text, created_at
             FROM uploaded_files
             WHERE kind = 'pdf' AND extracted_text IS NOT NULL AND extracted_text <> ''
             ORDER BY created_at DESC, file_id DESC
@@ -77,6 +77,7 @@ impl UploadArchiveRepository for SqliteUploadArchiveRepository {
         Ok(Some(LatestPdfText {
             stored_path: row.try_get("stored_path")?,
             extracted_text: row.try_get("extracted_text")?,
+            created_at: row.try_get("created_at")?,
         }))
     }
 }

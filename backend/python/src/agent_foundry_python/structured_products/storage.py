@@ -58,18 +58,24 @@ class StructuredProductStore:
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(isin) DO UPDATE SET
-                    wkn = excluded.wkn,
-                    issuer = excluded.issuer,
-                    underlying = excluded.underlying,
-                    product_type = excluded.product_type,
-                    leverage = excluded.leverage,
-                    strike_price = excluded.strike_price,
-                    knockout_price = excluded.knockout_price,
-                    break_even = excluded.break_even,
-                    ratio = excluded.ratio,
-                    expiry = excluded.expiry,
-                    option_type = excluded.option_type,
-                    reset_barrier = excluded.reset_barrier,
+                    wkn = COALESCE(excluded.wkn, instrument_metadata.wkn),
+                    issuer = COALESCE(excluded.issuer, instrument_metadata.issuer),
+                    underlying = COALESCE(excluded.underlying, instrument_metadata.underlying),
+                    product_type = COALESCE(excluded.product_type, instrument_metadata.product_type),
+                    leverage = COALESCE(excluded.leverage, instrument_metadata.leverage),
+                    strike_price = COALESCE(excluded.strike_price, instrument_metadata.strike_price),
+                    knockout_price = COALESCE(
+                        excluded.knockout_price,
+                        instrument_metadata.knockout_price
+                    ),
+                    break_even = COALESCE(excluded.break_even, instrument_metadata.break_even),
+                    ratio = COALESCE(excluded.ratio, instrument_metadata.ratio),
+                    expiry = COALESCE(excluded.expiry, instrument_metadata.expiry),
+                    option_type = COALESCE(excluded.option_type, instrument_metadata.option_type),
+                    reset_barrier = COALESCE(
+                        excluded.reset_barrier,
+                        instrument_metadata.reset_barrier
+                    ),
                     last_updated = excluded.last_updated
                 """,
                 (

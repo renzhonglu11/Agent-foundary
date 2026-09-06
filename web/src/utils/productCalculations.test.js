@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { calculateDrawdown, calculateExpiryPnl, calculateTimeDecay } from './productCalculations.js'
+import {
+  calculateDrawdown,
+  calculateExpiryPnl,
+  calculateTimeDecay,
+} from './productCalculations.js'
 
 test('drawdown uses Bezugsverhaeltnis as multiplier for delta impact', () => {
   const result = calculateDrawdown({
@@ -52,6 +56,42 @@ test('drawdown pnl percentage is relative to current market value', () => {
   assert.equal(result.pnlPct, -10)
 })
 
+test('long factor certificate uses current product price and signed leverage', () => {
+  const result = calculateDrawdown({
+    price: 3.41,
+    underlyingSpot: 53.19,
+    productType: 'factor_certificate',
+    leverage: 2,
+    strikePrice: 56.462,
+    ratio: 1,
+    quantity: 177,
+    optionType: 'call',
+  }, 5)
+
+  assert.equal(result.method, 'factor_leverage')
+  assert.equal(Math.round(result.newPrice * 1000) / 1000, 3.751)
+  assert.equal(Math.round(result.pnl * 100) / 100, 60.36)
+  assert.equal(Math.round(result.pnlPct * 10) / 10, 10)
+})
+
+test('short factor certificate reverses the underlying move and ignores option strike', () => {
+  const result = calculateDrawdown({
+    price: 0.76,
+    underlyingSpot: 4.49,
+    productType: 'factor_certificate',
+    leverage: 2,
+    strikePrice: 10.538,
+    ratio: 1,
+    quantity: 772,
+    optionType: 'put',
+  }, 5)
+
+  assert.equal(result.method, 'factor_leverage')
+  assert.equal(Math.round(result.newPrice * 1000) / 1000, 0.684)
+  assert.equal(Math.round(result.pnl * 100) / 100, -58.67)
+  assert.equal(Math.round(result.pnlPct * 10) / 10, -10)
+})
+
 test('expiry intrinsic value uses Bezugsverhaeltnis as multiplier', () => {
   const result = calculateExpiryPnl({
     strikePrice: 100,
@@ -64,6 +104,21 @@ test('expiry intrinsic value uses Bezugsverhaeltnis as multiplier', () => {
   assert.equal(result.intrinsic, 3)
   assert.equal(result.pnl, 10)
   assert.equal(result.pnlPct, 50)
+})
+
+test('factor certificate does not expose option expiry or theta calculations', () => {
+  const item = {
+    productType: 'factor_certificate',
+    price: 3.41,
+    underlyingSpot: 53.19,
+    strikePrice: 56.462,
+    ratio: 1,
+    quantity: 177,
+    optionType: 'call',
+  }
+
+  assert.equal(calculateExpiryPnl(item, 60), null)
+  assert.equal(calculateTimeDecay(item, 30), null)
 })
 
 test('expiry intrinsic value converts underlying payoff currency to product currency', () => {

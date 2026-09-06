@@ -1,5 +1,6 @@
 import {
   calculateDrawdown,
+  calculateLeverageScenario,
   calculateTimeDecay,
   daysUntil,
   getOptionDirection,
@@ -48,6 +49,12 @@ function round(value, digits = 2) {
   if (!Number.isFinite(value)) return 0
   const factor = 10 ** digits
   return Math.round((value + Number.EPSILON) * factor) / factor
+}
+
+function impliedVolatilityPct(value) {
+  const numeric = finite(value)
+  if (numeric == null || numeric < 0) return null
+  return round(numeric <= 1 ? numeric * 100 : numeric, 4)
 }
 
 function productName(item) {
@@ -117,15 +124,19 @@ function barrierBreached(item, scenarioSpot) {
 function leverageProjection(entry, scenario, currentPrice) {
   const item = entry.item || {}
   const direction = getOptionDirection(item)
-  const directionSign = direction === 'put' ? -1 : 1
   const leverage = positive(item.leverage)
     ?? positive(item.effectiveLeverage)
     ?? positive(entry.riskLeg?.leverage)
     ?? positive(item.omega)
     ?? 1
-  const projectedReturn = directionSign * leverage * (scenario.movePct / 100)
+  const result = calculateLeverageScenario(
+    currentPrice,
+    leverage,
+    direction === 'put' ? 'put' : 'call',
+    scenario.movePct,
+  )
   return {
-    projectedPrice: Math.max(0, currentPrice * (1 + projectedReturn)),
+    projectedPrice: result?.projectedPrice ?? currentPrice,
     method: 'leverage',
   }
 }
@@ -268,6 +279,9 @@ function buildProductProfile(entry, horizonDays, scenarios, portfolioTotals) {
     primaryAction: entry.primaryAction,
     riskStatus: entry.riskLeg?.legRiskStatus || 'N/A',
     confidence: entry.riskLeg?.exposureConfidence || 'no_data',
+    delta: finite(entry.item?.delta),
+    theta: finite(entry.item?.theta),
+    ivPct: impliedVolatilityPct(entry.item?.iv),
     riskSignals,
     currentValue: round(currentValue),
     costBasis: round(costBasis),
@@ -414,12 +428,20 @@ function aggregatePortfolio(id, title, description, profiles, scenarios, horizon
       primaryAction: profile.primaryAction,
       riskStatus: profile.riskStatus,
       confidence: profile.confidence,
+      delta: profile.delta,
+      theta: profile.theta,
+      ivPct: profile.ivPct,
+      daysToExpiry: profile.riskSignals.daysToExpiry,
       currentValue: profile.currentValue,
       allocationPct: round(currentValue > 0 ? (profile.currentValue / currentValue) * 100 : 0),
       navWeightPct: profile.navWeightPct,
       capitalWeightPct: profile.capitalWeightPct,
       positionScalePct: profile.positionScalePct ?? 100,
       selectionFlags: profile.selectionFlags || [],
+      scenarioMethods: profile.results.map((result) => ({
+        scenarioId: result.scenarioId,
+        method: result.method,
+      })),
     })),
   }
 }
@@ -571,11 +593,16 @@ export function buildHermesStressReviewPayload(report) {
         primaryAction: product.primaryAction,
         riskStatus: product.riskStatus,
         confidence: product.confidence,
+        delta: product.delta,
+        theta: product.theta,
+        ivPct: product.ivPct,
+        daysToExpiry: product.daysToExpiry,
         allocationPct: product.allocationPct,
         navWeightPct: product.navWeightPct,
         capitalWeightPct: product.capitalWeightPct,
         positionScalePct: product.positionScalePct,
         selectionFlags: product.selectionFlags,
+        scenarioMethods: product.scenarioMethods,
       })),
     })),
   }

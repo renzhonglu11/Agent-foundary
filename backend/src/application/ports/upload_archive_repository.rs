@@ -16,6 +16,7 @@ pub struct UploadedFileRecord {
 pub struct LatestPdfText {
     pub stored_path: String,
     pub extracted_text: String,
+    pub created_at: String,
 }
 
 #[async_trait::async_trait]

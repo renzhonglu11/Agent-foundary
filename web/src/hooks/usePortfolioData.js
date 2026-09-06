@@ -1,26 +1,22 @@
-import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { queryKeys } from './queryKeys.js';
+
+export async function fetchPortfolioData() {
+  const response = await fetch('/data/portfolio-summary.json', { cache: 'no-store' });
+  if (!response.ok) throw new Error(`Data request failed: ${response.status}`);
+  return response.json();
+}
 
 export function usePortfolioData() {
-  const [state, setState] = useState({ loading: true, error: null, data: null });
+  const query = useQuery({
+    queryKey: queryKeys.portfolio,
+    queryFn: fetchPortfolioData,
+  });
 
-  useEffect(() => {
-    let cancelled = false;
-    fetch('/data/portfolio-summary.json')
-      .then((response) => {
-        if (!response.ok) throw new Error(`Data request failed: ${response.status}`);
-        return response.json();
-      })
-      .then((data) => {
-        if (!cancelled) setState({ loading: false, error: null, data });
-      })
-      .catch((error) => {
-        if (!cancelled) setState({ loading: false, error, data: null });
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  return state;
+  return {
+    loading: query.isPending,
+    error: query.error,
+    data: query.data ?? null,
+    refresh: query.refetch,
+  };
 }

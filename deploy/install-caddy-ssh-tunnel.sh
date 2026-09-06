@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SSH_HOST="${SSH_HOST:-hermes-do}"
+SSH_HOST="${SSH_HOST:-cx33}"
 REMOTE_ROOT="${REMOTE_ROOT:-/home/rz/Agent-Foundry}"
 REMOTE_HOME="${REMOTE_HOME:-/home/rz}"
 FRONTEND_PORT="${FRONTEND_PORT:-3000}"

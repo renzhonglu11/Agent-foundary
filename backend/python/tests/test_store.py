@@ -76,3 +76,39 @@ def test_store_reads_metadata_and_greek(tmp_path):
     assert read_greek.omega == 1.6
     assert read_greek.iv == 0.42
 
+
+def test_store_metadata_upsert_does_not_replace_complete_fields_with_null(tmp_path):
+    db_path = tmp_path / "structured_products.sqlite3"
+    store = StructuredProductStore(db_path)
+    isin = "DE000FD147D4"
+
+    store.upsert_metadata(
+        InstrumentMetadata(
+            isin=isin,
+            wkn="FD147D",
+            issuer="BNP Paribas",
+            underlying="Oracle",
+            product_type="optionsschein",
+            strike_price=215.0,
+            ratio=0.1,
+            expiry="2027-01-15",
+            option_type="call",
+        )
+    )
+    store.upsert_metadata(
+        InstrumentMetadata(
+            isin=isin,
+            issuer="BNP Paribas S.A.",
+            underlying="Oracle Corp.",
+            product_type="optionsschein",
+            strike_price=215.0,
+        )
+    )
+
+    metadata = store.get_metadata(isin)
+    assert metadata is not None
+    assert metadata.issuer == "BNP Paribas S.A."
+    assert metadata.underlying == "Oracle Corp."
+    assert metadata.ratio == 0.1
+    assert metadata.expiry == "2027-01-15"
+    assert metadata.option_type == "call"

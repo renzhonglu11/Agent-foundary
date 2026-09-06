@@ -1,4 +1,5 @@
 export const queryKeys = {
+  portfolio: ['portfolio'],
   structuredProducts: ['structuredProducts'],
   structuredProductsRisk: ['structuredProductsRisk'],
   structuredProductsRefreshStatus: ['structuredProductsRefreshStatus'],

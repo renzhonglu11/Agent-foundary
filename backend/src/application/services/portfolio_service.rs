@@ -5,6 +5,7 @@ use std::{
 };
 
 use anyhow::{Context, anyhow};
+use chrono::{DateTime, Utc};
 use tracing::warn;
 
 use crate::{
@@ -190,6 +191,9 @@ impl PortfolioService {
                 pdf_text_source: latest_pdf
                     .as_ref()
                     .map(|_| "sqlite://uploaded_files.extracted_text".to_owned()),
+                pdf_created_at: latest_pdf
+                    .as_ref()
+                    .and_then(|pdf| parse_utc_timestamp(&pdf.created_at)),
                 isin_names,
                 price_overrides,
             },
@@ -241,6 +245,7 @@ struct StructuredProductQuoteRow {
     isin: Option<String>,
     quote_price: Option<f64>,
     quote_source: Option<String>,
+    quote_timestamp: Option<String>,
 }
 
 fn build_structured_product_price_overrides_from_json(
@@ -275,12 +280,28 @@ fn structured_product_price_overrides_from_payload(
             let price = item.quote_price?;
             let source = item.quote_source?;
             if source == "boerse_frankfurt" && price > 0.0 {
-                Some((isin, PriceOverride { price, source }))
+                Some((
+                    isin,
+                    PriceOverride {
+                        price,
+                        source,
+                        quote_timestamp: item
+                            .quote_timestamp
+                            .as_deref()
+                            .and_then(parse_utc_timestamp),
+                    },
+                ))
             } else {
                 None
             }
         })
         .collect()
+}
+
+fn parse_utc_timestamp(value: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(value)
+        .ok()
+        .map(|timestamp| timestamp.with_timezone(&Utc))
 }
 
 #[cfg(test)]
@@ -294,7 +315,7 @@ mod tests {
             temp.path(),
             r#"{
               "items": [
-                {"isin": "DE000LIVE001", "quote_price": 2.5, "quote_source": "boerse_frankfurt"},
+                {"isin": "DE000LIVE001", "quote_price": 2.5, "quote_source": "boerse_frankfurt", "quote_timestamp": "2026-08-25T12:00:00Z"},
                 {"isin": "DE000FALL001", "quote_price": 3.5, "quote_source": "rust_portfolio_summary"}
               ]
             }"#,
@@ -304,6 +325,10 @@ mod tests {
 
         assert_eq!(overrides.len(), 1);
         assert_eq!(overrides["DE000LIVE001"].price, 2.5);
+        assert_eq!(
+            overrides["DE000LIVE001"].quote_timestamp,
+            Some("2026-08-25T12:00:00Z".parse()?)
+        );
         assert!(!overrides.contains_key("DE000FALL001"));
         Ok(())
     }
