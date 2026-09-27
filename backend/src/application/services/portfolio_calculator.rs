@@ -196,11 +196,44 @@ pub fn calculate_portfolio(
         .into_values()
         .filter(|position| position.quantity.abs() > 1e-6)
         .map(|mut position| {
+            position.valuation_currency = "EUR".to_owned();
+            position.valuation_source = "transaction_fallback".to_owned();
+            // Neither an import time nor a transaction date is a market quote timestamp.
+            let pdf_price = input
+                .isin_names
+                .get(&position.symbol)
+                .and_then(|info| info.quote_price)
+                .filter(|v| *v > 0.0);
+            let override_ = input
+                .price_overrides
+                .get(&position.symbol)
+                .filter(|v| v.price > 0.0);
+            let use_override = override_.is_some_and(|v| {
+                pdf_price.is_none()
+                    || match (v.quote_timestamp, input.pdf_created_at) {
+                        (Some(q), Some(p)) => q >= p,
+                        (Some(_), None) | (None, None) => true,
+                        (None, Some(_)) => false,
+                    }
+            });
+            if use_override {
+                if let Some(v) = override_ {
+                    position.valuation_source = v.source.clone();
+                    position.price_fetched_at = v.quote_timestamp.map(|t| t.to_rfc3339());
+                }
+            } else if pdf_price.is_some() {
+                position.valuation_source = "pdf".to_owned();
+                position.price_fetched_at = input.pdf_created_at.map(|t| t.to_rfc3339());
+            }
             if let Some(price) = price_for_position(&position, &input) {
                 position.last_price = price;
             }
             position.market_value = market_value_for_position(&position, &input)
                 .unwrap_or(position.quantity * position.last_price);
+            if market_value_for_position(&position, &input).is_some() {
+                position.valuation_source = "pdf_bond_value".to_owned();
+                position.price_fetched_at = input.pdf_created_at.map(|t| t.to_rfc3339());
+            }
             position.unrealized_pnl = position.market_value - position.cost_basis;
             position.unrealized_pct = if position.cost_basis > 0.0 {
                 (position.unrealized_pnl / position.cost_basis) * 100.0
@@ -847,6 +880,12 @@ mod tests {
 
         assert_eq!(output.positions[0].last_price, 15.0);
         assert_eq!(output.positions[0].market_value, 150.0);
+        assert_eq!(output.positions[0].valuation_source, "pdf");
+        assert_eq!(output.positions[0].price_as_of, None);
+        assert_eq!(
+            output.positions[0].price_fetched_at.as_deref(),
+            Some("2026-08-25T12:00:00+00:00")
+        );
         Ok(())
     }
 
@@ -890,6 +929,12 @@ mod tests {
 
         assert_eq!(output.positions[0].last_price, 18.0);
         assert_eq!(output.positions[0].market_value, 180.0);
+        assert_eq!(output.positions[0].valuation_source, "boerse_frankfurt");
+        assert_eq!(output.positions[0].price_as_of, None);
+        assert_eq!(
+            output.positions[0].price_fetched_at.as_deref(),
+            Some("2026-08-25T12:01:00+00:00")
+        );
         Ok(())
     }
 

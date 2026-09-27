@@ -255,8 +255,8 @@ fn validate_request(request: &PortfolioStressReviewRequest) -> Result<(), String
     if request.model_mode != "stress_only" {
         return Err("modelMode 必须为 stress_only".to_owned());
     }
-    if !(1..=365).contains(&request.horizon_days) {
-        return Err("horizonDays 必须在 1 到 365 之间".to_owned());
+    if request.horizon_days > 365 {
+        return Err("horizonDays 必须在 0 到 365 之间，0 为即时冲击".to_owned());
     }
     if request.portfolios.len() < 2 || request.portfolios.len() > MAX_PORTFOLIOS {
         return Err(format!("portfolios 数量必须在 2 到 {MAX_PORTFOLIOS} 之间"));
@@ -381,7 +381,8 @@ fn build_prompt(request: &PortfolioStressReviewRequest) -> Result<String, serde_
 5. delta 是方向敏感度，theta 是供应商提供的每日时间价值敏感度原值，ivPct 的单位是波动率百分点，daysToExpiry 是剩余日历天数；null 表示缺失，不得自行补值。
 6. scenarioMethods 给出每个产品在各情景实际采用的方法链。delta、omega、leverage、intrinsic、expiry_intrinsic、knockout、theta、linear、approx 和 factor_leverage 只用于判断估算可靠性、线性误差、到期和障碍风险；不得用 Greeks 重新计算输入 P&L。
 7. 明确指出这是压力情景比较，不得使用“盈利概率”“预期收益率”等没有概率依据的表述。
-8. 只返回一个合法 JSON 对象，不要 Markdown，不要附加文字。
+8. horizonDays=0 表示即时冲击。说明中的 tested capital 含假设减仓所得零收益现金；比较时区分保留产品与现金，未测试资产风险不计入结果。factor_path 表示假设两次每日重置的路径，之后持平；权证仍使用期末近似，不能称为完整路径定价。
+9. 只返回一个合法 JSON 对象，不要 Markdown，不要附加文字。
 
 返回格式：
 {{
@@ -521,6 +522,15 @@ mod tests {
     #[test]
     fn validates_bounded_stress_request() {
         assert!(validate_request(&request()).is_ok());
+    }
+
+    #[test]
+    fn accepts_instantaneous_stress_but_rejects_excessive_horizon() {
+        let mut input = request();
+        input.horizon_days = 0;
+        assert!(validate_request(&input).is_ok());
+        input.horizon_days = 366;
+        assert!(validate_request(&input).is_err());
     }
 
     #[test]

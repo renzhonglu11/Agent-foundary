@@ -100,7 +100,11 @@ export default function PositionsActionBoard({ data, riskData, riskLoading, risk
   const [clickedRowId, setClickedRowId] = useState(null)
   const totalMarketValue = Number(data?.summary?.totalMarketValue) || 0
   const totalCostBasis = Number(data?.summary?.totalCostBasis) || 0
-  const tier1Groups = useMemo(() => buildWatchlistGroups(data, structuredProducts, alpacaQuotes).tier1, [data, structuredProducts, alpacaQuotes])
+  const tier1Groups = useMemo(() => {
+    const heldSymbols = new Set((data?.positions || []).filter(position => Math.abs(Number(position.quantity) || 0) > 1e-6).map(position => position.symbol))
+    const heldEnrichment = (structuredProducts || []).filter(item => heldSymbols.has(item.isin))
+    return buildWatchlistGroups(data, heldEnrichment, alpacaQuotes).tier1
+  }, [data, structuredProducts, alpacaQuotes])
   const riskByKey = useMemo(() => buildRiskMap(riskData), [riskData])
   const groupsWithRisk = useMemo(() => (
     tier1Groups
@@ -215,6 +219,7 @@ export default function PositionsActionBoard({ data, riskData, riskLoading, risk
         </Box>
 
         <PortfolioStressTestPanel
+          positions={data.positions}
           entries={productEntries}
           loading={loading}
           totalMarketValue={totalMarketValue}

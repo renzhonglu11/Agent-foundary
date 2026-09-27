@@ -18,6 +18,17 @@ const portfolio = {
   ],
 }
 
+test('uses authoritative summary valuation and quantity instead of older enrichment; capture time is not market time', () => {
+  const data = { summary: { totalMarketValue: 150 }, positions: [{ symbol: 'DE000TEST', displayName: 'Call 15.01.27 Intel 30', assetClass: 'DERIVATIVE', quantity: 10, costBasis: 100, marketValue: 150, lastPrice: 15, valuationSource: 'pdf', priceFetchedAt: '2026-09-07T00:00:00Z', priceAsOf: null }] }
+  const enriched = [{ isin: 'DE000TEST', underlying: 'Intel', product_type: 'optionsschein', enrichment_tier: 'tier1', quantity: 20, quote_price: 12, market_value: 240, quote_timestamp: '2026-08-25T12:00:00Z' }]
+  const row = buildWatchlistGroups(data, enriched).tier1[0].derivatives[0]
+  assert.equal(row.price, 15)
+  assert.equal(row.quantity, 10)
+  assert.equal(row.marketValue, 150)
+  assert.equal(row.priceAsOf, null)
+  assert.equal(row.priceFetchedAt, '2026-09-07T00:00:00Z')
+})
+
 const enrichment = [
   {
     isin: 'DE000TURBO1',
@@ -316,6 +327,21 @@ test('aggregates group delta exposure from omega fallback when delta is missing'
 test('canonicalizes broker shorthand risk symbols to stable underlying keys', () => {
   assert.equal(canonicalGroupKey('Globalf.'), canonicalGroupKey('globalfoundries'))
   assert.equal(canonicalGroupKey('STMicro.'), canonicalGroupKey('stmicro'))
+  assert.equal(canonicalGroupKey('salesfor'), canonicalGroupKey('Salesforce.com'))
+  assert.equal(canonicalGroupKey('ServiceN'), canonicalGroupKey('ServiceNow Inc.'))
+})
+
+test('maps broker company names to valid Alpaca tickers for monitoring', () => {
+  const groups = buildWatchlistGroups(
+    { summary: { totalMarketValue: 600 }, positions: [] },
+    [
+      { isin: 'D-CRM', underlying: 'salesfor', asset_class: 'DERIVATIVE', product_type: 'optionsschein', enrichment_tier: 'tier1', market_value: 300 },
+      { isin: 'D-NFLX', underlying: 'Netflix', asset_class: 'DERIVATIVE', product_type: 'optionsschein', enrichment_tier: 'tier1', market_value: 200 },
+      { isin: 'D-NOW', underlying: 'ServiceN', asset_class: 'DERIVATIVE', product_type: 'optionsschein', enrichment_tier: 'tier1', market_value: 100 },
+    ],
+  )
+
+  assert.deepEqual(collectTier1MonitoringAlpacaSymbols(groups), ['CRM', 'NFLX', 'NOW'])
 })
 
 test('falls back to market value exposure when option greeks and spot are unavailable', () => {

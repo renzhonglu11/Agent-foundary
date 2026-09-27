@@ -27,6 +27,9 @@ pub struct AlpacaMarketDataService {
     market_data_repository: Arc<dyn MarketDataRepository>,
     client: Option<Arc<Client>>,
     cache: Arc<RwLock<HashMap<String, CachedQuote>>>,
+    // All callers (HTTP and monitoring) share one cache check / network critical section.
+    refresh_gate: Arc<tokio::sync::Mutex<()>>,
+    retry_after: Arc<tokio::sync::Mutex<Option<Instant>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -81,6 +84,7 @@ pub struct AlpacaQuote {
     pub ask_size: u64,
     pub price_source: String,
     pub price_as_of: String,
+    pub fetched_at: String,
     pub cached: bool,
 }
 
@@ -111,10 +115,74 @@ impl AlpacaMarketDataService {
             market_data_repository,
             client,
             cache: Arc::new(RwLock::new(HashMap::new())),
+            refresh_gate: Arc::new(tokio::sync::Mutex::new(())),
+            retry_after: Arc::new(tokio::sync::Mutex::new(None)),
         }
     }
 
     pub async fn latest_quotes(&self, symbols_param: &str) -> AlpacaQuotesResponse {
+        let _guard = self.refresh_gate.lock().await;
+        if self
+            .retry_after
+            .lock()
+            .await
+            .is_some_and(|until| Instant::now() < until)
+        {
+            let (symbols, _) =
+                parse_symbols_param(symbols_param, self.settings.max_symbols_per_request);
+            return self.stored_quotes_response(AlpacaQuoteStatus::Error, &symbols,
+                vec!["Alpaca refresh cooling down after a failed request; stored quotes retain their original timestamps".to_owned()]).await;
+        }
+        let result = tokio::time::timeout(
+            Duration::from_secs(45),
+            self.latest_quotes_inner(symbols_param),
+        )
+        .await;
+        match result {
+            Ok(response) => {
+                if matches!(response.status, AlpacaQuoteStatus::Error) {
+                    *self.retry_after.lock().await =
+                        Some(Instant::now() + Duration::from_secs(300));
+                }
+                response
+            }
+            Err(_) => {
+                *self.retry_after.lock().await = Some(Instant::now() + Duration::from_secs(300));
+                let (symbols, _) =
+                    parse_symbols_param(symbols_param, self.settings.max_symbols_per_request);
+                self.stored_quotes_response(
+                    AlpacaQuoteStatus::Error,
+                    &symbols,
+                    vec!["Alpaca refresh timed out".to_owned()],
+                )
+                .await
+            }
+        }
+    }
+
+    pub fn batch_size(&self) -> usize {
+        self.settings.max_symbols_per_request.clamp(1, 200)
+    }
+
+    pub async fn market_calendar(
+        &self,
+        start: chrono::NaiveDate,
+        end: chrono::NaiveDate,
+    ) -> anyhow::Result<Vec<apca::api::v2::calendar::OpenClose>> {
+        anyhow::ensure!(self.settings.enabled, "Alpaca disabled");
+        let client = self
+            .client
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Alpaca credentials unavailable"))?;
+        let request = apca::api::v2::calendar::ListReqInit::default().init(start, end);
+        Ok(tokio::time::timeout(
+            Duration::from_secs(15),
+            client.issue::<apca::api::v2::calendar::List>(&request),
+        )
+        .await??)
+    }
+
+    async fn latest_quotes_inner(&self, symbols_param: &str) -> AlpacaQuotesResponse {
         let mut warnings = Vec::new();
         let (symbols, rejected) =
             parse_symbols_param(symbols_param, self.settings.max_symbols_per_request);
@@ -268,13 +336,13 @@ impl AlpacaMarketDataService {
                     let mut records = Vec::new();
                     for (symbol, quote) in items {
                         let symbol = symbol.to_ascii_uppercase();
-                        fetched_symbols.insert(symbol.clone());
                         if let Some(alpaca_quote) = convert_quote(
                             symbol.clone(),
                             quote,
                             fx_rate.rate,
                             fx_rate.source.clone(),
                         ) {
+                            fetched_symbols.insert(symbol.clone());
                             info!(
                                 symbol = %alpaca_quote.symbol,
                                 price = alpaca_quote.price,
@@ -343,7 +411,7 @@ impl AlpacaMarketDataService {
         }
 
         let quotes = ordered_quotes(&symbols, &quotes_by_symbol);
-        let status = if quotes.len() == symbols.len() {
+        let status = if quotes.len() == symbols.len() && warnings.is_empty() {
             AlpacaQuoteStatus::Ok
         } else {
             AlpacaQuoteStatus::Partial
@@ -518,6 +586,7 @@ fn quote_from_record(record: &MarketQuoteRecord, cached: bool) -> AlpacaQuote {
         ask_size: record.ask_size.max(0) as u64,
         price_source: record.price_source.clone(),
         price_as_of: record.price_as_of.clone(),
+        fetched_at: record.fetched_at.to_rfc3339(),
         cached,
     }
 }
@@ -599,6 +668,7 @@ fn convert_quote(
         ask_size: quote.ask_size,
         price_source: "alpaca_iex".to_owned(),
         price_as_of: quote.time.to_rfc3339(),
+        fetched_at: Utc::now().to_rfc3339(),
         cached: false,
     })
 }
@@ -636,5 +706,25 @@ mod tests {
         assert!(!is_valid_alpaca_symbol("US67066G1040"));
         assert!(!is_valid_alpaca_symbol("ALPHABET INC"));
         assert!(!is_valid_alpaca_symbol(""));
+    }
+
+    #[test]
+    fn persisted_quote_keeps_capture_and_market_times_separate() -> anyhow::Result<()> {
+        let raw: last_quotes::Quote = serde_json::from_value(
+            serde_json::json!({"t":"2026-09-04T20:00:00Z","ap":101,"as":10,"bp":99,"bs":10}),
+        )?;
+        let quote = convert_quote("NVDA".into(), raw, 0.9, "frankfurter".into())
+            .ok_or_else(|| anyhow::anyhow!("fixture must have valid prices"))?;
+        let fetched_at = "2026-09-06T22:00:00Z".parse()?;
+        let restored = quote_from_record(&record_from_quote(&quote, fetched_at), true);
+        assert_eq!(restored.fetched_at, "2026-09-06T22:00:00+00:00");
+        assert_eq!(restored.price_as_of, "2026-09-04T20:00:00+00:00");
+        assert_eq!(restored.price, 90.0);
+        assert!(!is_fresh(
+            fetched_at,
+            "2026-09-07T20:00:00Z".parse()?,
+            Duration::from_secs(60)
+        ));
+        Ok(())
     }
 }

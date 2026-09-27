@@ -95,6 +95,13 @@ impl App {
         ape_wisdom_service.start_polling_in_background();
 
         structured_products_service.start_auto_refresh_loop(portfolio_service.clone());
+        let portfolio_monitor = services::portfolio_monitor::PortfolioMonitor::new(
+            pool.clone(),
+            portfolio_service.clone(),
+            structured_products_service.clone(),
+            alpaca_market_data_service.clone(),
+        );
+        portfolio_monitor.start();
 
         let fred_macro_data_cache = Arc::new(SqliteFredMacroDataCache::new(pool.clone()));
         let fred_service = FredService::new(settings.fred.clone(), fred_macro_data_cache);
@@ -115,6 +122,7 @@ impl App {
             ape_wisdom_service,
             systemd_status_service,
             pnl_snapshot_service,
+            portfolio_monitor,
         ));
         let router = router::build(state, &settings.frontend_origin)?;
 

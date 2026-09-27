@@ -31,7 +31,7 @@ function PortfolioValueCard({ summary }) {
                         <Box>
 
                             <Typography variant="h5" mt={0.1} fontWeight={900}>
-                                <Box component="span" sx={{ fontWeight: 900, mr: 0.75 }}>总资产</Box>
+                                <Box component="span" sx={{ fontWeight: 900, mr: 0.75 }}>持仓市值</Box>
                                 {currency.format(summary.totalMarketValue)}
                             </Typography>
                             <Typography color="text.secondary" variant="caption" mt={0.1}>估算持仓市值 · {summary.openPositions} 个开放仓位</Typography>

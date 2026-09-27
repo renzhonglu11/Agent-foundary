@@ -5,7 +5,20 @@ import {
   buildHermesStressReviewPayload,
   buildPortfolioStressReport,
   calculatePositionStress,
+  buildStressScenarios,
+  buildDirectPriceStress,
 } from './portfolioStress.js'
+
+test('direct stress uses authoritative holdings values including bonds and signed positions', () => {
+  const positions = [
+    { symbol: 'A', valuationSource: 'pdf', quantity: 10, lastPrice: 15, marketValue: 150 },
+    { symbol: 'B', valuationSource: 'pdf_bond_value', assetClass: 'BOND', quantity: 1000, lastPrice: 98, marketValue: 980 },
+    { symbol: 'C', valuationSource: 'transaction_fallback', quantity: -1, lastPrice: 30, marketValue: -30 },
+  ]
+  const result = buildDirectPriceStress(positions, [{ item: { symbol: 'A', price: 12 } }])
+  assert.equal(result[2].value, 1100)
+  assert.equal(result[2].pnl, -1100)
+})
 
 function entry(overrides = {}) {
   const item = {
@@ -43,6 +56,70 @@ function entry(overrides = {}) {
     primaryAction: overrides.primaryAction || 'BUY',
   }
 }
+
+test('stress revalues stale market value from price and quantity and never loses over current long value', () => {
+  const product = entry({ item: { productType: 'factor_certificate', leverage: 3, marketValue: 100 } })
+  const result = calculatePositionStress(product, { id: 'down', movePct: -50 }, 0)
+  assert.equal(result.currentValue, 200)
+  assert.equal(result.pnl, -200)
+  assert.equal(result.returnPct, -100)
+})
+
+test('instantaneous flat shock has no theta loss and targets leave other groups unchanged', () => {
+  assert.equal(calculatePositionStress(entry(), { id: 'flat', movePct: 0 }, 0).pnl, 0)
+  assert.equal(calculatePositionStress(entry(), { id: 'shock', movePct: -20, targetGroup: 'other' }, 0).pnl, 0)
+  const inconsistentSpot = entry({ item: { delta: null, omega: null, underlyingSpot: 200 } })
+  assert.equal(calculatePositionStress(inconsistentSpot, { id: 'flat', movePct: 0 }, 0).pnl, 0)
+})
+
+test('two reset periods compound factor returns and detect an intermediate knockout', () => {
+  const scenario = buildStressScenarios(10, null, true).find(s => s.id === 'recovery')
+  const factor = entry({ item: { productType: 'factor_certificate', leverage: 3 } })
+  assert.equal(calculatePositionStress(factor, scenario, 7).projectedPrice, 1.8667)
+  const turbo = entry({ item: { productType: 'open_end_turbo', knockoutPrice: 95 } })
+  const knockedOut = calculatePositionStress(turbo, scenario, 7)
+  assert.equal(knockedOut.projectedPrice, 0)
+  assert.equal(knockedOut.barrierBreached, true)
+})
+
+test('coverage counts uncomputable holdings and consistent account capital includes untested assets', () => {
+  const valid = entry()
+  const missing = entry({ item: { symbol: 'MISSING', underlyingSpot: null } })
+  const positions = [
+    { symbol: 'DE000TEST01', quantity: 100, lastPrice: 1, marketValue: 100 },
+    { symbol: 'MISSING', quantity: 100, lastPrice: 2, marketValue: 200 },
+    { symbol: 'OTHER', quantity: 100, lastPrice: 5, marketValue: 500 },
+  ]
+  const report = buildPortfolioStressReport([valid, missing], 0, undefined, { totalMarketValue: 800, positions })
+  assert.equal(report.coverage.accountValue, 900)
+  assert.equal(report.coverage.coveredValue, 200)
+  assert.equal(report.coverage.outsideValue, 700)
+  assert.equal(report.coverage.omittedCount, 1)
+  assert.equal(report.coverage.omittedValue, 200)
+  assert.equal(report.coverage.omitted[0].name, 'Test Call')
+  assert.equal(buildDirectPriceStress(positions, [valid, missing])[2].pnl, -900)
+})
+
+test('candidate cash plus retained holdings equals baseline capital and comparison uses it', () => {
+  const entries = [entry(), entry({ item: { symbol: 'B' }, groupKey: 'b', riskStatus: 'HARD_BLOCKED' })]
+  const report = buildPortfolioStressReport(entries, 0, undefined, { totalMarketValue: 1000 })
+  const candidate = report.portfolios.find(p => p.kind === 'defensive')
+  assert.equal(candidate.cashValue + candidate.currentValue, report.coverage.coveredValue)
+  for (const result of candidate.scenarioResults) {
+    assert.equal(result.testedCapitalReturnPct, Math.round(result.pnl / 400 * 10000) / 100)
+    assert.equal(result.accountImpactPct, Math.round(result.pnl / 1000 * 10000) / 100)
+  }
+  const payload = buildHermesStressReviewPayload(report)
+  assert.ok(payload.portfolios.every(p => p.description.length <= 240))
+  assert.equal(payload.portfolios[1].currentValue, 400)
+})
+
+test('all missing entries remain visible even when no scenario can be calculated', () => {
+  const report = buildPortfolioStressReport([entry({ item: { underlyingSpot: null } })], 0, undefined, { totalMarketValue: 500 })
+  assert.equal(report.portfolios.length, 0)
+  assert.equal(report.coverage.omittedCount, 1)
+  assert.equal(report.coverage.outsideValue, 500)
+})
 
 test('call stress loses in a selloff and gains in a rally', () => {
   const product = entry()
@@ -246,4 +323,68 @@ test('portfolio report keeps internal, NAV, and invested-capital weights separat
   const payload = buildHermesStressReviewPayload(report)
   assert.equal(payload.portfolios[0].navWeightPct, 60)
   assert.equal(payload.portfolios[0].products[0].capitalWeightPct, 20)
+})
+
+test('optional shocks preserve portfolio identities, members, sizing and cash across ranges and horizons', () => {
+  const entries = Array.from({ length: 12 }, (_, i) => entry({
+    item: { symbol: `P${i}`, delta: 0.1 + i * 0.1 },
+    groupKey: `g${i}`,
+    exposureWeightPct: i === 0 ? 0.16 : 0.01,
+  }))
+  const totals = { totalMarketValue: 3000 }
+  const base = buildPortfolioStressReport(entries, 0, buildStressScenarios(10), totals)
+  const composition = report => report.portfolios.map(p => ({
+    id: p.id, value: p.currentValue, cash: p.cashValue,
+    products: p.products.map(({ id, allocationPct, positionScalePct }) => ({ id, allocationPct, positionScalePct })),
+  }))
+  for (const horizon of [0, 7, 30, 90]) {
+    for (const target of [null, 'g0', 'g11']) {
+      const report = buildPortfolioStressReport(entries, horizon, buildStressScenarios(50, target, horizon > 0), totals)
+      assert.deepEqual(composition(report), composition(base))
+    }
+  }
+  const targeted = buildPortfolioStressReport(entries, 0, buildStressScenarios(10, 'g0'), totals)
+  assert.notDeepEqual(targeted.portfolios[0].scenarioResults, base.portfolios[0].scenarioResults)
+  assert.ok(targeted.portfolios.find(p => p.kind === 'defensive').products.some(p => p.id === 'P0'))
+  assert.ok(targeted.portfolios.find(p => p.kind === 'defensive').worstPnl < 0)
+})
+
+test('missing expiry parameters cannot silently change membership when the stress horizon changes', () => {
+  const entries = [entry(), entry({ item: { symbol: 'MISSING-EXPIRY', strikePrice: null, ratio: null }, daysToExpiry: 60 })]
+  const instant = buildPortfolioStressReport(entries, 0)
+  const future = buildPortfolioStressReport(entries, 90)
+  assert.deepEqual(instant.portfolios.map(p => p.products.map(p => p.id)), future.portfolios.map(p => p.products.map(p => p.id)))
+  assert.equal(instant.coverage.omittedCount, 1)
+})
+
+test('no direct shock exposure preserves portfolio value and distinguishes time effects from zero instant P&L', () => {
+  const entries = [entry()]
+  const scenarios = buildStressScenarios(20, 'unheld-underlying')
+  const instant = buildPortfolioStressReport(entries, 0, scenarios)
+  for (const portfolio of instant.portfolios) {
+    assert.equal(portfolio.shockProductCount, 0)
+    assert.ok(portfolio.currentValue > 0)
+    assert.ok(portfolio.scenarioResults.every(s => s.pnl === 0 && s.projectedValue === portfolio.currentValue))
+  }
+  const future = buildPortfolioStressReport(entries, 7, scenarios)
+  assert.equal(future.portfolios[0].shockProductCount, 0)
+  assert.ok(future.portfolios[0].worstPnl < 0)
+  const direct = buildPortfolioStressReport(entries, 0, buildStressScenarios(20, 'test'))
+  assert.equal(direct.portfolios[0].shockProductCount, 1)
+  assert.ok(direct.portfolios[0].worstPnl < 0)
+  const all = buildPortfolioStressReport(entries, 0, buildStressScenarios(20))
+  assert.equal(all.portfolios[0].shockProductCount, all.portfolios[0].productCount)
+})
+
+test('product scenario contributions reconcile to portfolio P&L after exposure caps', () => {
+  const report = buildPortfolioStressReport([
+    entry({ exposureWeightPct: 0.16 }),
+    entry({ item: { symbol: 'PUT', optionType: 'put', delta: -0.5 }, groupKey: 'put' }),
+  ], 7, buildStressScenarios(20, null, true))
+  for (const portfolio of report.portfolios) {
+    for (const scenario of portfolio.scenarioResults) {
+      const sum = portfolio.products.reduce((sum, product) => sum + product.scenarioPnls.find(row => row.scenarioId === scenario.id).pnl, 0)
+      assert.ok(Math.abs(sum - scenario.pnl) < 0.011)
+    }
+  }
 })

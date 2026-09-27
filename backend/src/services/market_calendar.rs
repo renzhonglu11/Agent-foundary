@@ -52,7 +52,9 @@ async fn fincal_check(date: NaiveDate, calendar: &str) -> Option<bool> {
         "https://fincalapi.com/v1/day_status?calendar={calendar}&date={}",
         date.format("%Y-%m-%d")
     );
-    let mut req = reqwest::Client::new().get(&url);
+    let mut req = reqwest::Client::new()
+        .get(&url)
+        .timeout(std::time::Duration::from_secs(10));
     if let Some(key) = fincal_api_key() {
         req = req.bearer_auth(key);
     }
@@ -158,11 +160,14 @@ fn cet_utc_offset_hours(date: NaiveDate) -> i64 {
 
 /// Current hour in Europe/Berlin time (0–23).
 pub fn current_cet_hour() -> u32 {
+    berlin_now().hour()
+}
+
+pub fn berlin_now() -> chrono::DateTime<Utc> {
     let now = Utc::now();
     let today = now.date_naive();
     let offset = cet_utc_offset_hours(today);
-    let cet_time = now + TimeDelta::hours(offset);
-    cet_time.hour()
+    now + TimeDelta::hours(offset)
 }
 
 #[cfg(test)]

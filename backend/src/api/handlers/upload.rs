@@ -16,6 +16,9 @@ pub async fn upload_data(
     multipart: Multipart,
 ) -> Result<(StatusCode, Json<UploadDataResponse>), ApiError> {
     let response = state.upload_data_service.upload(multipart).await?;
+    if response.ok {
+        state.portfolio_monitor.request_refresh();
+    }
     let status = if response.ok {
         StatusCode::OK
     } else {

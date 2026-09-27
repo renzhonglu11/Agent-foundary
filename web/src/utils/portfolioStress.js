@@ -6,7 +6,19 @@ import {
   getOptionDirection,
 } from './productCalculations.js'
 
-export const PORTFOLIO_STRESS_HORIZONS = [7, 30, 90]
+export const PORTFOLIO_STRESS_HORIZONS = [0, 7, 30, 90]
+
+export function buildStressScenarios(move = 20, targetGroup = null, paths = false) {
+  const magnitude = clamp(Math.abs(finite(move) ?? 20), 1, 100)
+  const scenarios = [-magnitude, -magnitude / 2, 0, magnitude / 2, magnitude].map((movePct, i) => ({
+    id: i === 2 ? 'flat' : `shock_${i}`, label: `${targetGroup ? '单标的' : '同步'} ${movePct > 0 ? '+' : ''}${movePct}%`, movePct, targetGroup,
+  }))
+  if (paths) scenarios.push(
+    { id: 'recovery', label: '先跌后恢复（两步路径）', movePct: 0, targetGroup, pathMoves: [-magnitude, 0] },
+    { id: 'roundtrip', label: '先涨后回落（两步路径）', movePct: 0, targetGroup, pathMoves: [magnitude, 0] },
+  )
+  return scenarios
+}
 
 export const PORTFOLIO_STRESS_SCENARIOS = [
   { id: 'selloff_10', label: '普跌 -10%', movePct: -10 },
@@ -15,6 +27,16 @@ export const PORTFOLIO_STRESS_SCENARIOS = [
   { id: 'up_5', label: '反弹 +5%', movePct: 5 },
   { id: 'rally_10', label: '普涨 +10%', movePct: 10 },
 ]
+
+export function buildDirectPriceStress(positions = [], entries = []) {
+  const quotes = new Map(entries.map(entry => [entry.item?.symbol, entry.item]))
+  const value = positions.reduce((sum, p) => {
+    if (p.valuationSource) return sum + (finite(p.marketValue) ?? 0)
+    const price = positive(quotes.get(p.symbol)?.price) ?? positive(p.lastPrice)
+    return sum + (price != null && positive(p.quantity) != null && p.assetClass !== 'BOND' ? price * p.quantity : positive(p.marketValue) ?? 0)
+  }, 0)
+  return [-20, -50, -100].map(movePct => ({ movePct, value: round(value), pnl: round(value * movePct / 100) }))
+}
 
 const CONFIDENCE_PENALTIES = {
   live_delta: 0,
@@ -74,11 +96,9 @@ function productType(item) {
 }
 
 function currentPositionValue(item) {
-  const explicit = positive(item?.marketValue)
-  if (explicit != null) return explicit
   const price = positive(item?.price)
   const quantity = positive(item?.quantity)
-  return price != null && quantity != null ? price * quantity : 0
+  return price != null && quantity != null ? price * quantity : positive(item?.marketValue) ?? 0
 }
 
 function underlyingLevelInEur(item, value) {
@@ -142,6 +162,9 @@ function leverageProjection(entry, scenario, currentPrice) {
 }
 
 export function calculatePositionStress(entry, scenario, horizonDays) {
+  if (scenario.targetGroup && scenario.targetGroup !== groupKey(entry)) {
+    scenario = { ...scenario, movePct: 0, pathMoves: undefined }
+  }
   const item = calculationItem(entry)
   const currentPrice = positive(item.price)
   const quantity = positive(item.quantity)
@@ -156,10 +179,20 @@ export function calculatePositionStress(entry, scenario, horizonDays) {
   let breached = false
 
   if (type === 'factor_certificate') {
-    const projection = leverageProjection(entry, scenario, currentPrice)
-    projectedPrice = projection.projectedPrice
-    method = 'factor_leverage'
-  } else if ((type === 'open_end_turbo' || type === 'knock_out') && barrierBreached(item, scenarioSpot)) {
+    if (scenario.pathMoves?.length) {
+      let previous = 100
+      for (const move of scenario.pathMoves) {
+        const next = Math.max(0, 100 + move)
+        projectedPrice = leverageProjection(entry, { movePct: previous > 0 ? (next / previous - 1) * 100 : 0 }, projectedPrice).projectedPrice
+        previous = next
+      }
+      method = 'factor_path'
+    } else {
+      const projection = leverageProjection(entry, scenario, currentPrice)
+      projectedPrice = projection.projectedPrice
+      method = 'factor_leverage'
+    }
+  } else if ((type === 'open_end_turbo' || type === 'knock_out') && [scenario.movePct, ...(scenario.pathMoves || [])].some(move => barrierBreached(item, Math.max(0, spot * (1 + move / 100))))) {
     projectedPrice = 0
     method = 'knockout'
     breached = true
@@ -169,9 +202,11 @@ export function calculatePositionStress(entry, scenario, horizonDays) {
     projectedPrice = intrinsic
     method = 'expiry_intrinsic'
   } else {
+    // Anchor a flat shock to the observed quote even when inferred intrinsic
+    // value and the asynchronously fetched spot do not agree.
     const movement = calculateDrawdown(item, scenario.movePct)
     if (movement) {
-      projectedPrice = movement.newPrice
+      projectedPrice = scenario.movePct === 0 ? currentPrice : movement.newPrice
       method = movement.method
     } else {
       const projection = leverageProjection(entry, scenario, currentPrice)
@@ -179,7 +214,7 @@ export function calculatePositionStress(entry, scenario, horizonDays) {
       method = projection.method
     }
 
-    if (type === 'optionsschein') {
+    if (type === 'optionsschein' && horizonDays > 0) {
       const decay = calculateTimeDecay(item, horizonDays)
       if (decay) {
         projectedPrice = Math.max(0, projectedPrice + decay.priceChange)
@@ -408,6 +443,8 @@ function aggregatePortfolio(id, title, description, profiles, scenarios, horizon
     currentValue: round(currentValue),
     navWeightPct: round(navWeightPct),
     capitalWeightPct: round(capitalWeightPct),
+    shockProductCount: profiles.filter(profile => scenarios.some(scenario =>
+      !scenario.targetGroup || scenario.targetGroup === profile.groupKey)).length,
     productCount: profiles.length,
     groupCount: new Set(profiles.map((profile) => profile.groupKey)).size,
     worstPnl: worst?.pnl ?? 0,
@@ -438,6 +475,7 @@ function aggregatePortfolio(id, title, description, profiles, scenarios, horizon
       capitalWeightPct: profile.capitalWeightPct,
       positionScalePct: profile.positionScalePct ?? 100,
       selectionFlags: profile.selectionFlags || [],
+      scenarioPnls: profile.results.map(result => ({ scenarioId: result.scenarioId, pnl: result.pnl })),
       scenarioMethods: profile.results.map((result) => ({
         scenarioId: result.scenarioId,
         method: result.method,
@@ -457,9 +495,31 @@ export function buildPortfolioStressReport(
     totalMarketValue: positive(portfolioTotals?.totalMarketValue) ?? 0,
     totalCostBasis: positive(portfolioTotals?.totalCostBasis) ?? 0,
   }
-  const profiles = (Array.isArray(entries) ? entries : [])
-    .map((entry) => buildProductProfile(entry, horizon, scenarios, totals))
-    .filter(Boolean)
+  const inputEntries = Array.isArray(entries) ? entries : []
+  if (portfolioTotals.positions?.length) {
+    totals.totalMarketValue = buildDirectPriceStress(portfolioTotals.positions, inputEntries)[0].value
+  }
+  const inputValue = inputEntries.reduce((sum, entry) => sum + currentPositionValue(entry.item), 0)
+  // Rank against a fixed reference, independent of the optional stress controls.
+  // Require expiry inputs up front so changing the horizon cannot remove members.
+  const profiles = inputEntries.map((entry) => {
+    const profile = buildProductProfile(entry, 30, PORTFOLIO_STRESS_SCENARIOS, totals)
+    if (!profile || !calculatePositionStress(entry, { id: 'flat', movePct: 0 }, 90)) return null
+    return {
+      ...profile,
+      results: scenarios.map((scenario) => calculatePositionStress(entry, scenario, horizon)),
+    }
+  }).filter(Boolean)
+  const coveredValue = profiles.reduce((sum, profile) => sum + profile.currentValue, 0)
+  const coverage = {
+    coveredValue: round(coveredValue),
+    omittedCount: inputEntries.length - profiles.length,
+    omittedValue: round(Math.max(0, inputValue - coveredValue)),
+    accountValue: round(totals.totalMarketValue),
+    coveragePct: round(totals.totalMarketValue > 0 ? coveredValue / totals.totalMarketValue * 100 : 0),
+    outsideValue: round(Math.max(0, totals.totalMarketValue - coveredValue)),
+    omitted: inputEntries.filter(entry => !profiles.some(p => p.id === String(entry.item?.symbol || entry.item?.id || productName(entry.item)))).map(entry => ({ name: productName(entry.item), value: round(currentPositionValue(entry.item)), reason: '缺少有效报价、数量、标的价格或到期支付参数' })),
+  }
   const candidatePools = Object.fromEntries(CANDIDATE_STRATEGIES.map((strategy) => [
     strategy,
     profiles.filter((profile) => candidateEligible(profile, strategy)).map(sizeCandidateProfile),
@@ -481,6 +541,7 @@ export function buildPortfolioStressReport(
       horizonDays: horizon,
       scenarios,
       portfolios: [],
+      coverage,
       productCount: 0,
       eligibleProductCount: 0,
       excludedProductCount: 0,
@@ -492,7 +553,7 @@ export function buildPortfolioStressReport(
 
   const candidates = [
     aggregatePortfolio(
-      `current-${horizon}`,
+      'current',
       '当前监控基准',
       '保留全部可计算 Tier 1 仓位，用于对比候选组合。',
       profiles,
@@ -505,21 +566,21 @@ export function buildPortfolioStressReport(
   const strategyCandidates = [
     {
       strategy: 'defensive',
-      id: `defensive-${horizon}`,
+      id: 'defensive',
       title: '稳健组合',
       description: '优先控制双向压力下的最差损失；WATCH 按原因降权，集中仓位按风险敞口限制。',
       limit: 5,
     },
     {
       strategy: 'balanced',
-      id: `balanced-${horizon}`,
+      id: 'balanced',
       title: '均衡组合',
-      description: '兼顾五档情景表现、最差损失和数据可信度，对 WATCH 保持风险扣分。',
+      description: '兼顾固定参考情景表现、最差损失和数据可信度，对 WATCH 保持风险扣分。',
       limit: 8,
     },
     {
       strategy: 'elastic',
-      id: `elastic-${horizon}`,
+      id: 'elastic',
       title: '高弹性组合',
       description: '提高有利情景收益；可纳入临近障碍的 WATCH 仓位，但会大幅降权并保留归零压力。',
       limit: 6,
@@ -546,9 +607,14 @@ export function buildPortfolioStressReport(
 
   return {
     modelMode: 'stress_only',
+    coverage,
     horizonDays: horizon,
     scenarios,
-    portfolios: candidates,
+    portfolios: candidates.map(candidate => ({
+      ...candidate,
+      cashValue: round(Math.max(0, coveredValue - candidate.currentValue)),
+      scenarioResults: candidate.scenarioResults.map(result => ({ ...result, accountImpactPct: round(totals.totalMarketValue > 0 ? result.pnl / totals.totalMarketValue * 100 : 0), testedCapitalReturnPct: round(coveredValue > 0 ? result.pnl / coveredValue * 100 : 0) })),
+    })),
     productCount: profiles.length,
     eligibleProductCount: eligible.length,
     excludedProductCount: excluded.length,
@@ -565,14 +631,14 @@ export function buildHermesStressReviewPayload(report) {
     portfolios: report.portfolios.slice(0, 8).map((portfolio) => ({
       id: portfolio.id,
       title: portfolio.title,
-      description: portfolio.description,
+      description: `Tested capital EUR ${report.coverage?.coveredValue ?? portfolio.currentValue}; cash EUR ${portfolio.cashValue ?? 0}; untested EUR ${report.coverage?.outsideValue ?? 0}. Returns use tested capital incl cash. Paths: two reset steps then flat; options endpoint only.`,
       productCount: portfolio.productCount,
       groupCount: portfolio.groupCount,
-      currentValue: portfolio.currentValue,
+      currentValue: report.coverage?.coveredValue ?? portfolio.currentValue,
       worstPnl: portfolio.worstPnl,
-      worstReturnPct: portfolio.worstReturnPct,
+      worstReturnPct: Math.min(...portfolio.scenarioResults.map(s => s.testedCapitalReturnPct ?? s.returnPct)),
       bestPnl: portfolio.bestPnl,
-      bestReturnPct: portfolio.bestReturnPct,
+      bestReturnPct: Math.max(...portfolio.scenarioResults.map(s => s.testedCapitalReturnPct ?? s.returnPct)),
       flatPnl: portfolio.flatPnl,
       scenarioCoveragePct: portfolio.scenarioCoveragePct,
       navWeightPct: portfolio.navWeightPct,
@@ -582,7 +648,7 @@ export function buildHermesStressReviewPayload(report) {
         label: scenario.label,
         movePct: scenario.movePct,
         pnl: scenario.pnl,
-        returnPct: scenario.returnPct,
+        returnPct: scenario.testedCapitalReturnPct ?? scenario.returnPct,
         barrierBreaches: scenario.barrierBreaches,
       })),
       products: portfolio.products.slice(0, 20).map((product) => ({
@@ -597,7 +663,7 @@ export function buildHermesStressReviewPayload(report) {
         theta: product.theta,
         ivPct: product.ivPct,
         daysToExpiry: product.daysToExpiry,
-        allocationPct: product.allocationPct,
+        allocationPct: round(report.coverage?.coveredValue > 0 ? product.currentValue / report.coverage.coveredValue * 100 : product.allocationPct),
         navWeightPct: product.navWeightPct,
         capitalWeightPct: product.capitalWeightPct,
         positionScalePct: product.positionScalePct,

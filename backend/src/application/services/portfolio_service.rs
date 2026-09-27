@@ -244,6 +244,7 @@ struct StructuredProductsPayload {
 struct StructuredProductQuoteRow {
     isin: Option<String>,
     quote_price: Option<f64>,
+    quote_currency: Option<String>,
     quote_source: Option<String>,
     quote_timestamp: Option<String>,
 }
@@ -279,7 +280,11 @@ fn structured_product_price_overrides_from_payload(
             let isin = item.isin?;
             let price = item.quote_price?;
             let source = item.quote_source?;
-            if source == "boerse_frankfurt" && price > 0.0 {
+            if source == "boerse_frankfurt"
+                && price.is_finite()
+                && price > 0.0
+                && item.quote_currency.as_deref() == Some("EUR")
+            {
                 Some((
                     isin,
                     PriceOverride {
@@ -315,7 +320,9 @@ mod tests {
             temp.path(),
             r#"{
               "items": [
-                {"isin": "DE000LIVE001", "quote_price": 2.5, "quote_source": "boerse_frankfurt", "quote_timestamp": "2026-08-25T12:00:00Z"},
+                {"isin": "DE000LIVE001", "quote_price": 2.5, "quote_currency":"EUR", "quote_source": "boerse_frankfurt", "quote_timestamp": "2026-08-25T12:00:00Z"},
+                {"isin": "DE000USD001", "quote_price": 2.5, "quote_currency":"USD", "quote_source": "boerse_frankfurt"},
+                {"isin": "DE000NOCUR1", "quote_price": 2.5, "quote_source": "boerse_frankfurt"},
                 {"isin": "DE000FALL001", "quote_price": 3.5, "quote_source": "rust_portfolio_summary"}
               ]
             }"#,

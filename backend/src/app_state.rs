@@ -12,6 +12,7 @@ use crate::{
 
 #[derive(Clone)]
 pub struct AppState {
+    pub portfolio_monitor: crate::services::portfolio_monitor::PortfolioMonitor,
     pub portfolio_service: PortfolioService,
     pub upload_data_service: UploadDataService,
     pub structured_products_service: StructuredProductsService,
@@ -35,8 +36,10 @@ impl AppState {
         ape_wisdom_service: ApeWisdomService,
         systemd_status_service: SystemdStatusService,
         pnl_snapshot_service: PnlSnapshotService,
+        portfolio_monitor: crate::services::portfolio_monitor::PortfolioMonitor,
     ) -> Self {
         Self {
+            portfolio_monitor,
             portfolio_service,
             upload_data_service,
             structured_products_service,

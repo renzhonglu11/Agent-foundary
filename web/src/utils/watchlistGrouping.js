@@ -1,104 +1,10 @@
+import marketSymbols from './marketSymbols.json' with { type: 'json' }
+
 const tierBuckets = ['tier1', 'tier2', 'tier3']
 const tierRank = { tier1: 0, tier2: 1, tier3: 2 }
-const alpacaSymbolByIsin = new Map([
-  ['US02079K1079', 'GOOG'],
-  ['US0231351067', 'AMZN'],
-  ['US0420682058', 'ARM'],
-  ['US0079031078', 'AMD'],
-  ['US1491231015', 'CAT'],
-  ['US19247G1076', 'COIN'],
-  ['US24703L2025', 'DELL'],
-  ['US23804L1035', 'DDOG'],
-  ['US5738741041', 'MRVL'],
-  ['US4435106079', 'HUBS'],
-  ['US4581401001', 'INTC'],
-  ['US5949181045', 'MSFT'],
-  ['US68389X1054', 'ORCL'],
-  ['US67066G1040', 'NVDA'],
-  ['US00724F1012', 'ADBE'],
-  ['US09290D1019', 'BX'],
-  ['US11135F1012', 'AVGO'],
-  ['US18915M1071', 'NET'],
-  ['US7475251036', 'QCOM'],
-  ['US8522341036', 'XYZ'],
-  ['US8740391003', 'TSM'],
-  ['US87612E1064', 'TGT'],
-  ['US8807701029', 'TER'],
-  ['US88160R1014', 'TSLA'],
-  ['US8825081040', 'TXN'],
-  ['US88579Y1010', 'MMM'],
-  ['US9113121068', 'UPS'],
-  ['IE00B4BNMY34', 'ACN'],
-  ['KYG393871085', 'GFS'],
-  ['NL0000226223', 'STM'],
-  ['PA1436583006', 'CCL'],
-])
-const alpacaSymbolByAliasKey = new Map([
-  ['accenture', 'ACN'],
-  ['alphabet', 'GOOG'],
-  ['advanced micro devices', 'AMD'],
-  ['amazon', 'AMZN'],
-  ['arm', 'ARM'],
-  ['asml', 'ASML'],
-  ['blackstone', 'BX'],
-  ['block', 'XYZ'],
-  ['broadcom', 'AVGO'],
-  ['caterpillar', 'CAT'],
-  ['cloudflare', 'NET'],
-  ['coinbase', 'COIN'],
-  ['datadog', 'DDOG'],
-  ['dell technologies', 'DELL'],
-  ['enphase', 'ENPH'],
-  ['enphase energy', 'ENPH'],
-  ['enphasee', 'ENPH'],
-  ['globalfoundries', 'GFS'],
-  ['hubspot', 'HUBS'],
-  ['intel', 'INTC'],
-  ['marvell', 'MRVL'],
-  ['micron technology', 'MU'],
-  ['microsoft', 'MSFT'],
-  ['nextera', 'NEE'],
-  ['nextera energy', 'NEE'],
-  ['nvidia', 'NVDA'],
-  ['oracle', 'ORCL'],
-  ['qualcomm', 'QCOM'],
-  ['stmicro', 'STM'],
-  ['stmicroelectronics', 'STM'],
-  ['taiwan semiconduct', 'TSM'],
-  ['target', 'TGT'],
-  ['teradyne', 'TER'],
-  ['texas instruments', 'TXN'],
-  ['tesla', 'TSLA'],
-  ['carnival', 'CCL'],
-  ['united parcel service', 'UPS'],
-])
-const underlyingAliasKeys = new Map([
-  ['accent', 'accenture'],
-  ['accenture plc', 'accenture'],
-  ['amd advanced micro devices', 'amd'],
-  ['advanced micro devices', 'amd'],
-  ['micron', 'micron technology'],
-  ['taiwansm', 'taiwan semiconduct'],
-  ['taiwan semiconductor', 'taiwan semiconduct'],
-  ['taiwan semiconductors', 'taiwan semiconduct'],
-  ['arm', 'arm'],
-  ['asmlhold', 'asml'],
-  ['alphab c', 'alphabet'],
-  ['alphabet c', 'alphabet'],
-  ['google', 'alphabet'],
-  ['microso', 'microsoft'],
-  ['msft', 'microsoft'],
-  ['delltech', 'dell technologies'],
-  ['globalf', 'globalfoundries'],
-  ['texasin', 'texas instruments'],
-  ['texas in', 'texas instruments'],
-  ['ups', 'united parcel service'],
-  ['qualcomm', 'qualcomm'],
-  ['broadcom', 'broadcom'],
-  ['stmicro', 'stmicroelectronics'],
-  ['stmicroelectronics', 'stmicroelectronics'],
-  ['stmpa fp', 'stmicroelectronics'],
-])
+const alpacaSymbolByIsin = new Map(Object.entries(marketSymbols.isin))
+const alpacaSymbolByAliasKey = new Map(Object.entries(marketSymbols.alias))
+const underlyingAliasKeys = new Map(Object.entries(marketSymbols.canonical))
 
 export function buildWatchlistGroups(data, structuredProducts = [], alpacaQuotes = []) {
   const totalMarketValue = Number(data?.summary?.totalMarketValue) || 0
@@ -268,6 +174,7 @@ function applyGroupMonitoringMetrics(group) {
 
   group.instruments.forEach((row) => {
     row.underlyingSpot = spot
+    row.underlyingPriceAsOf = group.spotQuote?.priceAsOf || null
     row.underlyingSpotRaw = rawSpot
     row.underlyingSpotRawCurrency = rawCurrency
     row.underlyingSpotUsdEurRate = usdEurRate
@@ -430,13 +337,13 @@ function positionToInstrumentRow(position, enriched, index, totalMarketValue, al
   if (!tier) tier = isDerivative ? 'tier2' : 'tier3'
   if (!tierBuckets.includes(tier)) tier = 'tier3'
 
-  const marketValue = Number(enriched?.market_value ?? position.marketValue) || 0
+  const marketValue = Number(position.marketValue ?? enriched?.market_value) || 0
   const holdingWeight = totalMarketValue > 0 ? (marketValue / totalMarketValue) * 100 : 0
   const stockName = enriched?.display_name || position.displayName || position.name || position.pdfName || position.symbol || 'Unknown'
   const symbol = position.symbol || enriched?.isin || position.instrument || stockName
   const alpacaSymbol = resolveAlpacaSymbol({ position, enriched, stockName, symbol, isDerivative })
   const liveStockQuote = !isDerivative && alpacaSymbol ? alpacaQuoteBySymbol.get(alpacaSymbol) : null
-  const price = Number(liveStockQuote?.price ?? enriched?.quote_price ?? position.lastPrice) || 0
+  const price = Number(liveStockQuote?.price ?? (position.valuationSource ? position.lastPrice : enriched?.quote_price ?? position.lastPrice)) || 0
   const hasLiveEnrichment = hasRealtimeStructuredData(enriched)
   const source = liveStockQuote ? 'alpaca_iex' : enriched ? (hasLiveEnrichment ? 'structured_enrichment' : 'portfolio') : priceSourceForPosition(position)
 
@@ -452,8 +359,8 @@ function positionToInstrumentRow(position, enriched, index, totalMarketValue, al
     holdingStatus: `${formatPercent(holdingWeight).replace('+', '')} 仓位`,
     holdingDays: daysSince(position.lastTradeDate),
     marketValue,
-    quantity: Number(enriched?.quantity ?? position.quantity) || 0,
-    costBasis: Number(enriched?.cost_basis ?? position.costBasis) || 0,
+    quantity: Number(position.quantity ?? enriched?.quantity) || 0,
+    costBasis: Number(position.costBasis ?? enriched?.cost_basis) || 0,
     unrealizedPnl: Number(position.unrealizedPnl) || 0,
     unrealizedPct: Number(position.unrealizedPct) || 0,
     assetClass,
@@ -467,7 +374,8 @@ function positionToInstrumentRow(position, enriched, index, totalMarketValue, al
     rawPrice: liveStockQuote?.rawPrice,
     rawCurrency: liveStockQuote?.rawCurrency,
     usdEurRate: liveStockQuote?.usdEurRate,
-    priceAsOf: liveStockQuote?.priceAsOf,
+    priceAsOf: liveStockQuote?.priceAsOf || position.priceAsOf || null,
+    priceFetchedAt: liveStockQuote?.fetchedAt || position.priceFetchedAt || enriched?.quote_timestamp || null,
     displayName: position.displayName,
     pdfName: position.pdfName,
     issuer: enriched?.issuer || position.issuer,

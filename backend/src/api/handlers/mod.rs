@@ -4,6 +4,7 @@ mod hermes_cron;
 mod macro_analysis;
 mod pnl_snapshots;
 mod portfolio;
+mod portfolio_monitor;
 mod portfolio_stress;
 mod stock_analysis;
 mod structured_products;
@@ -16,6 +17,9 @@ pub use hermes_cron::hermes_cron_status;
 pub use macro_analysis::{get_macro_analysis, refresh_macro_analysis};
 pub use pnl_snapshots::{create_pnl_snapshot, delete_pnl_snapshot, list_pnl_snapshots};
 pub use portfolio::portfolio_summary;
+pub use portfolio_monitor::{
+    portfolio_monitor_history, portfolio_monitor_snapshot, portfolio_monitor_status,
+};
 pub use portfolio_stress::{portfolio_stress_hermes_review, portfolio_stress_hermes_status};
 pub use stock_analysis::stock_analysis_alpaca_quotes;
 pub use structured_products::{

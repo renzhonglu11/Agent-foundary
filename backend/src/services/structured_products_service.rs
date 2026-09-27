@@ -8,7 +8,6 @@ use std::{
 };
 
 use anyhow::{Context, anyhow};
-use chrono::Utc;
 use serde_json::{Value, json};
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
@@ -162,7 +161,10 @@ impl StructuredProductsService {
     fn start_refresh_worker(&self, mut receiver: UnboundedReceiver<RefreshRequest>) {
         let service = self.clone();
         tokio::spawn(async move {
+            let mut retry_after = tokio::time::Instant::now();
             while let Some(mut request) = receiver.recv().await {
+                // Queue requests through a short cooldown, then coalesce to the newest summary.
+                tokio::time::sleep_until(retry_after).await;
                 service.queued_requests.fetch_sub(1, Ordering::SeqCst);
 
                 let mut coalesced_count = 1usize;
@@ -185,11 +187,14 @@ impl StructuredProductsService {
                     .refresh(request.summary, request.reason, request.mode)
                     .await
                 {
+                    retry_after = tokio::time::Instant::now() + Duration::from_secs(300);
                     warn!(
                         %error,
                         reason = request.reason,
                         "structured products enrichment refresh failed"
                     );
+                } else {
+                    retry_after = tokio::time::Instant::now() + Duration::from_secs(60);
                 }
             }
         });
@@ -209,7 +214,8 @@ impl StructuredProductsService {
         }
 
         let service = self.clone();
-        let interval = Duration::from_secs(self.settings.auto_refresh_interval_mins * 60);
+        let interval =
+            Duration::from_secs(self.settings.auto_refresh_interval_mins.clamp(1, 1440) * 60);
         let market_open = self.settings.market_open_hour_cet;
         let market_close = self.settings.market_close_hour_cet;
         let sleep_off_hours = Duration::from_secs(1800); // 30 min when market is closed
@@ -226,8 +232,7 @@ impl StructuredProductsService {
             let mut post_close_done = false;
 
             loop {
-                let now = Utc::now();
-                let today = now.date_naive();
+                let today = market_calendar::berlin_now().date_naive();
                 let cet_hour = market_calendar::current_cet_hour();
 
                 if !market_calendar::is_xetra_trading_day(today).await {
@@ -268,9 +273,11 @@ impl StructuredProductsService {
                     tokio::time::sleep(sleep_off_hours).await;
                 } else {
                     // ----- Pre-market: wait until open -----
-                    let mins_to_open = market_open.saturating_sub(cet_hour);
+                    let hours_to_open = market_open.saturating_sub(cet_hour);
                     let wait = Duration::from_secs(
-                        (mins_to_open as u64 * 60).min(sleep_off_hours.as_secs()),
+                        (hours_to_open as u64 * 3600)
+                            .min(sleep_off_hours.as_secs())
+                            .max(60),
                     );
                     tokio::time::sleep(wait).await;
                 }
@@ -324,12 +331,22 @@ impl StructuredProductsService {
                 "lastError": status.last_error,
                 "autoRefreshActive": status.auto_refresh_active,
                 "lastScheduledRefreshAt": status.last_scheduled_refresh_at,
+                "intervalMinutes": self.settings.auto_refresh_interval_mins,
+                "marketOpenHourBerlin": self.settings.market_open_hour_cet,
+                "marketCloseHourBerlin": self.settings.market_close_hour_cet,
+                "liveEnabled": self.settings.enabled && !self.settings.no_live_enrichment,
             }),
             Err(_) => json!({
                 "running": false,
                 "lastError": "structured products refresh status lock poisoned",
             }),
         }
+    }
+
+    pub async fn market_open(&self) -> bool {
+        market_calendar::is_xetra_trading_day(market_calendar::berlin_now().date_naive()).await
+            && market_calendar::current_cet_hour() >= self.settings.market_open_hour_cet
+            && market_calendar::current_cet_hour() < self.settings.market_close_hour_cet
     }
 
     async fn refresh(
@@ -484,6 +501,7 @@ impl StructuredProductsService {
         );
         command.stdout(std::process::Stdio::piped());
         command.stderr(std::process::Stdio::piped());
+        command.kill_on_drop(true);
         let mut child = command.spawn().map_err(|error| {
             anyhow!(
                 "failed to spawn structured products generator command={} workdir={} ({error})",
@@ -519,7 +537,18 @@ impl StructuredProductsService {
             anyhow::Ok(output.join("\n"))
         });
 
-        let status = child.wait().await?;
+        let status = match tokio::time::timeout(Duration::from_secs(1800), child.wait()).await {
+            Ok(status) => status?,
+            Err(_) => {
+                let _ = child.kill().await;
+                stdout_task.abort();
+                stderr_task.abort();
+                self.cleanup_temporary_outputs(&output_paths).await;
+                return Err(anyhow!(
+                    "structured products generator exceeded 30 minute deadline"
+                ));
+            }
+        };
         let stdout = stdout_task
             .await
             .context("structured products stdout reader task failed")??;

@@ -53,6 +53,10 @@ pub struct AllocationSlice {
 #[derive(Debug, Clone, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Position {
+    pub valuation_source: String,
+    pub price_as_of: Option<String>,
+    pub price_fetched_at: Option<String>,
+    pub valuation_currency: String,
     pub symbol: String,
     pub name: String,
     pub display_name: String,

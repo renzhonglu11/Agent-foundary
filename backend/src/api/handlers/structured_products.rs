@@ -42,6 +42,7 @@ pub async fn refresh_structured_products_enrichment(
         "user_requested_live_enrichment",
         RefreshMode::Live,
     );
+    state.portfolio_monitor.request_refresh();
 
     Ok(Json(serde_json::json!({
         "ok": true,

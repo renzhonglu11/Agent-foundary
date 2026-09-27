@@ -25,6 +25,18 @@ pub fn build(state: Arc<AppState>, frontend_origin: &str) -> anyhow::Result<Rout
         .route("/health", get(handlers::health))
         .route("/api/portfolio/summary", get(handlers::portfolio_summary))
         .route(
+            "/api/portfolio-monitor/status",
+            get(handlers::portfolio_monitor_status),
+        )
+        .route(
+            "/api/portfolio-monitor/history",
+            get(handlers::portfolio_monitor_history),
+        )
+        .route(
+            "/api/portfolio-monitor/snapshots/{key}",
+            get(handlers::portfolio_monitor_snapshot),
+        )
+        .route(
             "/api/upload-data",
             post(handlers::upload_data).layer(DefaultBodyLimit::max(50 * 1024 * 1024)),
         )
