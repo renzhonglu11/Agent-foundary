@@ -1,294 +1,264 @@
 # Agent Foundry
 
-个人投资组合仪表板 &mdash; 一个集持仓跟踪、市场数据、结构化产品风险评估、宏观经济分析和定时任务监控于一体的全栈应用。
+A self-hosted portfolio dashboard for individual investors, bringing holdings, returns, market data, and structured-product risk into one place.
 
-## 技术栈
+**English** · [简体中文](README.zh-CN.md)
 
-| 层 | 技术 |
-|------|-----------|
-| **后端** | Rust + Axum 0.8 + SQLx (SQLite) + Tokio |
-| **Python 脚本** | 结构化产品富化（爬取 GS.de / Onvista / Finanzen.net / Börse Frankfurt）、PDF 解析、宏观分析 |
-| **前端** | React 19 + Vite + MUI 7 + Recharts + MUI X Charts |
-| **数据** | SQLite（多表迁移: 交易记录、外汇汇率、市场数据缓存、FRED 宏观数据、结构化产品实时数据） |
-| **部署** | systemd 单元、shell 部署脚本 |
+![Rust](https://img.shields.io/badge/Rust-1.88%2B-DEA584?logo=rust)
+![React](https://img.shields.io/badge/React-19-149ECA?logo=react)
+![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)
+![SQLite](https://img.shields.io/badge/SQLite-003B57?logo=sqlite&logoColor=white)
 
-## 项目结构
+Agent Foundry turns transaction records and portfolio statements into a unified portfolio view. It combines external quotes, macroeconomic indicators, and derivative data to help you understand allocation, performance, and exposure. Transactions, upload records, and caches are stored in local SQLite databases; external services are configured by feature.
 
-```text
-backend/            Rust Axum API + SQLx SQLite + 领域逻辑
-├── migrations/     SQLite 迁移（7 个文件）
-├── python/         Python 侧车 — PDF 提取、宏观分析、结构化产品爬虫
-└── src/
-    ├── api/        路由 + 处理器
-    ├── application/ 端口（traits）+ 服务（portfolio、FX、upload）
-    ├── config/     环境驱动配置
-    ├── domain/     领域类型（Transaction、Portfolio、Money）
-    ├── infrastructure/ SQLite DAO、Migrations
-    └── services/   外部集成（Alpaca、FRED、ApeWisdom、Hermes Cron、结构化产品）
+[Quick start](#quick-start) · [Configuration](#configuration) · [Architecture](#architecture) · [API](#api) · [Documentation](#documentation) · [Development and testing](#development-and-testing) · [Contributing](#contributing) · [License](#license)
 
-web/                React + Vite 前端
-├── src/
-│   ├── components/ UI 组件（DashboardShell、PortfolioTabs、StockAnalysisTab、
-│   │               PositionsTable、DividendTab、EventsTab、HermesCronTab …）
-│   ├── hooks/      React Query 风格 hooks（usePortfolioData、useRiskData、
-│   │               useStructuredProducts、useFredMacroData …）
-│   └── utils/      格式化工具、自选股分组逻辑
-└── scripts/        dev-with-backend.sh（同时启动后端 + Vite 开发服务器）
+## Features
 
-data/               SQLite 数据库 + 导出的 JSON/CSV（git 忽略）
-deploy/             systemd 单元 + 部署脚本
-tools/              实用工具（预留）
-```
+- **Portfolio overview**: Track market value, cost basis, realized and unrealized P&L, asset allocation, monthly activity, and recent transactions.
+- **Holdings and income**: Inspect individual positions, dividend and interest records, monthly income trends, and tax totals.
+- **Structured-product analysis**: Identify warrants, call/put products, knock-outs, turbos, and factor certificates; enrich underlying assets, Greeks, leverage, expiry dates, and barriers.
+- **Risk and scenarios**: Group exposure by underlying and generate risk signals using data completeness, quote freshness, time to expiry, and concentration. Estimate product P&L under scenarios and persist P&L snapshots.
+- **Market and macro data**: Integrate Alpaca US equity quotes, Frankfurter exchange rates, FRED macroeconomic indicators, and ApeWisdom Reddit stock trends.
+- **Task and service monitoring**: Display Hermes Cron job snapshots and systemd service status to inspect data pipeline operation.
 
-## 功能
+Risk signals and scenario results use rules and approximate models. Missing external data may be replaced with cached or fallback values. Check the displayed sources, timestamps, and completeness when interpreting results.
 
-### 仪表板标签页
-- **概览** — 投资组合汇总卡片、历史市值图表、持仓细分、近期活动
-- **持仓** — 可排序表格，包含成本价、数量、当日盈亏、总盈亏 %，以及操作面板
-- **分红** — 已收分红时间线 + 年度预测
-- **股票分析** — 自选股表格，含 Alpaca 实时报价、FRED 宏观数据、Reddit 情绪（ApeWisdom）、结构化产品风险热力图
-- **事件** — 交易日历事件
-- **Hermes Cron** — 定时作业状态监控仪表板
+## Quick start
 
-### 后端 API
-- `GET /health` — 健康检查
-- `GET /api/portfolio/summary` — 完整投资组合快照（持仓、分红、历史）
-- `GET /data/portfolio-summary.json` — 兼容旧前端路径（开发中由 Vite 代理）
-- `POST /api/upload-data` — 多部分上传：CSV 交易文件、PDF 资产摘要、结构化产品 Excel（最大 50 MB）
-- `GET /api/stock-analysis/alpaca-quotes` — 批量股票报价（Alpaca Markets）
-- `GET /api/fred/macro-data` — 选定投资组合代码的美国宏观指标（FRED）
-- `GET /data/macro-analysis.json` — 宏观分析缓存
-- `POST /api/macro-analysis/refresh` — 从 Python 侧车触发宏观分析
-- `GET /api/structured-products-enrichment` — 结构化产品详情（ISIN、基础资产、障碍、票息），读取 SQLite 持久化数据
-- `GET /api/structured-products-risk` — 每个产品汇总的风险评估，读取 SQLite 持久化数据
-- `POST /api/structured-products-enrichment/refresh` — 触发富化 + 风险重新计算
-- `GET /api/structured-products-enrichment/status` — 检查富化流水线状态
-- `GET /data/hermes-cron-status.json` — Hermes Cron 作业状态快照
+### Prerequisites
 
-### 外部集成
-| 服务 | 用途 |
-|---------|-------|
-| **Alpaca Markets** | 美股实时报价（EUR 换算） |
-| **FRED** (圣路易斯联储) | 宏观数据：GDP、CPI、失业率、联邦基金利率、收益率曲线 |
-| **Frankfurter API** | USD → EUR 汇率，含回退 |
-| **ApeWisdom** | Reddit 热门股票情绪（后台轮询） |
-| **Hermes Cron** | 监控外部 cron 作业状态 |
+| Tool | Requirement |
+| --- | --- |
+| Rust | 1.88+; [`rust-toolchain.toml`](rust-toolchain.toml) pins the repository to 1.88.0 |
+| Node.js / npm | Node.js 20.19+ within 20.x, or 22.12+; compatible with the locked Vite version |
+| Python | 3.11+; deployment scripts use Python 3.12 |
+| uv | Install Python dependencies and run Python tools |
+| Git, curl, POSIX shell | Clone the repository and run the combined development launcher; use WSL on Windows |
 
-### Python 侧车 (`backend/python/`)
-- **结构化产品富化** — 多提供商爬虫：GS.de、Onvista、Finanzen.net、Börse Frankfurt。提取 ISIN 详情、基础资产映射、障碍等级、票息、估值。支持分批和速率限制。
-- **风险评估** — 计算每个结构化产品的 VaR、最大回撤、压力测试场景
-- **PDF 提取** — 从 PDF 资产报表中提取文本，用于导入交易
-- **宏观分析** — 宏观指标趋势分析，含信号生成
-
-## 快速开始
-
-### 前置条件
-- Rust 1.88+（参见 `rust-toolchain.toml`）
-- Node.js 20+
-- Python 3.12+（用于结构化产品 + 宏观脚本）
-- [uv](https://github.com/astral-sh/uv)（Python 包管理器）
-- （可选）[Alpaca Markets API 密钥](https://alpaca.markets/) 和 [FRED API 密钥](https://fred.stlouisfed.org/docs/api/fred/)
-
-### 1. 配置环境
+### 1. Clone and configure
 
 ```bash
+git clone https://github.com/renzhonglu11/Agent-foundary.git
+cd Agent-foundary
 cp .env.example .env
-# 编辑 .env — 至少设置 DATABASE_URL。添加 ALPACA 和 FRED 密钥以获得完整功能。
 ```
 
-关键环境变量：
+The default configuration starts the local application. Edit `.env` to add credentials for the external services you need. Importing data and viewing the basic portfolio do not require API keys.
 
-| 变量 | 默认值 | 说明 |
-|-----------|---------|-------------|
-| `APP_ENV` | `local` | `local`（美观日志）或 `production`（JSON 日志） |
-| `HOST` / `PORT` | `127.0.0.1:8080` | HTTP 监听地址 |
-| `DATABASE_URL` | `sqlite://data/agent_foundry.db` | SQLite 数据库路径 |
-| `ALPACA_MARKET_DATA_ENABLED` | `true` | 启用实时股票报价 |
-| `FRED_API_KEY` | — | FRED API 密钥（宏观数据） |
-| `STRUCTURED_PRODUCTS_ENRICHMENT_ENABLED` | `true` | 启用结构化产品爬虫 |
+### 2. Install dependencies
 
-查看 [`.env.example`](.env.example) 了解完整列表。
-
-### 2. 安装 Python 依赖
+Run from the repository root:
 
 ```bash
 cd backend/python
-uv sync
+uv sync --locked --dev
+cd ../..
+
+npm --prefix web ci
+cargo build -p agent-foundry-backend
+```
+
+Building the backend first prevents the initial compilation from exceeding the launcher's 120-second health-check wait.
+
+For browser-based GS Markets fallback queries, also install Playwright Chromium:
+
+```bash
+cd backend/python
+uv run playwright install chromium
 cd ../..
 ```
 
-### 3. 运行开发服务器
+On Linux, if browser system dependencies are missing, run `uv run playwright install --with-deps chromium` from the Python project directory.
 
-**仅后端：**
+### 3. Start the application
 
-```bash
-cargo run -p agent-foundry-backend
-```
-
-**仅前端：**
+Run from the repository root:
 
 ```bash
-cd web
-npm install
-npm run dev
+npm --prefix web run dev
 ```
 
-**同时启动两者（推荐）：**
+The launcher starts the Rust backend, waits for its health check, then starts Vite. Default addresses:
+
+| Service | Address |
+| --- | --- |
+| Web dashboard | <http://localhost:5173> |
+| Backend API | <http://127.0.0.1:8080> |
+| Health check | <http://127.0.0.1:8080/health> |
 
 ```bash
-cd web
-npm run dev
-# 运行 scripts/dev-with-backend.sh — 在端口 8080 启动后端，前端 Vite 在端口 5173 并代理 API 调用
+curl -fsS http://127.0.0.1:8080/health
+# {"ok":true}
 ```
 
-使用独立 worktree 进行纯前端开发时，请改用[前端 Worktree 开发指南](docs/frontend-worktree-development.md)，以复用主工作区的后端与 `.env`。
+The backend creates the SQLite database and applies migrations automatically. Vite proxies `/api` requests and the supported `/data/*.json` paths. Stopping the launcher also stops the backend it started.
 
-### 4. 检查
+### 4. Import your portfolio
 
-```bash
-cargo fmt --all
-cargo clippy --all-targets -- -D warnings
-cargo test
+Use the data import control in the bottom-right corner of the dashboard to upload a transaction CSV, optionally accompanied by a portfolio statement PDF. Each request accepts at most one CSV and one PDF, with a total request limit of 50 MiB.
+
+The CSV must contain the following columns. Other broker export formats need to be converted to this schema first:
+
+```csv
+transaction_id,date,type,category,asset_class,name,symbol,description,amount,fee,tax,shares,price,currency
+demo-001,2026-01-15,BUY,TRADE,STOCK,Example Stock,DEMO,Demo purchase,-100,0,0,1,100,EUR
 ```
 
-## 生产构建
+This transaction is a fictional format example. Record purchase amounts as negative values. See [`transaction_importer.rs`](backend/src/application/services/transaction_importer.rs) for the parser.
 
-```bash
-# 后端
-cargo build --release
-# 二进制文件位于 target/release/agent-foundry-backend
+**Importing a CSV replaces all existing transactions. Upload your complete transaction history.** PDFs supplement asset names, issuers, quantities, and statement valuations; they do not replace the transaction CSV.
 
-# 前端
-cd web && npm run build
-# 输出位于 web/dist/
+## Configuration
+
+See [`.env.example`](.env.example) for the full configuration template. Relative paths are resolved from the repository root; start the backend from that directory when running it separately.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `HOST` / `PORT` | `127.0.0.1` / `8080` | Backend listener; the combined launcher and Vite proxy use these default addresses |
+| `DATABASE_URL` | `sqlite://data/agent_foundry.db` | Main database path |
+| `APP_ENV` | `local` | Application environment; supports `production` |
+| `LOG_FORMAT` | `pretty` | Log format; use `json` for production |
+| `RUST_LOG` | See the template | Log levels and module filters |
+| `ALPACA_MARKET_DATA_ENABLED` | `true` | Enable Alpaca integration; live requests require credentials |
+| `STRUCTURED_PRODUCTS_ENRICHMENT_ENABLED` | `true` | Enable structured-product enrichment and risk calculation |
+| `STRUCTURED_PRODUCTS_ENRICHMENT_NO_LIVE` | `false` | Set to `true` to skip live derivative-provider queries |
+| `STRUCTURED_PRODUCTS_AUTO_REFRESH_INTERVAL_MINS` | `60` | Refresh interval when automatic refresh is enabled |
+| `FX_RATES_ENABLED` | `true` | Enable external exchange-rate queries |
+
+### Optional integrations
+
+| Integration | Purpose | Configuration or dependency |
+| --- | --- | --- |
+| Alpaca Markets | US equity IEX quotes and EUR conversion | `APCA_API_KEY_ID`, `APCA_API_SECRET_KEY` |
+| FRED | US macroeconomic indicators | `FRED_API_KEY` |
+| Frankfurter | USD/EUR exchange rates | No API key; uses a configured fallback rate if requests fail |
+| ApeWisdom | Reddit stock trends | No API key |
+| FinCal | XETRA trading calendar | Optional `FINCAL_API_KEY`; uses a built-in calendar fallback if requests fail |
+| Onvista / GS Markets / Börse Frankfurt | Product metadata, Greeks, and quotes | Python environment; GS Markets fallback requires Chromium |
+| Hermes | AI commentary in macro analysis | Separate Hermes installation; set `HERMES_PATH` as needed |
+| Hermes Cron / systemd | External job and service status | Job snapshot files and corresponding system services; see the deployment documentation |
+
+Structured-product enrichment uses Onvista first, GS Markets for missing fields, and Börse Frankfurt for quote updates. Live queries are tiered by underlying, prioritizing up to 20 underlying groups with the highest aggregate derivative market value to limit provider requests. Provider page changes and access restrictions can affect data availability.
+
+## Architecture
+
+The Rust backend owns ingestion, portfolio calculation, persistence, and task orchestration. Python tools handle PDF text extraction, product enrichment, and macro analysis. React presents the results through HTTP APIs.
+
+```mermaid
+flowchart LR
+    UI["React / Vite dashboard"] <-->|"HTTP /api · /data"| API["Rust / Axum"]
+    API <--> DB["SQLite transactions and application data"]
+    API -->|"Subprocess"| PY["Python tools"]
+    API --> MARKET["Market · FX · macro APIs"]
+    PY --> PROVIDERS["Structured-product providers"]
+    PY <--> CACHE["SQLite provider cache"]
 ```
 
-## VPS 部署
-
-### 使用部署脚本（推荐）
-
-完整的发布、回滚与 SSH 隧道操作说明见 [部署运行手册](docs/deployment-runbook.md)。
-
-```bash
-# 在本机构建 Rust、Python 和前端产物，上传为一个带版本的 release，
-# 原子切换 current 软链接，并重启 systemd 服务。
-./deploy/deploy-backend.sh
-```
-
-生产环境目录保持在一个根目录下：
+The backend follows a ports-and-adapters architecture, separating domain types, application services, database implementations, and HTTP handlers. Python consumes Rust-normalized positions; Rust is authoritative for portfolio ingestion and calculation.
 
 ```text
-/home/rz/Agent-Foundry/
-├── current -> releases/<release-id>
-├── releases/<release-id>/      # 可回滚的后端、Python 环境链接与 web/dist
-└── shared/
-    ├── .env                    # 仅在 VPS 上维护，部署脚本绝不覆盖
-    ├── data/                   # SQLite、上传文件与 Hermes cron 快照
-    ├── python-envs/            # 按内容哈希复用的不可变 Python 环境
-    └── cache/                  # uv 与 Playwright 可再生缓存
+backend/
+├── src/api/              HTTP routes and handlers
+├── src/domain/           Transaction, portfolio, and money types
+├── src/application/      Application services and repository interfaces
+├── src/infrastructure/   SQLite repositories and migration execution
+├── src/services/         External integrations and background tasks
+├── migrations/           Rust main-database migrations
+└── python/               Python tools, providers, and tests
+web/                     React UI, data hooks, and utilities
+deploy/                  Release scripts, systemd units, and Caddy configuration
+docs/                    Operational guides and design documents
+openwiki/                Automatically maintained architecture and developer docs
+data/                    Local databases, uploads, and caches (Git-ignored)
 ```
 
-首次运行会将旧的 `.env` 和 `data/` 迁移到 `shared/`。之后如需改密钥或环境变量，直接在 VPS 编辑 `shared/.env`；部署脚本不会读取、上传或改写它。每个 release 都含有 `REVISION` 文件，可用来确认线上实际运行的提交。
+## API
 
-脚本还会移除旧的 `# agent-foundry-cron-data` 用户 crontab 条目。它原本指向已不存在的根目录 `package.json`，会每分钟失败一次。
+Selected endpoints are listed below. See [`backend/src/api/router.rs`](backend/src/api/router.rs) for the complete router.
 
-### 通过 SSH 隧道访问前端（无域名）
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/health` | Process health check |
+| `GET` | `/api/portfolio/summary` | Portfolio, holdings, and income summary |
+| `GET` | `/data/portfolio-summary.json` | Compatibility path for the portfolio summary |
+| `POST` | `/api/upload-data` | CSV/PDF upload using the multipart field `files` |
+| `GET` | `/api/stock-analysis/alpaca-quotes` | Equity quotes using the `symbols` query parameter |
+| `GET` | `/api/structured-products-enrichment` | Persisted product data |
+| `GET` | `/api/structured-products-risk` | Persisted risk assessments |
+| `POST` | `/api/structured-products-enrichment/refresh` | Start asynchronous enrichment and risk calculation |
+| `GET` | `/api/structured-products-enrichment/status` | Refresh status |
+| `GET` / `POST` | `/api/pnl-snapshots` | Read or save P&L snapshots |
+| `GET` | `/api/fred/macro-data` | FRED macroeconomic indicators |
+| `POST` | `/api/macro-analysis/refresh` | Trigger a macro-analysis refresh |
 
-VPS 安装 Caddy 后，在本地运行一次：
+## Documentation
+
+- [Repository guide](openwiki/quickstart.md): Entry point for the codebase and workflows.
+- [Architecture overview](openwiki/architecture/overview.md) and [source map](openwiki/architecture/source-map.md): Runtime boundaries and source locations.
+- [Portfolio and risk model](openwiki/domain/portfolio-and-risk.md): Accounting rules, enrichment tiers, exposure, and scenario estimates.
+- [External integrations](openwiki/integrations/external-systems.md): Data sources, caching, and fallback behavior.
+- [Deployment runbook](docs/deployment-runbook.md): Releases, verification, rollback, and SSH-tunnel access.
+- [Frontend worktree development](docs/frontend-worktree-development.md): Share a backend across multiple worktrees.
+- [Python tools](backend/python/README.md): Providers, CLI usage, and database migrations.
+
+OpenWiki pages are generated by a workflow. Update source code or maintained documentation first, then let OpenWiki regenerate the corresponding pages.
+
+## Development and testing
+
+Run from the repository root:
 
 ```bash
-./deploy/install-caddy-ssh-tunnel.sh
+cargo fmt --all -- --check
+cargo clippy --all-targets -- -D warnings
+cargo test
+
+npm --prefix web test
+npm --prefix web run build
+
+cd backend/python
+uv run pytest
 ```
 
-该脚本将 Caddy 配置为只监听 VPS 的 `127.0.0.1:3000`，提供当前 release 的 `web/dist`，并将 `/api/*` 和 `/data/*` 转发到后端。它不会开放公网 HTTP 端口。
+Python provider tests use mocked HTTP responses and do not require live provider access. The Rust workspace forbids `unsafe` and enforces Clippy restrictions on `unwrap` and `expect`.
 
-每次访问时，在本地保持以下命令运行：
+To run the services independently, use two terminals:
 
 ```bash
-ssh -N -L 3000:127.0.0.1:3000 cx33
+# Terminal 1: repository root
+cargo run -p agent-foundry-backend
+
+# Terminal 2: repository root
+cd web
+npm exec -- vite
 ```
 
-然后浏览器打开 `http://127.0.0.1:3000`。
+`npm run dev` starts both the backend and frontend. Use the Vite command above when a backend is already running.
 
-### 手动步骤
-
-**本地构建：**
+### Build and deploy
 
 ```bash
-cargo build --release
+cargo build --release -p agent-foundry-backend
+npm --prefix web run build
 ```
 
-**上传到 VPS：**
+The backend binary is written to `target/release/agent-foundry-backend`; frontend assets are written to `web/dist/`. The Rust backend serves the API, while Caddy serves the production frontend separately.
 
-```bash
-ssh user@vps 'mkdir -p /home/rz/Agent-Foundry/bin /home/rz/Agent-Foundry/data'
-scp target/release/agent-foundry-backend user@vps:/tmp/agent-foundry-backend
-scp .env.example user@vps:/tmp/agent-foundry.env
-scp deploy/agent-foundry-backend.service user@vps:/tmp/agent-foundry-backend.service
-scp data/portfolio-transactions.csv user@vps:/tmp/portfolio-transactions.csv
-```
+Deployment scripts use versioned releases, a `current` symlink, and persistent `shared/` state, with rollback on activation health-check failure. Their default host, user, and paths target the original deployment environment. Before using your own server, follow the [deployment runbook](docs/deployment-runbook.md) to configure `SSH_HOST`, `REMOTE_ROOT`, `REMOTE_USER`, `REMOTE_GROUP`, and `REMOTE_UV_BIN`.
 
-**在 VPS 上安装：**
+The application currently has no built-in user authentication. The deployment setup uses a loopback-only Caddy listener accessed through an SSH tunnel. Preserve that access boundary or configure authentication and access controls before exposing the application.
 
-```bash
-sudo mv /tmp/agent-foundry-backend /home/rz/Agent-Foundry/bin/agent-foundry-backend
-sudo mv /tmp/agent-foundry.env /home/rz/Agent-Foundry/.env
-# 重要：编辑 .env 设置 APP_ENV=production 并配置密钥
-sudo mv /tmp/portfolio-transactions.csv /home/rz/Agent-Foundry/data/portfolio-transactions.csv
-sudo mv /tmp/agent-foundry-backend.service /etc/systemd/system/agent-foundry-backend.service
-sudo chown -R rz:rz /home/rz/Agent-Foundry
-sudo chmod +x /home/rz/Agent-Foundry/bin/agent-foundry-backend
-sudo systemctl daemon-reload
-sudo systemctl enable --now agent-foundry-backend
-sudo systemctl status agent-foundry-backend
-```
+## Contributing
 
-### Hermes Cron 同步服务（VPS）
+Use [Issues](https://github.com/renzhonglu11/Agent-foundary/issues) to report bugs or discuss features, or submit a pull request.
 
-将本地 cron 作业同步到 VPS 以进行集中监控：
+1. For substantial features or architecture changes, describe the use case and proposal in an issue first.
+2. Work on a separate branch and keep changes focused. Add appropriate regression coverage for bug fixes.
+3. Run the checks and tests for affected modules. Describe the change, validation, and known limitations in your PR.
+4. When changing fields shared by Rust, Python, and the frontend, check API contracts and database migrations together.
 
-```bash
-# 一次性安装
-./deploy/install-hermes-cron-sync-local.sh
-```
+Bug reports should include reproduction steps, relevant versions, and redacted logs. Use fictional records in examples. Do not include API keys, real transactions, portfolio statements, or local databases in contributions.
 
-有关更多部署细节，请参见 [`deploy/`](deploy/) 及其中包含的脚本。
+## License
 
-## 架构说明
-
-### 设计模式
-后端使用**六边形（端口和适配器）架构**：
-
-- **领域层** (`domain/`) — 纯数据结构、`Money` 值对象、没有外部依赖
-- **应用层** (`application/`) — 端口（traits）+ 编排服务。领域逻辑与 I/O 分离。
-- **基础设施层** (`infrastructure/`) — SQLite 驱动的端口实现
-- **服务层** (`services/`) — 外部 API 集成（Alpaca、FRED、ApeWisdom、结构化产品）
-- **API 层** (`api/`) — Axum 路由和处理程序，薄的 HTTP 关注点
-
-### 数据流
-```
-CSV/PDF 上传 → 后台导入 → SQLite（交易、持仓、历史）
-                              ↓
-外部 API → 市场数据仓库 → 投资组合服务 → JSON 缓存
-                              ↓
-Python 侧车 → 结构化产品 DB → 风险 JSON → 前端
-```
-
-### 缓存策略
-- **投资组合摘要** — 启动时计算，上传新数据时失效
-- **Alpaca 报价** — TTL 可配置（默认 60 秒），内存缓存
-- **FRED 宏观数据** — TTL 可配置（默认 24 小时），SQLite 支持
-- **外汇汇率** — TTL 可配置（默认 1 小时），含回退，SQLite 存储
-- **结构化产品** — 启动时从 Python 侧车刷新，手动触发重新运行
-
-## 技术说明
-
-- `unsafe_code = "forbid"` — 整个 Rust 代码库零 unsafe 块
-- `unwrap_used = "deny"` / `expect_used = "deny"` — 禁止恐慌快捷方式；所有错误都是显式的 `anyhow::Result` 或 `thiserror`
-- Edition 2024，最低 Rust 1.88
-- Python 代码使用 `uv` 管理依赖，带有 `pyproject.toml` 和锁文件
-- 前端开发服务器默认代理 `/data` 和 `/api` 到 `localhost:8080`
-
-## 许可证
-
-无许可证（目前为私有）。
+This project is being prepared for open-source release; a license has not yet been selected. The repository currently has no `LICENSE` file, and the Rust workspace declares `UNLICENSED`. Licensing terms will be defined by the license file published with the project.
