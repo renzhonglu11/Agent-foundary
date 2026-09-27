@@ -24,6 +24,46 @@ Agent Foundry turns transaction records and portfolio statements from Trade Repu
 
 Risk signals and scenario results use rules and approximate models. Missing external data may be replaced with cached or fallback values. Check the displayed sources, timestamps, and completeness when interpreting results.
 
+Dashboard:
+
+https://github.com/user-attachments/assets/62a39133-c54a-48f0-94b8-b42497bfe0bb
+
+AI Macro Commentary:
+
+https://github.com/user-attachments/assets/2efabac1-c637-41eb-9aa5-7284760c8b79
+
+## Architecture
+
+The Rust backend owns ingestion, portfolio calculation, persistence, and task orchestration. Python tools handle PDF text extraction, product enrichment, and macro analysis. React presents the results through HTTP APIs.
+
+```mermaid
+flowchart LR
+    UI["React / Vite dashboard"] <-->|"HTTP /api · /data"| API["Rust / Axum"]
+    API <--> DB["SQLite transactions and application data"]
+    API -->|"Subprocess"| PY["Python tools"]
+    API --> MARKET["Market · FX · macro APIs"]
+    PY --> PROVIDERS["Structured-product providers"]
+    PY <--> CACHE["SQLite provider cache"]
+```
+
+The backend follows a ports-and-adapters architecture, separating domain types, application services, database implementations, and HTTP handlers. Python consumes Rust-normalized positions; Rust is authoritative for portfolio ingestion and calculation.
+
+```text
+backend/
+├── src/api/              HTTP routes and handlers
+├── src/domain/           Transaction, portfolio, and money types
+├── src/application/      Application services and repository interfaces
+├── src/infrastructure/   SQLite repositories and migration execution
+├── src/services/         External integrations and background tasks
+├── migrations/           Rust main-database migrations
+└── python/               Python tools, providers, and tests
+web/                     React UI, data hooks, and utilities
+deploy/                  Release scripts, systemd units, and Caddy configuration
+docs/                    Operational guides and design documents
+openwiki/                Automatically maintained architecture and developer docs
+data/                    Local databases, uploads, and caches (Git-ignored)
+```
+
 ## Quick start
 
 ### Prerequisites
@@ -140,38 +180,6 @@ See [`.env.example`](.env.example) for the full configuration template. Relative
 | Hermes Cron / systemd | External job and service status | Job snapshot files and corresponding system services; see the deployment documentation |
 
 Structured-product enrichment uses Onvista first, GS Markets for missing fields, and Börse Frankfurt for quote updates. Live queries are tiered by underlying, prioritizing up to 20 underlying groups with the highest aggregate derivative market value to limit provider requests. Provider page changes and access restrictions can affect data availability.
-
-## Architecture
-
-The Rust backend owns ingestion, portfolio calculation, persistence, and task orchestration. Python tools handle PDF text extraction, product enrichment, and macro analysis. React presents the results through HTTP APIs.
-
-```mermaid
-flowchart LR
-    UI["React / Vite dashboard"] <-->|"HTTP /api · /data"| API["Rust / Axum"]
-    API <--> DB["SQLite transactions and application data"]
-    API -->|"Subprocess"| PY["Python tools"]
-    API --> MARKET["Market · FX · macro APIs"]
-    PY --> PROVIDERS["Structured-product providers"]
-    PY <--> CACHE["SQLite provider cache"]
-```
-
-The backend follows a ports-and-adapters architecture, separating domain types, application services, database implementations, and HTTP handlers. Python consumes Rust-normalized positions; Rust is authoritative for portfolio ingestion and calculation.
-
-```text
-backend/
-├── src/api/              HTTP routes and handlers
-├── src/domain/           Transaction, portfolio, and money types
-├── src/application/      Application services and repository interfaces
-├── src/infrastructure/   SQLite repositories and migration execution
-├── src/services/         External integrations and background tasks
-├── migrations/           Rust main-database migrations
-└── python/               Python tools, providers, and tests
-web/                     React UI, data hooks, and utilities
-deploy/                  Release scripts, systemd units, and Caddy configuration
-docs/                    Operational guides and design documents
-openwiki/                Automatically maintained architecture and developer docs
-data/                    Local databases, uploads, and caches (Git-ignored)
-```
 
 ## API
 
