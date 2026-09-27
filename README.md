@@ -1,6 +1,6 @@
 # Agent Foundry
 
-A self-hosted portfolio dashboard for individual investors, bringing holdings, returns, market data, and structured-product risk into one place.
+A self-hosted portfolio dashboard for individual investors of Trade Republic, bringing holdings, returns, market data, and structured-product risk into one place.
 
 **English** · [简体中文](README.zh-CN.md)
 
@@ -9,7 +9,7 @@ A self-hosted portfolio dashboard for individual investors, bringing holdings, r
 ![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)
 ![SQLite](https://img.shields.io/badge/SQLite-003B57?logo=sqlite&logoColor=white)
 
-Agent Foundry turns transaction records and portfolio statements into a unified portfolio view. It combines external quotes, macroeconomic indicators, and derivative data to help you understand allocation, performance, and exposure. Transactions, upload records, and caches are stored in local SQLite databases; external services are configured by feature.
+Agent Foundry turns transaction records and portfolio statements from Trade Republic into a unified portfolio view. It combines external quotes, macroeconomic indicators, and derivative data to help you understand allocation, performance, and exposure. Transactions, upload records, and caches are stored in local SQLite databases; external services are configured by feature.
 
 [Quick start](#quick-start) · [Configuration](#configuration) · [Architecture](#architecture) · [API](#api) · [Documentation](#documentation) · [Development and testing](#development-and-testing) · [Contributing](#contributing) · [License](#license)
 

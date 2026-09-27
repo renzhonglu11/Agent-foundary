@@ -13,6 +13,7 @@ DB_PATH = REPOS_DIR / "data/agent_foundry.db"
 OUTPUT_PATH = REPOS_DIR / "data/macro-analysis.json"
 # Use environment variable or default system path for hermes
 HERMES_PATH = os.environ.get("HERMES_PATH", os.path.expanduser("~/.local/bin/hermes"))
+HERMES_MODEL = os.environ.get("AGENT_FOUNDRY_MACRO_HERMES_MODEL", "gpt-6-luna")
 
 def get_latest_macro_data():
     """Reads FRED data cache from SQLite."""
@@ -150,9 +151,14 @@ JSON 格式要求：
 """
 
     try:
-        # Run hermes oneshot command with gpt-5.4-mini
-        cmd = [HERMES_PATH, "-m", "gpt-5.4-mini", "-z", prompt]
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        cmd = [HERMES_PATH, "-m", HERMES_MODEL, "-z", prompt]
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=True,
+            env={**os.environ, "HERMES_REASONING_EFFORT": "high"},
+        )
         stdout = result.stdout.strip()
         
         # Robust parsing of JSON response

@@ -1,0 +1,32 @@
+diff --git a/cli.py b/cli.py
+--- a/cli.py
++++ b/cli.py
+@@ -3915,7 +3915,7 @@
+         )
+
+-        # Reasoning config (OpenRouter reasoning effort level)
++        # A one-shot caller may override reasoning without changing interactive sessions.
+         self.reasoning_config = _parse_reasoning_config(
+-            CLI_CONFIG["agent"].get("reasoning_effort", "")
++            os.getenv("HERMES_REASONING_EFFORT") or CLI_CONFIG["agent"].get("reasoning_effort", "")
+         )
+         self.service_tier = _parse_service_tier_config(
+diff --git a/cron/scheduler.py b/cron/scheduler.py
+--- a/cron/scheduler.py
++++ b/cron/scheduler.py
+@@ -2862,11 +2862,14 @@
+         except Exception:
+             pass
+-        # Reasoning config from config.yaml (raw value — a YAML boolean False
+-        # means thinking disabled, see parse_reasoning_effort)
++        # A job-specific effort overrides the global default. Preserve raw False:
++        # parse_reasoning_effort treats it as thinking disabled.
+         from hermes_constants import parse_reasoning_effort
++        job_reasoning_effort = job.get("reasoning_effort")
++        if job_reasoning_effort is None:
++            job_reasoning_effort = _cfg.get("agent", {}).get("reasoning_effort", "")
+         reasoning_config = parse_reasoning_effort(
+-            _cfg.get("agent", {}).get("reasoning_effort", "")
++            job_reasoning_effort
+         )
+         # Prefill messages from env or config.yaml. The top-level

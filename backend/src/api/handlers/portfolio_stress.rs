@@ -12,6 +12,7 @@ const MAX_PRODUCTS_PER_PORTFOLIO: usize = 20;
 const MAX_SELECTION_FLAGS: usize = 4;
 const MAX_METHOD_LENGTH: usize = 64;
 const HERMES_TIMEOUT_SECONDS: u64 = 120;
+const HERMES_REASONING_EFFORT: &str = "high";
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -172,6 +173,7 @@ pub async fn portfolio_stress_hermes_review(
         .arg(&model)
         .arg("-z")
         .arg(prompt)
+        .env("HERMES_REASONING_EFFORT", HERMES_REASONING_EFFORT)
         .kill_on_drop(true);
 
     let output = match timeout(
@@ -233,7 +235,7 @@ fn hermes_path() -> PathBuf {
 }
 
 fn hermes_model() -> String {
-    std::env::var("PORTFOLIO_STRESS_HERMES_MODEL").unwrap_or_else(|_| "gpt-5.6-terra".to_owned())
+    std::env::var("PORTFOLIO_STRESS_HERMES_MODEL").unwrap_or_else(|_| "gpt-6-luna".to_owned())
 }
 
 fn executable_available(path: &std::path::Path) -> bool {
