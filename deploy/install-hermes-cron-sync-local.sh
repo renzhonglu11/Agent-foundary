@@ -49,6 +49,14 @@ cleanup() {
 trap cleanup EXIT
 
 GIT_REVISION="$(git -C "${REPO_ROOT}" rev-parse --verify HEAD)"
+# Untracked files count too: sqlx embeds every file in backend/migrations at build time.
+WORKTREE_STATUS="$(git -C "${REPO_ROOT}" status --porcelain)"
+if [[ -n "${WORKTREE_STATUS}" && "${ALLOW_DIRTY:-0}" != 1 ]]; then
+  echo "Refusing to build a release from uncommitted changes:" >&2
+  printf '%s\n' "${WORKTREE_STATUS}" >&2
+  echo "Commit or stash them, or set ALLOW_DIRTY=1 to deploy them anyway." >&2
+  exit 1
+fi
 RELEASE_ID="${RELEASE_ID:-${GIT_REVISION:0:12}-$(date -u +%Y%m%d%H%M%S)}"
 if [[ ! "${RELEASE_ID}" =~ ^[A-Za-z0-9._-]+$ ]]; then
   echo "RELEASE_ID may contain only letters, numbers, '.', '_' and '-'." >&2
@@ -85,7 +93,7 @@ fi
   printf 'revision=%s\n' "${GIT_REVISION}"
   printf 'release_id=%s\n' "${RELEASE_ID}"
   printf 'built_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  if git -C "${REPO_ROOT}" diff --quiet && git -C "${REPO_ROOT}" diff --cached --quiet; then
+  if [[ -z "${WORKTREE_STATUS}" ]]; then
     printf 'worktree_dirty=false\n'
   else
     printf 'worktree_dirty=true\n'

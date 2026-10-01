@@ -45,8 +45,10 @@ On the build machine:
 
 - Rust, `uv`, Node/npm, `ssh`, and `scp` are available.
 - The SSH host alias `cx33` works, or `SSH_HOST` is set.
-- The checkout is at the intended revision. A dirty checkout is allowed, but
-  the generated `REVISION` explicitly records `worktree_dirty=true`.
+- The checkout is at the intended revision with nothing uncommitted, including
+  untracked files. The deploy scripts refuse otherwise; `ALLOW_DIRTY=1`
+  overrides that, and the generated `REVISION` then records
+  `worktree_dirty=true`.
 
 On the VPS:
 
