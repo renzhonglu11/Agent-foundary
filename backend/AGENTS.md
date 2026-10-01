@@ -24,6 +24,7 @@ These instructions apply to work under `backend/`.
 - Prefer small, testable functions for parsing, importing, and portfolio calculations.
 - Keep async boundaries explicit. Do not block inside request handlers unless the existing code already isolates that operation.
 - When changing migrations, add a new migration file under `backend/migrations/`; do not edit applied migrations unless the change is only for an unshared local draft.
+- Keep migrations additive (new tables, nullable or defaulted columns, indexes) so older releases can still start for a rollback; `DROP TABLE`, `DROP COLUMN` and `RENAME` are rejected by a test. See `docs/deployment-runbook.md`.
 
 ## API And Data Contracts
 

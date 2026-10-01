@@ -150,6 +150,22 @@ sudo systemctl restart agent-foundry-backend
 curl -fsS http://127.0.0.1:8080/health
 ```
 
+### Migrations and rollback
+
+The backend applies pending sqlx migrations on startup and tolerates applied
+versions it does not know, so an older release starts on a schema that a newer
+release already migrated. That only holds while migrations are additive: new
+tables, new nullable or defaulted columns, new indexes. `DROP TABLE`,
+`DROP COLUMN` and `RENAME` would break every rollback target, and a test in
+`backend/src/infrastructure/db/migrations.rs` rejects them in migrations newer
+than `20260907010000`.
+
+When a destructive change is unavoidable, ship it as a later contract step once
+no retained release depends on the old shape, and record it in that test's
+cut-off. Releases up to and including `bbbb80fa9c25-20261001224931` predate
+this tolerance and refuse unknown versions; they can only be rollback targets
+while no newer migration has been applied.
+
 Do not delete releases until the active release and a rollback candidate have
 been identified. Release cleanup is intentionally manual; no deploy script
 prunes historical releases. Python environment cleanup is also manual: never
@@ -182,12 +198,17 @@ ls /home/rz/Agent-Foundry/shared/backups/*/
 ```
 
 To restore, stop the backend so nothing writes during the swap, keep the
-current file aside, and decompress the chosen copy in its place:
+current files aside, and decompress the chosen copy in their place. The main
+database runs in WAL mode: a leftover `-wal` file holds recent commits and
+would be replayed onto the restored copy, so move it and `-shm` aside with the
+database:
 
 ```bash
 sudo systemctl stop agent-foundry-backend
 cd /home/rz/Agent-Foundry/shared/data
-mv agent_foundry.db agent_foundry.db.before-restore
+for f in agent_foundry.db agent_foundry.db-wal agent_foundry.db-shm; do
+  [ -e "$f" ] && mv "$f" "$f.before-restore"
+done
 gunzip -c ../backups/pre-deploy/<set>/agent_foundry.db.gz > agent_foundry.db
 sqlite3 agent_foundry.db 'PRAGMA integrity_check'
 sudo systemctl start agent-foundry-backend
