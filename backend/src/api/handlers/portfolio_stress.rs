@@ -381,9 +381,9 @@ fn build_prompt(request: &PortfolioStressReviewRequest) -> Result<String, serde_
 3. 优先比较最差收益、横盘时间损耗、障碍触发次数、分散度、数据置信度，再讨论最好情景；必须考虑产品的 riskStatus、positionScalePct 和 selectionFlags。
 4. allocationPct 是产品在候选组合内部的权重，navWeightPct 是占用户当前总资产的比例，capitalWeightPct 是占用户实际成本本金的比例，不得混用。
 5. delta 是方向敏感度，theta 是供应商提供的每日时间价值敏感度原值，ivPct 的单位是波动率百分点，daysToExpiry 是剩余日历天数；null 表示缺失，不得自行补值。
-6. scenarioMethods 给出每个产品在各情景实际采用的方法链。delta、omega、leverage、intrinsic、expiry_intrinsic、knockout、theta、linear、approx 和 factor_leverage 只用于判断估算可靠性、线性误差、到期和障碍风险；不得用 Greeks 重新计算输入 P&L。
+6. scenarioMethods 给出每个产品在各情景实际采用的方法链。delta、omega、leverage、intrinsic、expiry_intrinsic、knockout、theta、linear、approx、factor_leverage、financing（Turbo 假设融资成本）、carry_iv/carry_group_iv/carry_default_vol（Factor 融资、年费和波动损耗，波动率分别来自自身 IV、同标的 IV 或默认值）和 default_leverage（缺杠杆数据按 1 倍兜底）只用于判断估算可靠性、线性误差、到期和障碍风险；不得用 Greeks 重新计算输入 P&L。
 7. 明确指出这是压力情景比较，不得使用“盈利概率”“预期收益率”等没有概率依据的表述。
-8. horizonDays=0 表示即时冲击。说明中的 tested capital 含假设减仓所得零收益现金；比较时区分保留产品与现金，未测试资产风险不计入结果。factor_path 表示假设两次每日重置的路径，之后持平；权证仍使用期末近似，不能称为完整路径定价。
+8. horizonDays=0 表示即时冲击。候选组合把相同的 tested capital 等权重新分配给选中产品（positionScalePct 大于 100 表示模型加仓，小于 100 表示减仓），分不完的部分是零收益现金；比较时区分产品与现金，未测试资产风险不计入结果。factor_path 表示假设两次每日重置的路径，之后持平；权证仍使用期末近似，不能称为完整路径定价。
 9. 只返回一个合法 JSON 对象，不要 Markdown，不要附加文字。
 
 返回格式：

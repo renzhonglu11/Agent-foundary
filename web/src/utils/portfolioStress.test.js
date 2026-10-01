@@ -75,7 +75,7 @@ test('instantaneous flat shock has no theta loss and targets leave other groups 
 test('two reset periods compound factor returns and detect an intermediate knockout', () => {
   const scenario = buildStressScenarios(10, null, true).find(s => s.id === 'recovery')
   const factor = entry({ item: { productType: 'factor_certificate', leverage: 3 } })
-  assert.equal(calculatePositionStress(factor, scenario, 7).projectedPrice, 1.8667)
+  assert.equal(calculatePositionStress(factor, scenario, 0).projectedPrice, 1.8667)
   const turbo = entry({ item: { productType: 'open_end_turbo', knockoutPrice: 95 } })
   const knockedOut = calculatePositionStress(turbo, scenario, 7)
   assert.equal(knockedOut.projectedPrice, 0)
@@ -171,7 +171,7 @@ test('factor certificate uses signed leverage without option history', () => {
       theta: null,
     },
   })
-  const result = calculatePositionStress(product, { id: 'up', label: '+5%', movePct: 5 }, 30)
+  const result = calculatePositionStress(product, { id: 'up', label: '+5%', movePct: 5 }, 0)
 
   assert.ok(result)
   assert.equal(result.method, 'factor_leverage')
@@ -194,12 +194,111 @@ test('short factor stress reverses the endpoint shock and ignores option strike'
       theta: null,
     },
   })
-  const result = calculatePositionStress(product, { id: 'up', label: '+5%', movePct: 5 }, 30)
+  const result = calculatePositionStress(product, { id: 'up', label: '+5%', movePct: 5 }, 0)
 
   assert.ok(result)
   assert.equal(result.method, 'factor_leverage')
   assert.equal(result.projectedPrice, 0.684)
   assert.equal(result.returnPct, -10)
+})
+
+function assertClose(actual, expected, tolerance = 1e-4) {
+  assert.ok(Math.abs(actual - expected) <= tolerance, `${actual} is not within ${tolerance} of ${expected}`)
+}
+
+function turbo(item = {}, overrides = {}) {
+  return entry({
+    ...overrides,
+    item: { productType: 'open_end_turbo', price: 0.5, strikePrice: 95, ratio: 0.1, delta: null, theta: null, ...item },
+  })
+}
+
+const flat = { id: 'flat', movePct: 0 }
+
+test('turbo financing accrues on the strike over the horizon but not instantly', () => {
+  assert.equal(calculatePositionStress(turbo(), flat, 0).pnl, 0)
+  const call = calculatePositionStress(turbo(), flat, 30)
+  // EUR reference 2% + 3% spread on strike × ratio = 9.5.
+  assertClose(call.projectedPrice, 0.5 - 9.5 * 0.05 * 30 / 360)
+  assert.equal(call.method, 'intrinsic+financing')
+  // Without a strike, leverage 20 implies the same financed amount: price × (L − 1).
+  assertClose(calculatePositionStress(turbo({ strikePrice: null, leverage: 20 }), flat, 30).projectedPrice, call.projectedPrice)
+
+  const put = { optionType: 'put', stockName: 'Test Put', strikePrice: 105 }
+  // Puts earn reference minus spread: negative in EUR, positive in USD.
+  assertClose(calculatePositionStress(turbo(put), flat, 30).projectedPrice, 0.5 + 10.5 * -0.01 * 30 / 360)
+  const usdPut = turbo({ ...put, underlyingSpotRawCurrency: 'USD', underlyingSpotUsdEurRate: 1 })
+  assertClose(calculatePositionStress(usdPut, flat, 30).projectedPrice, 0.5 + 10.5 * 0.01 * 30 / 360)
+})
+
+test('open-end barriers move with the financing level while closed-end barriers stay fixed', () => {
+  const openEnd = turbo({ knockoutPrice: 99.6 })
+  assert.equal(calculatePositionStress(openEnd, flat, 0).barrierBreached, false)
+  assert.equal(calculatePositionStress(openEnd, flat, 30).barrierBreached, true)
+
+  const closedEnd = turbo({ productType: 'knock_out', knockoutPrice: 99.6 }, { daysToExpiry: 10 })
+  const result = calculatePositionStress(closedEnd, flat, 30)
+  assert.equal(result.barrierBreached, false)
+  assertClose(result.projectedPrice, 0.5 - 9.5 * 0.05 * 10 / 360)
+})
+
+test('factor carry charges financing, fee and volatility drag on top of the endpoint shock', () => {
+  const long = entry({ item: { productType: 'factor_certificate', leverage: 3, delta: null, theta: null } })
+  assert.equal(calculatePositionStress(long, flat, 0).pnl, 0)
+  const longResult = calculatePositionStress(long, flat, 30)
+  // β = 3, σ = own IV 42%: financing (L − 1)(r + s), fee 1%, drag ½β(β − 1)σ².
+  assertClose(longResult.projectedPrice, 2 * Math.exp(-2 * 0.05 * 30 / 360 - (0.01 + 3 * 0.42 ** 2) * 30 / 365))
+  assert.equal(longResult.method, 'factor_leverage+carry_iv')
+  const up = calculatePositionStress(long, { id: 'up', movePct: 5 }, 30)
+  assertClose(up.projectedPrice, 2.3 * longResult.projectedPrice / 2)
+
+  const short = entry({ item: { productType: 'factor_certificate', optionType: 'put', stockName: 'FaktS', leverage: 2, iv: null, delta: null, theta: null } })
+  short.group.derivatives = [{ iv: 0.3 }, { iv: 60 }, { iv: null }]
+  const shortResult = calculatePositionStress(short, flat, 30)
+  // β = −2, σ = median sibling IV 45%: earns (L + 1)(r − s), drag ½β(β − 1)σ² = 3σ².
+  assertClose(shortResult.projectedPrice, 2 * Math.exp(3 * -0.01 * 30 / 360 - (0.01 + 3 * 0.45 ** 2) * 30 / 365))
+  assert.equal(shortResult.method, 'factor_leverage+carry_group_iv')
+
+  short.group.derivatives = []
+  assert.equal(calculatePositionStress(short, flat, 30).method, 'factor_leverage+carry_default_vol')
+})
+
+test('candidate scoring reference charges turbo and factor carry like warrant decay', () => {
+  const factor = entry({ item: { symbol: 'FACTOR', productType: 'factor_certificate', leverage: 3, delta: null, theta: null }, groupKey: 'factor' })
+  for (const product of [turbo(), factor]) {
+    const flatPnl = report => report.portfolios[0].scenarioResults.find(s => s.id === 'flat').pnl
+    assert.equal(flatPnl(buildPortfolioStressReport([product], 0)), 0)
+    assert.ok(flatPnl(buildPortfolioStressReport([product], 30)) < 0)
+  }
+})
+
+test('candidates reallocate the common tested capital equally instead of keeping small positions', () => {
+  const entries = [
+    entry({ item: { symbol: 'A' }, groupKey: 'a' }),
+    entry({ item: { symbol: 'B' }, groupKey: 'b' }),
+    entry({ item: { symbol: 'C' }, groupKey: 'c' }),
+    entry({ item: { symbol: 'BLOCKED' }, groupKey: 'blocked', riskStatus: 'HARD_BLOCKED' }),
+  ]
+  const report = buildPortfolioStressReport(entries, 0, undefined, { totalMarketValue: 1000 })
+  const defensive = report.portfolios.find(p => p.kind === 'defensive')
+  assert.equal(report.coverage.coveredValue, 800)
+  assert.equal(defensive.currentValue, 800)
+  assert.equal(defensive.cashValue, 0)
+  assert.ok(defensive.products.every(p => p.positionScalePct === 133.33 && p.allocationPct === 33.33))
+})
+
+test('products priced with a fallback model rank below priced ones and are flagged', () => {
+  const priced = entry({ item: { symbol: 'PRICED', theta: -0.001 }, groupKey: 'priced' })
+  // No delta, omega, strike, ratio or leverage: the stress falls back to 1x.
+  const fallback = entry({ item: { symbol: 'FALLBACK', delta: null, theta: null, strikePrice: null, ratio: null, iv: null }, groupKey: 'fallback' })
+  const report = buildPortfolioStressReport([fallback, priced], 30)
+  const defensive = report.portfolios.find(p => p.kind === 'defensive')
+  const methods = defensive.products.find(p => p.id === 'FALLBACK').scenarioMethods.map(m => m.method)
+  assert.ok(methods.every(method => method.includes('default_leverage')))
+  // Unpenalized, the 1x fallback's -10% worst case would outrank the priced -26.5%.
+  assert.deepEqual(defensive.products.map(p => p.id), ['PRICED', 'FALLBACK'])
+  assert.ok(defensive.products[1].selectionFlags.includes('MODEL_FALLBACK'))
+  assert.ok(!defensive.products[0].selectionFlags.includes('MODEL_FALLBACK'))
 })
 
 test('portfolio report excludes blocked legs from candidate combinations but keeps the baseline', () => {

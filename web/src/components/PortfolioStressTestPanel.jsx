@@ -22,7 +22,7 @@ import {
 } from '@mui/material'
 import AutoAwesomeRoundedIcon from '@mui/icons-material/AutoAwesomeRounded'
 import PortfolioDataMonitor from './PortfolioDataMonitor.jsx'
-import { buildPortfolioAdjustments, buildScenarioContributions, comparePortfolioStress } from '../utils/portfolioComparison.js'
+import { buildPortfolioAdjustments, buildScenarioContributions, buildShockTargets, comparePortfolioStress } from '../utils/portfolioComparison.js'
 
 import { compactCurrency, number } from '../utils/formatters.js'
 import {
@@ -49,10 +49,18 @@ const productTypeLabels = {
   factor_certificate: 'Factor',
 }
 
+const adjustmentLabels = {
+  exit: '模拟退出',
+  reduce: '减仓',
+  increase: '加仓',
+}
+
 const selectionFlagLabels = {
   WATCH_PENALIZED: 'WATCH 降权',
   ELASTIC_ONLY: '仅高弹性',
   EXPOSURE_CAPPED_8_PCT: '敞口限至 8%',
+  HELD_AT_CURRENT: '不加仓',
+  MODEL_FALLBACK: '模型兜底估算',
 }
 
 function signedPercent(value) {
@@ -78,7 +86,6 @@ export default function PortfolioStressTestPanel({ entries, positions = [], load
   const [horizonDays, setHorizonDays] = useState(0)
   const [shock, setShock] = useState(20)
   const [target, setTarget] = useState('')
-  const groups = [...new Map(entries.map(entry => [String(entry.group?.key || entry.group?.groupName || entry.item?.underlying || entry.item?.symbol || 'unknown'), entry.group?.groupName || entry.item?.underlying || entry.item?.symbol])).entries()]
   const scenarios = useMemo(() => buildStressScenarios(shock, target || null, horizonDays > 0), [shock, target, horizonDays])
   const direct = buildDirectPriceStress(positions, entries)
   const [selectedPortfolioId, setSelectedPortfolioId] = useState(null)
@@ -104,6 +111,14 @@ export default function PortfolioStressTestPanel({ entries, positions = [], load
     ? selectedPortfolioId
     : defaultPortfolioId
   const selectedPortfolio = report.portfolios.find((portfolio) => portfolio.id === resolvedPortfolioId) || null
+  // Membership does not depend on the shock settings, so the targets are stable
+  // while the target itself changes.
+  const shockTargets = useMemo(() => buildShockTargets(selectedPortfolio), [selectedPortfolio])
+  const targetAvailable = shockTargets.some(({ key }) => key === target)
+
+  useEffect(() => {
+    if (target && !targetAvailable) setTarget('')
+  }, [target, targetAvailable])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -176,7 +191,7 @@ export default function PortfolioStressTestPanel({ entries, positions = [], load
       <Stack spacing={1.25} sx={{ p: { xs: 1.5, md: 2 } }}>
         <Box>
           <Typography variant="subtitle1" fontWeight={900}>投资组合对比</Typography>
-          <Typography variant="body2" color="text.secondary">比较保留与减仓方案，查看压力下的取舍；候选方案仅作持仓参考。</Typography>
+          <Typography variant="body2" color="text.secondary">比较当前持仓与按策略重新分配同等本金的候选方案，查看压力下的取舍；候选方案仅作参考，不构成交易指令。</Typography>
         </Box>
         <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap', alignItems: 'center' }}>
           <FormControlLabel control={<Switch checked={stressEnabled} onChange={event => {
@@ -184,9 +199,9 @@ export default function PortfolioStressTestPanel({ entries, positions = [], load
             setHermesReview({ loading: false, data: null, error: null })
           }} />} label="冲击测试" />
           {stressEnabled && <>
-            <TextField select size="small" label="冲击范围" value={target} onChange={event => setTarget(event.target.value)} sx={{ minWidth: 140 }}>
+            <TextField select size="small" label="冲击范围" value={targetAvailable ? target : ''} onChange={event => setTarget(event.target.value)} sx={{ minWidth: 140 }}>
               <MenuItem value="">所有标的</MenuItem>
-              {groups.map(([key, name]) => <MenuItem key={key} value={key}>{name}</MenuItem>)}
+              {shockTargets.map(({ key, name }) => <MenuItem key={key} value={key}>{name}</MenuItem>)}
             </TextField>
             <TextField select size="small" label="最大冲击" value={shock} onChange={event => setShock(Number(event.target.value))}>
               {[10, 20, 30, 50].map(value => <MenuItem key={value} value={value}>±{value}%</MenuItem>)}
@@ -210,7 +225,7 @@ export default function PortfolioStressTestPanel({ entries, positions = [], load
           <TableContainer component={Paper} variant="outlined">
             <Table size="small" aria-label="投资组合对比" sx={{ '& th': { whiteSpace: 'nowrap' }, '& th:first-of-type, & td:first-of-type': { minWidth: 145, position: 'sticky', left: 0, zIndex: 1, backgroundColor: '#fff' }, '& tr.Mui-selected td:first-of-type': { backgroundColor: '#edf4fc' } }}>
               <TableHead><TableRow>
-                <TableCell>组合</TableCell><TableCell align="right">保留市值</TableCell><TableCell align="right">减仓释放现金</TableCell>
+                <TableCell>组合</TableCell><TableCell align="right">持仓市值</TableCell><TableCell align="right">剩余现金</TableCell>
                 {stressEnabled && <><TableCell align="right">下跌 {shock}% 盈亏</TableCell><TableCell align="right">上涨 {shock}% 盈亏</TableCell><TableCell align="right">最差情景盈亏</TableCell><TableCell>相较当前基准</TableCell></>}
               </TableRow></TableHead>
               <TableBody>{report.portfolios.map(portfolio => {
@@ -242,8 +257,8 @@ export default function PortfolioStressTestPanel({ entries, positions = [], load
             </Table>
           </TableContainer>
           <Typography variant="caption" color="text.secondary">
-            各方案使用相同测试本金 {compactCurrency(report.coverage.coveredValue)}，减仓释放金额假设留作现金；未覆盖仓位保持不变。
-            {stressEnabled ? '最差盈亏改善比较各方案各自的最差情景；上涨盈亏变化比较同一上涨情景。切换测试参数不会重新选股。' : '开启冲击测试可比较调整后的情景盈亏。'}
+            各方案使用相同测试本金 {compactCurrency(report.coverage.coveredValue)}：候选方案把本金等权分配给选中产品，单只敞口不超过净值 8%，WATCH、卖出信号或敞口未知的产品不加仓，分不完的部分留作零收益现金；未覆盖仓位保持不变。
+            {stressEnabled ? '最差盈亏改善比较各方案各自的最差情景；上涨盈亏变化比较同一上涨情景。切换测试参数不会重新选股；单标的冲击只能选择当前所选组合中的标的，切换到不含该标的的组合时恢复为所有标的。' : '开启冲击测试可比较调整后的情景盈亏。'}
           </Typography>
         </>}
 
@@ -255,19 +270,19 @@ export default function PortfolioStressTestPanel({ entries, positions = [], load
           <Paper variant="outlined" sx={{ p: 1.5 }}>
             <Typography variant="body2" fontWeight={800}>调整差异</Typography>
             <Typography variant="body2" sx={{ mt: 0.5, mb: 1 }}>
-              保留 {adjustments.filter(row => row.action === 'retain').length} 个 · 减仓 {adjustments.filter(row => row.action === 'reduce').length} 个 · 模拟退出 {adjustments.filter(row => row.action === 'exit').length} 个；
-              释放现金 {compactCurrency(selectedPortfolio.cashValue)}。
+              保留 {adjustments.filter(row => row.action === 'retain').length} 个 · 加仓 {adjustments.filter(row => row.action === 'increase').length} 个 · 减仓 {adjustments.filter(row => row.action === 'reduce').length} 个 · 模拟退出 {adjustments.filter(row => row.action === 'exit').length} 个；
+              剩余现金 {compactCurrency(selectedPortfolio.cashValue)}。
             </Typography>
             <Typography variant="caption" color="text.secondary">权重统一以当前可测试本金为分母，包含假设现金；以下是模型差异，未生成交易指令。</Typography>
             {changed.length ? <TableContainer sx={{ maxHeight: 320 }}><Table size="small" stickyHeader aria-label="调整差异" sx={{ minWidth: 540, '& th': { whiteSpace: 'nowrap' } }}>
-              <TableHead><TableRow><TableCell>产品 / 标的</TableCell><TableCell>方案变化</TableCell><TableCell align="right">当前 → 候选权重</TableCell><TableCell align="right">释放金额</TableCell></TableRow></TableHead>
+              <TableHead><TableRow><TableCell>产品 / 标的</TableCell><TableCell>方案变化</TableCell><TableCell align="right">当前 → 候选权重</TableCell><TableCell align="right">金额变化</TableCell></TableRow></TableHead>
               <TableBody>{changed.map(row => <TableRow key={row.id}>
                 <TableCell>{row.name}<Typography variant="caption" component="div" color="text.secondary">{row.groupName}</Typography></TableCell>
-                <TableCell>{row.action === 'exit' ? '模拟退出' : '减仓'}</TableCell>
+                <TableCell>{adjustmentLabels[row.action]}</TableCell>
                 <TableCell align="right">{number.format(row.beforeWeight)}% → {number.format(row.afterWeight)}%</TableCell>
-                <TableCell align="right">{compactCurrency(row.releasedValue)}</TableCell>
+                <TableCell align="right">{signedMoney(row.changeValue)}</TableCell>
               </TableRow>)}</TableBody>
-            </Table></TableContainer> : <Typography variant="body2" sx={{ mt: 1 }}>与当前可测试持仓一致，无减仓差异。</Typography>}
+            </Table></TableContainer> : <Typography variant="body2" sx={{ mt: 1 }}>与当前可测试持仓一致，无调整差异。</Typography>}
           </Paper>
 
           {stressEnabled && <Paper variant="outlined" sx={{ p: 1.5 }}>
@@ -348,8 +363,8 @@ export default function PortfolioStressTestPanel({ entries, positions = [], load
                           <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
                             持仓市值 {number.format(product.navWeightPct)}% · 本金 {number.format(product.capitalWeightPct)}%
                           </Typography>
-                          {product.positionScalePct < 100 ? (
-                            <Typography variant="caption" color="warning.main">采用原仓位的 {number.format(product.positionScalePct)}%</Typography>
+                          {product.positionScalePct !== 100 ? (
+                            <Typography variant="caption" color={product.positionScalePct < 100 ? 'warning.main' : 'info.main'}>按原仓位的 {number.format(product.positionScalePct)}% 配置</Typography>
                           ) : null}
                         </TableCell>
                       </TableRow>
@@ -409,7 +424,7 @@ export default function PortfolioStressTestPanel({ entries, positions = [], load
           </Alert>
         ) : null}
         <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1.25 }}>
-          组合按固定的 30 天、全标的 ±10% 参考情景和风险规则筛选；数据更新时重新生成。冲击测试只衡量既定组合的影响，不代表预期收益或盈利概率。计算口径：候选使用相同测试本金，减仓所得留作零收益现金，忽略交易费用；账户影响仅计已测部分的损益。权证使用局部敏感度和时间损耗近似，30/90 天误差可能很大。两步路径是假设连续两个重置周期发生冲击、随后持平，只有 Factor 和敲出检查使用中间路径；权证仍按终点近似。敲出按保守零回收处理，未模拟具体残值、日内重置、融资费用、发行人信用、买卖价差及汇率变化。长期五档终点情景仍是假设末期单次冲击。
+          组合按固定的 30 天、全标的 ±10% 参考情景和风险规则筛选；数据更新时重新生成。冲击测试只衡量既定组合的影响，不代表预期收益或盈利概率。计算口径：候选把相同测试本金等权分配给选中产品，分不完的部分留作零收益现金，忽略交易费用；账户影响仅计已测部分的损益。权证使用局部敏感度和时间损耗近似，30/90 天误差可能很大。Turbo 按假设融资利率（美元 4%、欧元 2% 参考利率 ± 3% 利差）逐日调整融资水平，开放式敲出价随之移动；Factor 计入融资、1% 年费和波动损耗，波动率优先取同标的权证 IV，缺失按 50%。两步路径是假设连续两个重置周期发生冲击、随后持平，只有 Factor 和敲出检查使用中间路径；权证仍按终点近似。敲出按保守零回收处理，未模拟具体残值、日内重置、发行人实际融资条款、发行人信用、买卖价差及汇率变化。长期五档终点情景仍是假设末期单次冲击。
         </Typography>
         </Box>
       </Stack>

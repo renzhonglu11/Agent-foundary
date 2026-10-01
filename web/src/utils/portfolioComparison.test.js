@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { buildPortfolioAdjustments, buildScenarioContributions, comparePortfolioStress } from './portfolioComparison.js'
+import { buildPortfolioAdjustments, buildScenarioContributions, buildShockTargets, comparePortfolioStress } from './portfolioComparison.js'
+import { buildPortfolioStressReport } from './portfolioStress.js'
 
 const baseline = {
   currentValue: 1000, worstPnl: -200,
@@ -25,6 +26,10 @@ test('adjustment differences preserve common weights and cash conservation for r
   assert.equal(rows.reduce((sum, row) => sum + row.releasedValue, 0), baseline.currentValue - candidate.currentValue)
   assert.ok(buildPortfolioAdjustments(baseline, baseline).every(row => row.action === 'retain'))
   assert.deepEqual(buildPortfolioAdjustments(null, candidate), [])
+
+  const reallocated = { ...candidate, products: [{ ...baseline.products[2], currentValue: 600, positionScalePct: 200 }] }
+  const increase = buildPortfolioAdjustments(baseline, reallocated).find(row => row.id === 'c')
+  assert.deepEqual([increase.id, increase.action, increase.changeValue, increase.releasedValue], ['c', 'increase', 300, 0])
 })
 
 test('comparison separates worst-case improvement from the same upward endpoint tradeoff', () => {
@@ -44,4 +49,24 @@ test('contributions retain negative, positive, zero and missing values for the s
   assert.equal(rows.find(row => row.id === 'b').pnl, 20)
   assert.equal(rows.find(row => row.id === 'c').pnl, 0)
   assert.equal(rows.find(row => row.id === 'd').pnl, null)
+})
+
+test('shock targets list only the underlyings held by the selected portfolio', () => {
+  const entry = (symbol, key, name, riskStatus = 'OK') => ({
+    item: { symbol, productType: 'optionsschein', optionType: 'call', price: 2, quantity: 100, underlyingSpot: 100, strikePrice: 95, ratio: 0.1, delta: 0.5, theta: -0.01, expiry: '2099-12-31' },
+    group: { key, groupName: name },
+    riskLeg: { legRiskStatus: riskStatus, exposureConfidence: 'live_delta', dataCompletenessRiskScore: 0, daysToExpiry: 365, exposureWeightPct: 0.01 },
+    primaryAction: 'HOLD',
+  })
+  const report = buildPortfolioStressReport([
+    entry('N1', 'nvda', 'NVIDIA'),
+    entry('N2', 'nvda', 'NVIDIA'),
+    entry('M1', 'mu', 'Micron', 'HARD_BLOCKED'),
+    entry('A1', 'amd', 'AMD'),
+  ], 0)
+  const baselineTargets = buildShockTargets(report.portfolios.find(p => p.kind === 'baseline'))
+  const candidateTargets = buildShockTargets(report.portfolios.find(p => p.kind === 'defensive'))
+  assert.deepEqual(baselineTargets, [{ key: 'amd', name: 'AMD' }, { key: 'mu', name: 'Micron' }, { key: 'nvda', name: 'NVIDIA' }])
+  assert.deepEqual(candidateTargets, [{ key: 'amd', name: 'AMD' }, { key: 'nvda', name: 'NVIDIA' }])
+  assert.deepEqual(buildShockTargets(null), [])
 })

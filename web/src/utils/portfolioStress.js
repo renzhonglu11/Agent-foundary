@@ -5,6 +5,21 @@ import {
   daysUntil,
   getOptionDirection,
 } from './productCalculations.js'
+import { clamp, finite, positive, round } from './numbers.js'
+import { factorCarry, turboCarry, underlyingVolatility } from './carryCost.js'
+import {
+  CANDIDATE_STRATEGIES,
+  STRATEGY_DEFINITIONS,
+  allocateEqualWeight,
+  candidateEligible,
+  candidatePolicy,
+  eligibleForAnyStrategy,
+  modelQualityPenalty,
+  productRiskPenalty,
+  productRiskSignals,
+  selectDiversified,
+  strategyScores,
+} from '../strategies/index.js'
 
 export const PORTFOLIO_STRESS_HORIZONS = [0, 7, 30, 90]
 
@@ -36,41 +51,6 @@ export function buildDirectPriceStress(positions = [], entries = []) {
     return sum + (price != null && positive(p.quantity) != null && p.assetClass !== 'BOND' ? price * p.quantity : positive(p.marketValue) ?? 0)
   }, 0)
   return [-20, -50, -100].map(movePct => ({ movePct, value: round(value), pnl: round(value * movePct / 100) }))
-}
-
-const CONFIDENCE_PENALTIES = {
-  live_delta: 0,
-  estimated_delta: 0.02,
-  estimated_omega: 0.04,
-  estimated_leverage: 0.06,
-  estimated_market_value: 0.10,
-  no_data: 0.25,
-}
-
-const CANDIDATE_STRATEGIES = ['defensive', 'balanced', 'elastic']
-const WATCH_DATA_SCORE_THRESHOLD = 6
-const WATCH_BARRIER_DISTANCE = 0.10
-const MAX_PRODUCT_EXPOSURE_WEIGHT = 0.08
-
-function finite(value) {
-  if (value === null || value === undefined || value === '') return null
-  const numeric = Number(value)
-  return Number.isFinite(numeric) ? numeric : null
-}
-
-function positive(value) {
-  const numeric = finite(value)
-  return numeric != null && numeric > 0 ? numeric : null
-}
-
-function clamp(value, minimum, maximum) {
-  return Math.min(maximum, Math.max(minimum, value))
-}
-
-function round(value, digits = 2) {
-  if (!Number.isFinite(value)) return 0
-  const factor = 10 ** digits
-  return Math.round((value + Number.EPSILON) * factor) / factor
 }
 
 function impliedVolatilityPct(value) {
@@ -141,23 +121,25 @@ function barrierBreached(item, scenarioSpot) {
   return direction === 'put' ? scenarioSpot >= knockout : scenarioSpot <= knockout
 }
 
-function leverageProjection(entry, scenario, currentPrice) {
+function productLeverage(entry) {
   const item = entry.item || {}
-  const direction = getOptionDirection(item)
-  const leverage = positive(item.leverage)
+  return positive(item.leverage)
     ?? positive(item.effectiveLeverage)
     ?? positive(entry.riskLeg?.leverage)
     ?? positive(item.omega)
-    ?? 1
+}
+
+function leverageProjection(entry, scenario, currentPrice) {
+  const direction = getOptionDirection(entry.item || {})
   const result = calculateLeverageScenario(
     currentPrice,
-    leverage,
+    productLeverage(entry) ?? 1,
     direction === 'put' ? 'put' : 'call',
     scenario.movePct,
   )
   return {
     projectedPrice: result?.projectedPrice ?? currentPrice,
-    method: 'leverage',
+    method: productLeverage(entry) == null ? 'leverage+default_leverage' : 'leverage',
   }
 }
 
@@ -177,6 +159,10 @@ export function calculatePositionStress(entry, scenario, horizonDays) {
   let projectedPrice = currentPrice
   let method = 'unchanged'
   let breached = false
+  const isTurbo = type === 'open_end_turbo' || type === 'knock_out'
+  const carryDays = type === 'knock_out' && dte != null ? Math.min(horizonDays, dte) : horizonDays
+  const financing = isTurbo ? turboCarry(item, productLeverage(entry), carryDays) : null
+  const barrierItem = financing ? { ...item, knockoutPrice: financing.knockoutPrice } : item
 
   if (type === 'factor_certificate') {
     if (scenario.pathMoves?.length) {
@@ -192,7 +178,14 @@ export function calculatePositionStress(entry, scenario, horizonDays) {
       projectedPrice = projection.projectedPrice
       method = 'factor_leverage'
     }
-  } else if ((type === 'open_end_turbo' || type === 'knock_out') && [scenario.movePct, ...(scenario.pathMoves || [])].some(move => barrierBreached(item, Math.max(0, spot * (1 + move / 100))))) {
+    if (productLeverage(entry) == null) method = `${method}+default_leverage`
+    const { volatility, source } = underlyingVolatility(entry)
+    const carry = factorCarry(item, productLeverage(entry) ?? 1, horizonDays, volatility)
+    if (carry) {
+      projectedPrice *= carry.multiplier
+      method = `${method}+carry_${source}`
+    }
+  } else if (isTurbo && [scenario.movePct, ...(scenario.pathMoves || [])].some(move => barrierBreached(barrierItem, Math.max(0, spot * (1 + move / 100))))) {
     projectedPrice = 0
     method = 'knockout'
     breached = true
@@ -221,6 +214,10 @@ export function calculatePositionStress(entry, scenario, horizonDays) {
         method = `${method}+${decay.method}`
       }
     }
+    if (financing) {
+      projectedPrice += financing.priceChange
+      method = `${method}+financing`
+    }
   }
 
   projectedPrice = Math.max(0, projectedPrice)
@@ -243,44 +240,6 @@ export function calculatePositionStress(entry, scenario, horizonDays) {
   }
 }
 
-function productRiskSignals(entry) {
-  const confidence = entry.riskLeg?.exposureConfidence || 'no_data'
-  const completenessScore = finite(entry.riskLeg?.dataCompletenessRiskScore) ?? 10
-  const daysToExpiry = finite(entry.riskLeg?.daysToExpiry)
-  const barrierDistancePct = finite(entry.riskLeg?.barrierDistancePct)
-  const exposureWeightPct = finite(entry.riskLeg?.exposureWeightPct)
-  return {
-    riskStatus: entry.riskLeg?.legRiskStatus || 'N/A',
-    confidence,
-    completenessScore,
-    daysToExpiry,
-    barrierDistancePct,
-    exposureWeightPct,
-    isRoll: entry.primaryAction === 'ROLL'
-      || (daysToExpiry != null && daysToExpiry >= 0 && daysToExpiry < 7),
-    hasUntrustedData: confidence === 'no_data' || completenessScore >= WATCH_DATA_SCORE_THRESHOLD,
-    isNearBarrier: barrierDistancePct != null && barrierDistancePct < WATCH_BARRIER_DISTANCE,
-    isOverexposed: exposureWeightPct != null && exposureWeightPct > MAX_PRODUCT_EXPOSURE_WEIGHT,
-  }
-}
-
-function productRiskPenalty(entry, signals) {
-  const completeness = clamp(signals.completenessScore / 10, 0, 1)
-  const confidencePenalty = CONFIDENCE_PENALTIES[signals.confidence] ?? 0.12
-  const actionPenalty = entry.primaryAction === 'HOLD' ? 0.02 : entry.primaryAction === 'BUY' ? 0 : 0.20
-  const concentrationPenalty = entry.riskGroup?.groupActionLabel === 'REDUCE_CONCENTRATION' ? 0.08 : 0
-  const watchPenalty = signals.riskStatus === 'WATCH' ? 0.05 : 0
-  const barrierPenalty = signals.isNearBarrier ? 0.10 : 0
-  const exposurePenalty = signals.isOverexposed ? 0.08 : 0
-  return confidencePenalty
-    + completeness * 0.08
-    + actionPenalty
-    + concentrationPenalty
-    + watchPenalty
-    + barrierPenalty
-    + exposurePenalty
-}
-
 function buildProductProfile(entry, horizonDays, scenarios, portfolioTotals) {
   const results = scenarios
     .map((scenario) => calculatePositionStress(entry, scenario, horizonDays))
@@ -301,8 +260,10 @@ function buildProductProfile(entry, horizonDays, scenarios, portfolioTotals) {
   const worstReturn = Math.min(...returns)
   const bestReturn = Math.max(...returns)
   const meanReturn = returns.reduce((sum, value) => sum + value, 0) / returns.length
+  const flatReturn = flat ? flat.pnl / currentValue : 0
   const riskSignals = productRiskSignals(entry)
-  const riskPenalty = productRiskPenalty(entry, riskSignals)
+  const modelPenalty = modelQualityPenalty(results)
+  const riskPenalty = productRiskPenalty(entry, riskSignals) + modelPenalty
 
   return {
     id: String(entry.item?.symbol || entry.item?.id || productName(entry.item)),
@@ -326,89 +287,11 @@ function buildProductProfile(entry, horizonDays, scenarios, portfolioTotals) {
     worstReturn,
     bestReturn,
     meanReturn,
-    flatReturn: flat ? flat.pnl / currentValue : 0,
+    flatReturn,
+    modelPenalty,
     riskPenalty,
-    scores: {
-      defensive: worstReturn + (flat ? flat.pnl / currentValue : 0) * 0.15 - riskPenalty,
-      balanced: meanReturn + worstReturn * 0.45 - riskPenalty,
-      elastic: bestReturn - Math.abs(worstReturn) * 0.25 - riskPenalty,
-    },
+    scores: strategyScores({ worstReturn, bestReturn, meanReturn, flatReturn, riskPenalty }),
   }
-}
-
-function candidatePolicy(profile) {
-  const signals = profile.riskSignals
-  if (profile.riskStatus === 'HARD_BLOCKED') {
-    return { eligibleStrategies: [], excludedReason: 'hard_blocked' }
-  }
-  if (signals.isRoll) {
-    return { eligibleStrategies: [], excludedReason: 'roll_current_contract' }
-  }
-  if (signals.hasUntrustedData) {
-    return { eligibleStrategies: [], excludedReason: 'untrusted_data' }
-  }
-  if (profile.primaryAction === 'SELL' && profile.riskStatus !== 'WATCH') {
-    return { eligibleStrategies: [], excludedReason: 'sell' }
-  }
-  if (profile.riskStatus === 'WATCH' && signals.isNearBarrier) {
-    return { eligibleStrategies: ['elastic'], excludedReason: null }
-  }
-  return { eligibleStrategies: CANDIDATE_STRATEGIES, excludedReason: null }
-}
-
-function candidateEligible(profile, strategy) {
-  return candidatePolicy(profile).eligibleStrategies.includes(strategy)
-}
-
-function sizeCandidateProfile(profile) {
-  const exposureWeight = profile.riskSignals.exposureWeightPct
-  const positionScale = profile.riskSignals.isOverexposed
-    ? clamp(MAX_PRODUCT_EXPOSURE_WEIGHT / exposureWeight, 0, 1)
-    : 1
-  const selectionFlags = []
-  if (profile.riskStatus === 'WATCH') selectionFlags.push('WATCH_PENALIZED')
-  if (profile.riskSignals.isNearBarrier) selectionFlags.push('ELASTIC_ONLY')
-  if (positionScale < 1) selectionFlags.push('EXPOSURE_CAPPED_8_PCT')
-
-  if (positionScale >= 1) {
-    return { ...profile, positionScalePct: 100, selectionFlags }
-  }
-  return {
-    ...profile,
-    currentValue: round(profile.currentValue * positionScale),
-    costBasis: round(profile.costBasis * positionScale),
-    navWeightPct: round(profile.navWeightPct * positionScale),
-    capitalWeightPct: round(profile.capitalWeightPct * positionScale),
-    results: profile.results.map((result) => ({
-      ...result,
-      currentValue: round(result.currentValue * positionScale),
-      pnl: round(result.pnl * positionScale),
-    })),
-    positionScalePct: round(positionScale * 100),
-    selectionFlags,
-  }
-}
-
-function selectDiversified(profiles, score, limit) {
-  const ranked = [...profiles].sort((left, right) => right.scores[score] - left.scores[score])
-  const selected = []
-  const usedGroups = new Set()
-
-  for (const profile of ranked) {
-    if (selected.length >= limit) break
-    if (usedGroups.has(profile.groupKey)) continue
-    selected.push(profile)
-    usedGroups.add(profile.groupKey)
-  }
-
-  if (selected.length < Math.min(3, limit)) {
-    for (const profile of ranked) {
-      if (selected.length >= limit) break
-      if (selected.some((item) => item.id === profile.id)) continue
-      selected.push(profile)
-    }
-  }
-  return selected
 }
 
 function aggregatePortfolio(id, title, description, profiles, scenarios, horizonDays, kind) {
@@ -460,6 +343,7 @@ function aggregatePortfolio(id, title, description, profiles, scenarios, horizon
       id: profile.id,
       name: profile.name,
       symbol: profile.symbol,
+      groupKey: profile.groupKey,
       groupName: profile.groupName,
       productType: profile.productType,
       primaryAction: profile.primaryAction,
@@ -469,7 +353,7 @@ function aggregatePortfolio(id, title, description, profiles, scenarios, horizon
       theta: profile.theta,
       ivPct: profile.ivPct,
       daysToExpiry: profile.riskSignals.daysToExpiry,
-      currentValue: profile.currentValue,
+      currentValue: round(profile.currentValue),
       allocationPct: round(currentValue > 0 ? (profile.currentValue / currentValue) * 100 : 0),
       navWeightPct: profile.navWeightPct,
       capitalWeightPct: profile.capitalWeightPct,
@@ -522,10 +406,10 @@ export function buildPortfolioStressReport(
   }
   const candidatePools = Object.fromEntries(CANDIDATE_STRATEGIES.map((strategy) => [
     strategy,
-    profiles.filter((profile) => candidateEligible(profile, strategy)).map(sizeCandidateProfile),
+    profiles.filter((profile) => candidateEligible(profile, strategy)),
   ]))
-  const eligible = profiles.filter((profile) => CANDIDATE_STRATEGIES.some((strategy) => candidateEligible(profile, strategy)))
-  const excluded = profiles.filter((profile) => !CANDIDATE_STRATEGIES.some((strategy) => candidateEligible(profile, strategy)))
+  const eligible = profiles.filter(eligibleForAnyStrategy)
+  const excluded = profiles.filter((profile) => !eligibleForAnyStrategy(profile))
   const rollOpportunities = profiles
     .filter((profile) => candidatePolicy(profile).excludedReason === 'roll_current_contract')
     .map((profile) => ({
@@ -563,30 +447,7 @@ export function buildPortfolioStressReport(
     ),
   ]
 
-  const strategyCandidates = [
-    {
-      strategy: 'defensive',
-      id: 'defensive',
-      title: '稳健组合',
-      description: '优先控制双向压力下的最差损失；WATCH 按原因降权，集中仓位按风险敞口限制。',
-      limit: 5,
-    },
-    {
-      strategy: 'balanced',
-      id: 'balanced',
-      title: '均衡组合',
-      description: '兼顾固定参考情景表现、最差损失和数据可信度，对 WATCH 保持风险扣分。',
-      limit: 8,
-    },
-    {
-      strategy: 'elastic',
-      id: 'elastic',
-      title: '高弹性组合',
-      description: '提高有利情景收益；可纳入临近障碍的 WATCH 仓位，但会大幅降权并保留归零压力。',
-      limit: 6,
-    },
-  ]
-  for (const definition of strategyCandidates) {
+  for (const definition of STRATEGY_DEFINITIONS) {
     const selected = selectDiversified(
       candidatePools[definition.strategy],
       definition.strategy,
@@ -597,7 +458,7 @@ export function buildPortfolioStressReport(
         definition.id,
         definition.title,
         definition.description,
-        selected,
+        allocateEqualWeight(selected, coveredValue, totals),
         scenarios,
         horizon,
         definition.strategy,

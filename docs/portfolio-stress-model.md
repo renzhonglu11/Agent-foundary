@@ -29,11 +29,13 @@ requiring underlying prices or Greeks; it is not the same as an underlying shock
 
 ## Scenarios and comparisons
 
-The page is a holding/reduction comparison, not an add-position recommendation.
-A single table compares retained value, hypothetical released cash, downside/upside
+The page compares the current holdings with candidates that reallocate the same
+tested capital; candidates are modeled structures, not trade instructions. A
+single table compares invested value, remaining hypothetical cash, downside/upside
 endpoint P&L and worst P&L. Deltas compare each portfolio's own worst outcome and
 its same upward endpoint against the current calculable baseline. Selecting a row
-shows modeled reductions/exits with before/after weights on common tested capital,
+shows modeled increases, reductions and exits with before/after weights on common
+tested capital,
 then optional scenario-specific loss and offset contributions. Full membership,
 all scenario results, monitoring and methodology are expandable details. Zero
 instantaneous P&L with no target exposure is labeled explicitly rather than shown
@@ -49,19 +51,29 @@ needed within the supported 90-day horizon are omitted consistently and reported
 in coverage, rather than disappearing when a longer stress horizon is selected.
 
 When stress testing is enabled, users select synchronous or single-underlying shocks and maximum amplitudes of
-10, 20, 30 or 50 percent. For longer horizons two additional synthetic paths reach
+10, 20, 30 or 50 percent. Single-underlying targets are limited to the underlyings held
+by the selected portfolio; selecting a portfolio without the current target
+resets the shock to all underlyings. For longer horizons two additional synthetic paths reach
 that down/up level on one reset period, recover to the starting level on the next,
 then remain flat. Factors compound the two returns; a turbo touching its barrier
 at either point stays at zero under a conservative zero-recovery assumption.
 Options still use the endpoint calculation. The five endpoint scenarios assume
-a single terminal shock, including for factors. Daily financing, intraday resets,
-actual settlement terms, FX changes, liquidity and transaction costs are omitted.
+a single terminal shock, including for factors. For horizons above zero, turbos
+accrue assumed financing on the strike (open-end barriers move with it) and
+factors pay financing, an index fee and volatility drag; see
+[portfolio-candidate-policy.md](portfolio-candidate-policy.md) for formulas and
+assumptions. Actual issuer financing terms, intraday resets, actual settlement
+terms, FX changes, liquidity and transaction costs are omitted.
 
-All candidates retain the baseline tested capital: unselected/reduced positions
-become zero-return hypothetical cash. The table shows return on that common
+All candidates use the baseline tested capital. It is split equally across the
+selected products, subject to the 8% exposure cap; WATCH, SELL or
+unknown-exposure products are not increased. Capital no product can absorb is
+zero-return hypothetical cash. The table shows return on that common
 capital and impact relative to account valuation. Untested positions are retained
 but their scenario P&L is unknown, so account impact is partial, not whole-account
-VaR. Selection scores remain heuristic and do not optimize probabilities.
+VaR. Selection scores remain heuristic and do not optimize probabilities. The
+eligibility, scoring, allocation and selection rules are documented in
+[portfolio-candidate-policy.md](portfolio-candidate-policy.md).
 
 Hermes receives common-capital returns and cash/untested context. Single-underlying
 reviews remain disabled because the bounded review contract does not identify the
