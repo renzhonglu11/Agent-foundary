@@ -1,6 +1,12 @@
 import sqlite3
+from pathlib import Path
 
-from agent_foundry_python.structured_products.storage import initialize_schema
+import pytest
+from yoyo import read_migrations
+
+import agent_foundry_python
+from agent_foundry_python.structured_products import storage
+from agent_foundry_python.structured_products.storage import MIGRATIONS_DIR, initialize_schema
 
 
 def test_initialize_schema_creates_required_tables(tmp_path):
@@ -81,3 +87,17 @@ def test_initialize_schema_migrates_existing_instrument_metadata_table(tmp_path)
 
     assert {"option_type", "reset_barrier"}.issubset(columns)
     assert row == (None, None)
+
+
+def test_migrations_ship_inside_the_package():
+    # A path outside the package is absent from the wheel; yoyo would then apply nothing.
+    package_dir = Path(agent_foundry_python.__file__).resolve().parent
+    assert MIGRATIONS_DIR.is_relative_to(package_dir)
+    assert len(read_migrations(str(MIGRATIONS_DIR))) >= 2
+
+
+def test_initialize_schema_fails_without_migrations(tmp_path, monkeypatch):
+    monkeypatch.setattr(storage, "MIGRATIONS_DIR", tmp_path / "missing")
+
+    with pytest.raises(RuntimeError, match="No structured-products migrations"):
+        initialize_schema(tmp_path / "structured_products.sqlite3")

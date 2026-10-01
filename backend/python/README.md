@@ -79,12 +79,13 @@ uv sync --dev
 ## Database Migrations
 
 Structured-products SQLite schema changes are managed with yoyo migrations in
-`migrations/`. The Rust backend calls the Python CLI through `uv run`, and the
-Python store applies pending migrations automatically before reading or writing
-`structured-products-enrichment.sqlite3`.
+`src/agent_foundry_python/structured_products/migrations/`, inside the package
+so the deployed wheel carries them. The Python store applies pending migrations
+automatically before reading or writing `structured-products-enrichment.sqlite3`,
+and fails if it finds none.
 
-When adding schema changes, create a new numbered migration file in
-`migrations/` and keep migrations compatible with existing local SQLite caches.
+When adding schema changes, create a new numbered migration file in that
+directory and keep migrations compatible with existing local SQLite caches.
 
 ## Design Notes
 

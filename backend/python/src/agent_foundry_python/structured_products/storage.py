@@ -7,7 +7,8 @@ from yoyo import get_backend, read_migrations
 
 from agent_foundry_python.structured_products.models import Greek, InstrumentMetadata, Position, Quote
 
-MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "migrations"
+# Shipped inside the package so installed wheels carry their migrations.
+MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"
 
 
 def initialize_schema(db_path: str | Path) -> None:
@@ -17,6 +18,9 @@ def initialize_schema(db_path: str | Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
     backend = get_backend(_sqlite_url(path))
     migrations = read_migrations(str(MIGRATIONS_DIR))
+    if not migrations:
+        # yoyo silently returns nothing for a missing directory.
+        raise RuntimeError(f"No structured-products migrations found in {MIGRATIONS_DIR}")
     with backend.lock():
         backend.apply_migrations(backend.to_apply(migrations))
 
