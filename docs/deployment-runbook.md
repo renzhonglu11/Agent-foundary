@@ -34,6 +34,7 @@ The default remote root is `/home/rz/Agent-Foundry`:
 └── shared/
     ├── .env                     # VPS-only secrets and settings
     ├── data/                    # SQLite, uploads, Hermes cron snapshot
+    ├── backups/                 # daily/ and pre-deploy/ SQLite backup sets
     ├── python-envs/             # immutable, content-addressed Python envs
     └── cache/                   # uv and Playwright caches
 ```
@@ -86,10 +87,14 @@ The script performs these steps:
 4. On the first migration only, moves legacy `<remote-root>/data` to
    `shared/data` after the new release has been fully prepared. It refuses to
    choose if both locations already contain data.
-5. Installs the backend and Hermes sync systemd units, removes the obsolete
+5. Backs up every SQLite database into `shared/backups/pre-deploy/` before
+   anything is activated, because the restart applies new migrations. A failed
+   backup aborts the deployment with `current` and the installed units
+   untouched.
+6. Installs the backend, Hermes sync, and daily backup systemd units, removes the obsolete
    `# agent-foundry-cron-data` crontab entry, atomically switches `current`,
    then restarts services.
-6. Polls `http://127.0.0.1:8080/health` for up to 30 seconds. A failure
+7. Polls `http://127.0.0.1:8080/health` for up to 30 seconds. A failure
    restores the prior `current` symlink and restarts the prior backend.
 
 Useful overrides are environment variables, for example:
@@ -149,6 +154,48 @@ prunes historical releases. Python environment cleanup is also manual: never
 delete a directory under `shared/python-envs/` while any retained release's
 `python/.venv` symlink points to it.
 
+## Database backups
+
+`deploy/backup-sqlite-databases.sh` copies every `*.db` and `*.sqlite3` file in
+`shared/data/` with the SQLite online backup API, runs `PRAGMA
+integrity_check` on each copy, gzips it, and publishes the verified set as one
+timestamped directory:
+
+- `agent-foundry-backup.timer` runs `daily` at 03:15 UTC and keeps 14 sets
+  in `shared/backups/daily/`.
+- Every deployment runs `pre-deploy <release-id>` and keeps 10 sets in
+  `shared/backups/pre-deploy/`.
+
+`AGENT_FOUNDRY_BACKUP_KEEP` overrides the retained count. Backups live on the
+VPS disk, so they protect against bad migrations and application bugs, not
+against losing the VPS.
+
+Inspect and trigger them with:
+
+```bash
+systemctl list-timers agent-foundry-backup.timer
+sudo systemctl start agent-foundry-backup.service
+journalctl -u agent-foundry-backup -n 20 --no-pager
+ls /home/rz/Agent-Foundry/shared/backups/*/
+```
+
+To restore, stop the backend so nothing writes during the swap, keep the
+current file aside, and decompress the chosen copy in its place:
+
+```bash
+sudo systemctl stop agent-foundry-backend
+cd /home/rz/Agent-Foundry/shared/data
+mv agent_foundry.db agent_foundry.db.before-restore
+gunzip -c ../backups/pre-deploy/<set>/agent_foundry.db.gz > agent_foundry.db
+sqlite3 agent_foundry.db 'PRAGMA integrity_check'
+sudo systemctl start agent-foundry-backend
+```
+
+A pre-deploy copy holds the schema from before that release's migrations.
+Restoring it under the newer release simply reapplies them; restoring it for a
+rollback to the previous release also lets that older binary start, since it
+no longer finds migrations it does not know.
+
 ## Loopback-only Caddy frontend
 
 When no public domain is needed, Caddy serves the active frontend only on the
@@ -183,7 +230,8 @@ following:
 
 1. The activated release and its referenced content-addressed Python
    environment are immutable after activation.
-2. No deployment command overwrites `shared/.env` or `shared/data`.
+2. No deployment command overwrites `shared/.env` or `shared/data`, and the
+   pre-deploy database backup still runs before `current` changes.
 3. Systemd paths resolve through `current/` for release artifacts, through
    `shared/python-envs/` for immutable Python environments, and through the
    remaining `shared/` paths for mutable state.

@@ -12,6 +12,7 @@ REMOTE_GROUP="${REMOTE_GROUP:-rz}"
 SYNC_USER="${SYNC_USER:-rz}"
 BACKEND_SERVICE="${BACKEND_SERVICE:-agent-foundry-backend}"
 SYNC_SERVICE="${SYNC_SERVICE:-agent-foundry-hermes-cron-sync}"
+BACKUP_UNIT="agent-foundry-backup"
 REMOTE_UV_BIN="${REMOTE_UV_BIN:-/home/rz/.local/bin/uv}"
 REMOTE_UV_DIR="$(dirname -- "${REMOTE_UV_BIN}")"
 HERMES_CRON_SOURCE_PATH="${HERMES_CRON_SOURCE_PATH:-/home/${SYNC_USER}/.hermes/cron/jobs.json}"
@@ -94,6 +95,7 @@ fi
 BACKEND_UNIT="${LOCAL_TMP_DIR}/agent-foundry-backend.service"
 SYNC_UNIT="${LOCAL_TMP_DIR}/agent-foundry-hermes-cron-sync.service"
 SYNC_PATH_UNIT="${LOCAL_TMP_DIR}/agent-foundry-hermes-cron-sync.path"
+BACKUP_SERVICE_UNIT="${LOCAL_TMP_DIR}/agent-foundry-backup.service"
 render_systemd_unit "${REPO_ROOT}/deploy/agent-foundry-backend.service" "${BACKEND_UNIT}" "${REMOTE_USER}"
 render_systemd_unit "${REPO_ROOT}/deploy/agent-foundry-runtime.env" "${RUNTIME_ENV_FILE}" "${REMOTE_USER}"
 if [[ -n "${PLAYWRIGHT_HOST_PLATFORM_OVERRIDE}" ]]; then
@@ -101,6 +103,7 @@ if [[ -n "${PLAYWRIGHT_HOST_PLATFORM_OVERRIDE}" ]]; then
 fi
 render_systemd_unit "${REPO_ROOT}/deploy/agent-foundry-hermes-cron-sync.service" "${SYNC_UNIT}" "${SYNC_USER}"
 render_systemd_unit "${REPO_ROOT}/deploy/agent-foundry-hermes-cron-sync.path" "${SYNC_PATH_UNIT}" "${SYNC_USER}"
+render_systemd_unit "${REPO_ROOT}/deploy/agent-foundry-backup.service" "${BACKUP_SERVICE_UNIT}" "${REMOTE_USER}"
 
 RELEASES_DIR="${REMOTE_ROOT}/releases"
 SHARED_DIR="${REMOTE_ROOT}/shared"
@@ -112,6 +115,7 @@ PYTHON_VENV=""
 sudo install -d -o "${REMOTE_USER}" -g "${REMOTE_GROUP}" -m 0755 "${RELEASES_DIR}" "${SHARED_DIR}"
 sudo install -d -o "${REMOTE_USER}" -g "${REMOTE_GROUP}" -m 0750 \
   "${SHARED_DIR}/cache" "${PYTHON_ENVS_DIR}"
+sudo install -d -o "${REMOTE_USER}" -g "${REMOTE_GROUP}" -m 0700 "${SHARED_DIR}/backups"
 
 if [[ ! -f "${SHARED_DIR}/.env" ]]; then
   if [[ -f "${REMOTE_ROOT}/.env" ]]; then
@@ -152,6 +156,9 @@ sudo install -o "${REMOTE_USER}" -g "${REMOTE_GROUP}" -m 0755 \
 sudo install -o "${REMOTE_USER}" -g "${REMOTE_GROUP}" -m 0755 \
   "${REPO_ROOT}/deploy/sync-hermes-cron-jobs.sh" \
   "${RELEASE_DIR}/bin/sync-hermes-cron-jobs.sh"
+sudo install -o "${REMOTE_USER}" -g "${REMOTE_GROUP}" -m 0755 \
+  "${REPO_ROOT}/deploy/backup-sqlite-databases.sh" \
+  "${RELEASE_DIR}/bin/backup-sqlite-databases.sh"
 sudo install -o "${REMOTE_USER}" -g "${REMOTE_GROUP}" -m 0644 \
   "${wheel_files[0]}" "${RELEASE_DIR}/python/"
 sudo install -o "${REMOTE_USER}" -g "${REMOTE_GROUP}" -m 0644 \
@@ -219,9 +226,18 @@ sudo install -d -o "${REMOTE_USER}" -g "${REMOTE_GROUP}" -m 0750 \
   "${SHARED_DIR}/cache/uv" "${SHARED_DIR}/cache/playwright"
 sudo chown -R "${REMOTE_USER}:${REMOTE_GROUP}" "${SHARED_DIR}/data" "${SHARED_DIR}/cache"
 
+# The restart below applies new migrations; a failed snapshot aborts before units or current change.
+echo "Backing up SQLite databases before activating ${RELEASE_ID}..."
+sudo -u "${REMOTE_USER}" env \
+  AGENT_FOUNDRY_DATA_DIR="${SHARED_DIR}/data" \
+  AGENT_FOUNDRY_BACKUP_DIR="${SHARED_DIR}/backups" \
+  "${RELEASE_DIR}/bin/backup-sqlite-databases.sh" pre-deploy "${RELEASE_ID}"
+
 sudo install -o root -g root -m 0644 "${BACKEND_UNIT}" "/etc/systemd/system/${BACKEND_SERVICE}.service"
 sudo install -o root -g root -m 0644 "${SYNC_UNIT}" "/etc/systemd/system/${SYNC_SERVICE}.service"
 sudo install -o root -g root -m 0644 "${SYNC_PATH_UNIT}" "/etc/systemd/system/${SYNC_SERVICE}.path"
+sudo install -o root -g root -m 0644 "${BACKUP_SERVICE_UNIT}" "/etc/systemd/system/${BACKUP_UNIT}.service"
+sudo install -o root -g root -m 0644 "${REPO_ROOT}/deploy/agent-foundry-backup.timer" "/etc/systemd/system/${BACKUP_UNIT}.timer"
 
 cron_file="$(mktemp)"
 if crontab -l > "${cron_file}" 2>/dev/null; then
@@ -242,6 +258,7 @@ sudo rm -f /etc/systemd/system/agent-foundry-cron-data.timer /etc/systemd/system
 sudo systemctl daemon-reload
 sudo systemctl enable --now "${SYNC_SERVICE}.path"
 sudo systemctl start "${SYNC_SERVICE}.service" || true
+sudo systemctl enable --now "${BACKUP_UNIT}.timer"
 sudo systemctl enable "${BACKEND_SERVICE}"
 sudo systemctl restart "${BACKEND_SERVICE}"
 

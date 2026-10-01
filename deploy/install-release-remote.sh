@@ -36,6 +36,7 @@ shared_dir="${remote_root}/shared"
 current_link="${remote_root}/current"
 release_dir="${releases_dir}/${release_id}"
 python_envs_dir="${shared_dir}/python-envs"
+backup_unit_name="agent-foundry-backup"
 python_venv=""
 previous_release=""
 
@@ -60,6 +61,7 @@ fi
 sudo install -d -o "${remote_user}" -g "${remote_group}" -m 0755 "${releases_dir}" "${shared_dir}"
 sudo install -d -o "${remote_user}" -g "${remote_group}" -m 0750 \
   "${shared_dir}/cache" "${python_envs_dir}"
+sudo install -d -o "${remote_user}" -g "${remote_group}" -m 0700 "${shared_dir}/backups"
 
 # The only .env migration: retain the existing server-side file and never accept one from a deploy.
 if [[ ! -f "${shared_dir}/.env" ]]; then
@@ -100,6 +102,7 @@ sudo install -d -o "${remote_user}" -g "${remote_group}" -m 0755 \
   "${release_dir}/bin" "${release_dir}/python" "${release_dir}/web/dist"
 sudo mv "${tmp_dir}/agent-foundry-backend" "${release_dir}/bin/agent-foundry-backend"
 sudo mv "${tmp_dir}/sync-hermes-cron-jobs.sh" "${release_dir}/bin/sync-hermes-cron-jobs.sh"
+sudo mv "${tmp_dir}/backup-sqlite-databases.sh" "${release_dir}/bin/backup-sqlite-databases.sh"
 sudo mv "${tmp_dir}/REVISION" "${release_dir}/REVISION"
 sudo mv "${tmp_dir}/agent-foundry-runtime.env" "${release_dir}/runtime.env"
 if [[ -n "${playwright_host_platform_override}" ]]; then
@@ -110,7 +113,8 @@ sudo mv "${tmp_dir}/python-requirements.txt" "${release_dir}/python/requirements
 sudo mv "${tmp_dir}"/*.whl "${release_dir}/python/"
 sudo tar -xzf "${tmp_dir}/web-dist.tar.gz" -C "${release_dir}/web/dist"
 sudo chown -R "${remote_user}:${remote_group}" "${release_dir}"
-sudo chmod +x "${release_dir}/bin/agent-foundry-backend" "${release_dir}/bin/sync-hermes-cron-jobs.sh"
+sudo chmod +x "${release_dir}/bin/agent-foundry-backend" "${release_dir}/bin/sync-hermes-cron-jobs.sh" \
+  "${release_dir}/bin/backup-sqlite-databases.sh"
 
 mapfile -t python_wheels < <(find "${release_dir}/python" -maxdepth 1 -name '*.whl' -type f | sort)
 if [[ "${#python_wheels[@]}" -ne 1 ]]; then
@@ -176,9 +180,18 @@ sudo install -d -o "${remote_user}" -g "${remote_group}" -m 0750 \
   "${shared_dir}/cache/uv" "${shared_dir}/cache/playwright"
 sudo chown -R "${remote_user}:${remote_group}" "${shared_dir}/data" "${shared_dir}/cache"
 
+# The restart below applies new migrations; a failed snapshot aborts before units or current change.
+echo "Backing up SQLite databases before activating ${release_id}..."
+sudo -u "${remote_user}" env \
+  AGENT_FOUNDRY_DATA_DIR="${shared_dir}/data" \
+  AGENT_FOUNDRY_BACKUP_DIR="${shared_dir}/backups" \
+  "${release_dir}/bin/backup-sqlite-databases.sh" pre-deploy "${release_id}"
+
 sudo mv "${tmp_dir}/agent-foundry-backend.service" "/etc/systemd/system/${service_name}.service"
 sudo mv "${tmp_dir}/agent-foundry-hermes-cron-sync.service" "/etc/systemd/system/${sync_service_name}.service"
 sudo mv "${tmp_dir}/agent-foundry-hermes-cron-sync.path" "/etc/systemd/system/${sync_service_name}.path"
+sudo mv "${tmp_dir}/agent-foundry-backup.service" "/etc/systemd/system/${backup_unit_name}.service"
+sudo mv "${tmp_dir}/agent-foundry-backup.timer" "/etc/systemd/system/${backup_unit_name}.timer"
 
 # Remove the obsolete per-minute npm job without touching unrelated cron entries.
 cron_file="$(mktemp)"
@@ -201,6 +214,7 @@ sudo rm -f /etc/systemd/system/agent-foundry-cron-data.timer /etc/systemd/system
 sudo systemctl daemon-reload
 sudo systemctl enable --now "${sync_service_name}.path"
 sudo systemctl start "${sync_service_name}.service" || true
+sudo systemctl enable --now "${backup_unit_name}.timer"
 sudo systemctl enable "${service_name}"
 if ! sudo systemctl restart "${service_name}"; then
   rollback 1

@@ -1,0 +1,20 @@
+[Unit]
+Description=Back up Agent Foundry SQLite databases
+Documentation=file:/home/rz/Agent-Foundry/current/bin/backup-sqlite-databases.sh
+After=local-fs.target
+
+[Service]
+Type=oneshot
+User=rz
+Group=rz
+Environment="AGENT_FOUNDRY_DATA_DIR=/home/rz/Agent-Foundry/shared/data"
+Environment="AGENT_FOUNDRY_BACKUP_DIR=/home/rz/Agent-Foundry/shared/backups"
+ExecStart=/home/rz/Agent-Foundry/current/bin/backup-sqlite-databases.sh daily
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=false
+# SQLite readers may need to recover a hot journal or touch WAL shared memory in data/.
+ReadWritePaths=/home/rz/Agent-Foundry/shared/data /home/rz/Agent-Foundry/shared/backups
