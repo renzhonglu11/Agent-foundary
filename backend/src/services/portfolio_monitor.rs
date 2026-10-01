@@ -31,6 +31,7 @@ pub struct PortfolioMonitor {
     status: Arc<Mutex<Value>>,
     enabled: bool,
     interval: u64,
+    retention_days: i64,
 }
 
 impl PortfolioMonitor {
@@ -48,6 +49,12 @@ impl PortfolioMonitor {
             .and_then(|v| v.parse::<u64>().ok())
             .unwrap_or(300)
             .clamp(60, 3600);
+        // At least seven days keeps the 168-hour history endpoint complete.
+        let retention_days = std::env::var("PORTFOLIO_MONITOR_RETENTION_DAYS")
+            .ok()
+            .and_then(|v| v.parse::<i64>().ok())
+            .unwrap_or(30)
+            .clamp(7, 3650);
         Self {
             pool,
             portfolio,
@@ -57,6 +64,7 @@ impl PortfolioMonitor {
             status: Arc::new(Mutex::new(json!({"running":false}))),
             enabled,
             interval,
+            retention_days,
         }
     }
 
@@ -82,7 +90,7 @@ impl PortfolioMonitor {
                 value
             });
         Ok(
-            json!({"enabled":self.enabled,"intervalSeconds":self.interval,"runtime":self.status.lock().await.clone(),
+            json!({"enabled":self.enabled,"intervalSeconds":self.interval,"retentionDays":self.retention_days,"runtime":self.status.lock().await.clone(),
             "snapshot":snapshot,
             "structuredProducts":self.products.status_payload()}),
         )
@@ -177,7 +185,7 @@ impl PortfolioMonitor {
                     payload["provider"] = last_provider.clone();
                     payload["nextQuoteAttemptAt"] = json!(next_quotes);
                     payload["structuredProducts"] = service.products.status_payload();
-                    persist_snapshot(&service.pool, &payload).await?;
+                    persist_snapshot(&service.pool, &payload, service.retention_days).await?;
                     Ok::<_, anyhow::Error>(())
                 }.await;
                 *service.status.lock().await = match result {
@@ -196,7 +204,11 @@ impl PortfolioMonitor {
     }
 }
 
-async fn persist_snapshot(pool: &SqlitePool, payload: &Value) -> anyhow::Result<()> {
+async fn persist_snapshot(
+    pool: &SqlitePool,
+    payload: &Value,
+    retention_days: i64,
+) -> anyhow::Result<()> {
     let time = payload["evaluatedAt"].as_str().unwrap_or("");
     let hour = format!("hour:{}", &time[..time.len().min(13)]);
     let content = serde_json::to_string(payload)?;
@@ -204,6 +216,14 @@ async fn persist_snapshot(pool: &SqlitePool, payload: &Value) -> anyhow::Result<
     for key in ["latest", hour.as_str()] {
         sqlx::query("INSERT INTO portfolio_monitor_snapshots(snapshot_key,captured_at,payload_json) VALUES(?,?,?) ON CONFLICT(snapshot_key) DO UPDATE SET captured_at=excluded.captured_at,payload_json=excluded.payload_json")
                 .bind(key).bind(time).bind(&content).execute(&mut *tx).await?;
+    }
+    // Hourly keys sort chronologically, so retention is a key-range delete that never touches 'latest'.
+    if let Ok(evaluated_at) = DateTime::parse_from_rfc3339(time) {
+        let cutoff = evaluated_at.with_timezone(&Utc) - TimeDelta::days(retention_days);
+        sqlx::query("DELETE FROM portfolio_monitor_snapshots WHERE snapshot_key >= 'hour:' AND snapshot_key < ?")
+            .bind(format!("hour:{}", cutoff.format("%Y-%m-%dT%H")))
+            .execute(&mut *tx)
+            .await?;
     }
     tx.commit().await?;
     Ok(())
@@ -400,7 +420,12 @@ mod tests {
             ("2026-09-07T20:59:00Z", 2),
             ("2026-09-07T21:01:00Z", 3),
         ] {
-            persist_snapshot(&pool, &json!({"evaluatedAt":time,"inputs":{"value":value}})).await?;
+            persist_snapshot(
+                &pool,
+                &json!({"evaluatedAt":time,"inputs":{"value":value}}),
+                30,
+            )
+            .await?;
         }
         pool.close().await;
         let pool = SqlitePool::connect(&url).await?;
@@ -414,6 +439,42 @@ mod tests {
             2
         );
         pool.close().await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn snapshots_older_than_retention_are_pruned() -> anyhow::Result<()> {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await?;
+        sqlx::raw_sql(include_str!(
+            "../../migrations/20260907010000_create_portfolio_monitor_snapshots.sql"
+        ))
+        .execute(&pool)
+        .await?;
+        for time in [
+            "2026-09-01T09:30:00Z",
+            "2026-09-01T10:30:00Z",
+            "2026-09-01T11:30:00Z",
+            "2026-09-08T10:30:00Z",
+        ] {
+            persist_snapshot(&pool, &json!({"evaluatedAt":time}), 7).await?;
+        }
+        let keys: Vec<String> = sqlx::query_scalar(
+            "SELECT snapshot_key FROM portfolio_monitor_snapshots ORDER BY snapshot_key",
+        )
+        .fetch_all(&pool)
+        .await?;
+        assert_eq!(
+            keys,
+            [
+                "hour:2026-09-01T10",
+                "hour:2026-09-01T11",
+                "hour:2026-09-08T10",
+                "latest"
+            ]
+        );
         Ok(())
     }
 }
