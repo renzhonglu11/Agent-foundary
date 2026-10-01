@@ -162,7 +162,7 @@ See [`.env.example`](.env.example) for the full configuration template. Relative
 | `RUST_LOG` | See the template | Log levels and module filters |
 | `ALPACA_MARKET_DATA_ENABLED` | `true` | Enable Alpaca integration; live requests require credentials |
 | `STRUCTURED_PRODUCTS_ENRICHMENT_ENABLED` | `true` | Enable structured-product enrichment and risk calculation |
-| `STRUCTURED_PRODUCTS_ENRICHMENT_NO_LIVE` | `false` | Set to `true` to skip live derivative-provider queries |
+| `STRUCTURED_PRODUCTS_ENRICHMENT_NO_LIVE` | `false` | Set to `true` to skip live derivative-provider queries; cached metadata and Greeks are still applied |
 | `STRUCTURED_PRODUCTS_AUTO_REFRESH_INTERVAL_MINS` | `60` | Refresh interval when automatic refresh is enabled |
 | `FX_RATES_ENABLED` | `true` | Enable external exchange-rate queries |
 

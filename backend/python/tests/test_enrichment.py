@@ -1,6 +1,6 @@
 import pytest
 
-from agent_foundry_python.structured_products.enrichment import ProductData, enrich_structured_product_rows
+from agent_foundry_python.structured_products.enrichment import ProductData, apply_cached_enrichment, enrich_structured_product_rows
 from agent_foundry_python.structured_products.models import Greek, InstrumentMetadata, Quote
 
 
@@ -455,3 +455,47 @@ async def test_enrich_rows_treats_fresh_incomplete_cached_greeks_as_stale_fallba
     assert enriched[0]["omega"] == 15.0
     assert enriched[0]["iv"] == 0.4
     assert len(cache.inserted_greeks) == 0
+
+
+def test_apply_cached_enrichment_restores_metadata_and_greeks_without_network():
+    from datetime import datetime, timedelta, timezone
+    base = {
+        "asset_class": "DERIVATIVE",
+        "product_type": "optionsschein",
+        "quantity": 1,
+        "quote_price": 3.21,
+        "quote_source": "rust_portfolio_summary",
+        "leverage": None,
+        "strike_price": None,
+        "ratio": None,
+        "expiry": None,
+        "delta": None,
+    }
+    rows = [
+        {**base, "isin": "DE000FRESH", "instrument": "Call NVIDIA 220"},
+        {**base, "isin": "DE000OLD", "instrument": "Call NVIDIA 240"},
+        {**base, "isin": "DE000BADPUT", "instrument": "Put NVIDIA 180"},
+        {**base, "isin": "DE000NONE", "instrument": "Call NVIDIA 260"},
+    ]
+    now = datetime.now(timezone.utc)
+    cache = FakeCacheStore(
+        metadata={
+            "DE000FRESH": InstrumentMetadata(isin="DE000FRESH", strike_price=220.0, ratio=0.1, expiry="2026-12-18"),
+            "DE000OLD": InstrumentMetadata(isin="DE000OLD", strike_price=240.0, ratio=0.1),
+        },
+        greeks={
+            "DE000FRESH": Greek(isin="DE000FRESH", delta=0.6, omega=8.0, theta=-0.01, iv=0.5, timestamp=now),
+            "DE000OLD": Greek(isin="DE000OLD", delta=0.4, iv=0.55, timestamp=now - timedelta(days=3)),
+            "DE000BADPUT": Greek(isin="DE000BADPUT", delta=0.3, timestamp=now),
+        },
+    )
+
+    fresh, old, bad_put, missing = apply_cached_enrichment(rows, cache)
+
+    assert (fresh["strike_price"], fresh["ratio"], fresh["expiry"], fresh["delta"]) == (220.0, 0.1, "2026-12-18", 0.6)
+    assert (fresh["metadata_source"], fresh["greeks_source"]) == ("cache", "cache")
+    assert (old["strike_price"], old["delta"], old["greeks_source"]) == (240.0, 0.4, "cache_stale")
+    assert bad_put["delta"] is None and "greeks_source" not in bad_put
+    assert missing["delta"] is None and "metadata_source" not in missing
+    assert all(row["quote_source"] == "rust_portfolio_summary" for row in (fresh, old, bad_put, missing))
+    assert not cache.upserted_metadata and not cache.inserted_greeks

@@ -242,6 +242,41 @@ async def enrich_structured_product_rows(
     return list(await asyncio.gather(*tasks))
 
 
+def apply_cached_enrichment(rows: list[dict], cache_store: StructuredProductStore) -> list[dict]:
+    """Merge previously fetched metadata and greeks without network access.
+
+    Refreshes that skip live providers would otherwise publish rows without
+    strike, ratio, expiry or greeks and overwrite the last enriched payload.
+    Greeks older than one hour are labelled ``cache_stale``.
+    """
+    from datetime import datetime, timezone
+
+    enriched_rows = []
+    for row in rows:
+        enriched = dict(row)
+        for field in ("delta", "omega", "theta", "iv"):
+            enriched.setdefault(field, None)
+        isin = str(enriched.get("isin") or "")
+        if not isin:
+            enriched_rows.append(enriched)
+            continue
+
+        name = enriched.get("instrument") or enriched.get("display_name") or ""
+        metadata = cache_store.get_metadata(isin)
+        if metadata is not None and not _is_metadata_invalid(metadata, name) and _merge_metadata(enriched, metadata):
+            enriched["metadata_source"] = "cache"
+
+        greek = cache_store.get_latest_greek(isin)
+        if greek is not None and not _is_greek_invalid(greek, name) and _merge_greek(enriched, greek):
+            timestamp = greek.timestamp if greek.timestamp.tzinfo else greek.timestamp.replace(tzinfo=timezone.utc)
+            fresh = (datetime.now(timezone.utc) - timestamp).total_seconds() <= 3600
+            enriched["greeks_source"] = "cache" if fresh else "cache_stale"
+
+        _clean_invalid_greeks(enriched)
+        enriched_rows.append(enriched)
+    return enriched_rows
+
+
 def _should_live_enrich(row: dict, live_enrichment_tier: str | None) -> bool:
     return live_enrichment_tier is None or row.get("enrichment_tier") == live_enrichment_tier
 

@@ -122,7 +122,7 @@ demo-001,2026-01-15,BUY,TRADE,STOCK,Example Stock,DEMO,Demo purchase,-100,0,0,1,
 | `RUST_LOG` | 见示例文件 | 日志级别与模块过滤 |
 | `ALPACA_MARKET_DATA_ENABLED` | `true` | 启用 Alpaca 行情集成，实时请求需要凭据 |
 | `STRUCTURED_PRODUCTS_ENRICHMENT_ENABLED` | `true` | 启用结构化产品数据补充与风险计算 |
-| `STRUCTURED_PRODUCTS_ENRICHMENT_NO_LIVE` | `false` | 设为 `true` 时跳过实时衍生品提供商查询 |
+| `STRUCTURED_PRODUCTS_ENRICHMENT_NO_LIVE` | `false` | 设为 `true` 时跳过实时衍生品提供商查询；仍会合并本地缓存的元数据和 Greeks |
 | `STRUCTURED_PRODUCTS_AUTO_REFRESH_INTERVAL_MINS` | `60` | 启用自动刷新后的刷新间隔 |
 | `FX_RATES_ENABLED` | `true` | 启用外部汇率查询 |
 

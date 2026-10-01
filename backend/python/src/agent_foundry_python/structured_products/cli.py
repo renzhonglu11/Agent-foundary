@@ -12,7 +12,7 @@ from agent_foundry_python.structured_products.agent_foundry import (
     assign_enrichment_tiers,
     write_structured_product_rows_outputs,
 )
-from agent_foundry_python.structured_products.enrichment import enrich_structured_product_rows
+from agent_foundry_python.structured_products.enrichment import apply_cached_enrichment, enrich_structured_product_rows
 from agent_foundry_python.structured_products.providers.boerse_frankfurt import BoerseFrankfurtQuoteProvider
 from agent_foundry_python.structured_products.providers.gs_de import GsDeProductProvider
 from agent_foundry_python.structured_products.providers.onvista import OnvistaProductProvider
@@ -35,10 +35,12 @@ async def generate_outputs(args: argparse.Namespace) -> list[dict]:
     if args.limit is not None:
         rows = rows[: args.limit]
 
-    if not args.no_live_enrichment:
-        from agent_foundry_python.structured_products.storage import StructuredProductStore
-        store = StructuredProductStore(args.db)
-        
+    from agent_foundry_python.structured_products.storage import StructuredProductStore
+    store = StructuredProductStore(args.db)
+
+    if args.no_live_enrichment:
+        rows = apply_cached_enrichment(rows, store)
+    else:
         quote_provider = BoerseFrankfurtQuoteProvider(timeout=args.provider_timeout)
         onvista_provider = OnvistaProductProvider(timeout=args.provider_timeout)
         gs_de_provider = GsDeProductProvider(timeout=args.provider_timeout)
