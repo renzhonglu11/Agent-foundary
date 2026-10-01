@@ -252,13 +252,14 @@ mod tests {
     use super::SqliteFredMacroDataCache;
     use crate::{
         application::ports::fred_macro_data_cache::{FredMacroDataCache, FredMacroDataCacheEntry},
+        infrastructure::db::migrations::run_migrations,
         services::fred::{FredMacroDataResponse, FredObservation, FredSeriesData},
     };
 
     #[tokio::test]
     async fn store_writes_snapshot_and_timeseries_tables() -> Result<()> {
         let pool = test_pool().await?;
-        create_test_schema(&pool).await?;
+        run_migrations(&pool).await?;
         let cache = SqliteFredMacroDataCache::new(pool.clone());
         let entry = test_entry()?;
 
@@ -298,7 +299,7 @@ mod tests {
     #[tokio::test]
     async fn get_latest_prefers_timeseries_tables_over_legacy_snapshot() -> Result<()> {
         let pool = test_pool().await?;
-        create_test_schema(&pool).await?;
+        run_migrations(&pool).await?;
         let cache = SqliteFredMacroDataCache::new(pool.clone());
         let entry = test_entry()?;
 
@@ -335,68 +336,6 @@ mod tests {
             .max_connections(1)
             .connect("sqlite::memory:")
             .await?)
-    }
-
-    async fn create_test_schema(pool: &SqlitePool) -> Result<()> {
-        sqlx::query(
-            r#"
-            CREATE TABLE fred_macro_data_cache (
-                cache_key TEXT PRIMARY KEY,
-                status TEXT NOT NULL,
-                payload_json TEXT NOT NULL,
-                fetched_at TEXT NOT NULL
-            )
-            "#,
-        )
-        .execute(pool)
-        .await?;
-        sqlx::query(
-            r#"
-            CREATE TABLE fred_macro_cache_runs (
-                cache_key TEXT PRIMARY KEY,
-                provider TEXT NOT NULL,
-                status TEXT NOT NULL,
-                generated_at TEXT NOT NULL,
-                fetched_at TEXT NOT NULL,
-                cache_ttl_seconds INTEGER NOT NULL,
-                warnings_json TEXT NOT NULL DEFAULT '[]'
-            )
-            "#,
-        )
-        .execute(pool)
-        .await?;
-        sqlx::query(
-            r#"
-            CREATE TABLE fred_series (
-                cache_key TEXT NOT NULL,
-                series_id TEXT NOT NULL,
-                title TEXT NOT NULL,
-                units TEXT NOT NULL,
-                frequency TEXT NOT NULL,
-                sort_order INTEGER NOT NULL,
-                updated_at TEXT NOT NULL,
-                PRIMARY KEY (cache_key, series_id)
-            )
-            "#,
-        )
-        .execute(pool)
-        .await?;
-        sqlx::query(
-            r#"
-            CREATE TABLE fred_observations (
-                cache_key TEXT NOT NULL,
-                series_id TEXT NOT NULL,
-                observation_date TEXT NOT NULL,
-                value REAL NOT NULL,
-                fetched_at TEXT NOT NULL,
-                PRIMARY KEY (cache_key, series_id, observation_date)
-            )
-            "#,
-        )
-        .execute(pool)
-        .await?;
-
-        Ok(())
     }
 
     fn test_entry() -> Result<FredMacroDataCacheEntry> {

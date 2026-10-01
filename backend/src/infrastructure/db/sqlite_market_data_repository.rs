@@ -886,12 +886,13 @@ mod tests {
         SqliteMarketDataRepository,
     };
     use crate::application::ports::market_data_repository::MarketDataRepository;
+    use crate::infrastructure::db::migrations::run_migrations;
 
     #[tokio::test]
     async fn stores_and_loads_structured_products_enrichment_from_normalized_tables() -> Result<()>
     {
         let pool = test_pool().await?;
-        create_test_schema(&pool).await?;
+        run_migrations(&pool).await?;
         let repository = SqliteMarketDataRepository::new(pool.clone());
         let payload = r#"{
             "source": "test",
@@ -968,7 +969,7 @@ mod tests {
     #[tokio::test]
     async fn stores_and_loads_structured_products_risk_from_normalized_tables() -> Result<()> {
         let pool = test_pool().await?;
-        create_test_schema(&pool).await?;
+        run_migrations(&pool).await?;
         let repository = SqliteMarketDataRepository::new(pool.clone());
         let payload = r#"[{
             "symbol": "micron technology",
@@ -1053,39 +1054,6 @@ mod tests {
             .max_connections(1)
             .connect("sqlite::memory:")
             .await?)
-    }
-
-    async fn create_test_schema(pool: &SqlitePool) -> Result<()> {
-        sqlx::query(
-            r#"
-            CREATE TABLE realtime_payloads (
-                key TEXT PRIMARY KEY,
-                payload_json TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-            "#,
-        )
-        .execute(pool)
-        .await?;
-
-        for migration in [
-            include_str!(
-                "../../../migrations/20260616224500_create_structured_product_realtime_tables.sql"
-            ),
-            include_str!(
-                "../../../migrations/20260620215000_add_structured_product_risk_action_fields.sql"
-            ),
-        ] {
-            for statement in migration
-                .split(';')
-                .map(str::trim)
-                .filter(|statement| !statement.is_empty())
-            {
-                sqlx::query(statement).execute(pool).await?;
-            }
-        }
-
-        Ok(())
     }
 
     async fn overwrite_snapshot_with_empty_payload(pool: &SqlitePool, key: &str) -> Result<()> {
