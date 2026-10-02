@@ -11,6 +11,10 @@ const MAX_SCENARIOS: usize = 12;
 const MAX_PRODUCTS_PER_PORTFOLIO: usize = 20;
 const MAX_SELECTION_FLAGS: usize = 4;
 const MAX_METHOD_LENGTH: usize = 64;
+// Candidates can grow a position up to the 8% exposure cap, which also adds cost
+// basis, so scale and capital weight have no natural ceiling. This bound only
+// rejects absurd values.
+const MAX_MODELED_PCT: f64 = 1_000_000.0;
 const HERMES_TIMEOUT_SECONDS: u64 = 120;
 const HERMES_REASONING_EFFORT: &str = "high";
 
@@ -301,7 +305,7 @@ fn validate_request(request: &PortfolioStressReviewRequest) -> Result<(), String
             .iter()
             .any(|value| !value.is_finite() || value.abs() > 1_000_000_000_000.0)
             || !(0.0..=101.0).contains(&portfolio.nav_weight_pct)
-            || !(0.0..=101.0).contains(&portfolio.capital_weight_pct)
+            || !(0.0..=MAX_MODELED_PCT).contains(&portfolio.capital_weight_pct)
         {
             return Err("组合指标包含无效数值".to_owned());
         }
@@ -341,9 +345,9 @@ fn validate_request(request: &PortfolioStressReviewRequest) -> Result<(), String
                 || !product.nav_weight_pct.is_finite()
                 || !(0.0..=101.0).contains(&product.nav_weight_pct)
                 || !product.capital_weight_pct.is_finite()
-                || !(0.0..=101.0).contains(&product.capital_weight_pct)
+                || !(0.0..=MAX_MODELED_PCT).contains(&product.capital_weight_pct)
                 || !product.position_scale_pct.is_finite()
-                || !(0.0..=100.0).contains(&product.position_scale_pct)
+                || !(0.0..=MAX_MODELED_PCT).contains(&product.position_scale_pct)
                 || product.selection_flags.len() > MAX_SELECTION_FLAGS
                 || product.selection_flags.iter().any(|flag| flag.len() > 64)
                 || product.scenario_methods.len() != portfolio.scenarios.len()
@@ -524,6 +528,18 @@ mod tests {
     #[test]
     fn validates_bounded_stress_request() {
         assert!(validate_request(&request()).is_ok());
+    }
+
+    #[test]
+    fn accepts_modeled_position_increases() {
+        let mut input = request();
+        input.portfolios[0].capital_weight_pct = 130.0;
+        input.portfolios[0].products[0].capital_weight_pct = 120.0;
+        input.portfolios[0].products[0].position_scale_pct = 567.7;
+        assert!(validate_request(&input).is_ok());
+
+        input.portfolios[0].products[0].position_scale_pct = -1.0;
+        assert!(validate_request(&input).is_err());
     }
 
     #[test]
