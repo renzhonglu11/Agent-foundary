@@ -169,7 +169,6 @@ backend/
 web/                     React 界面、数据 hooks 与工具函数
 deploy/                  发布脚本、systemd 单元与 Caddy 配置
 docs/                    运维说明与设计文档
-openwiki/                自动维护的架构、领域与开发文档
 data/                    本地数据库、上传文件与缓存（Git 忽略）
 ```
 
@@ -194,15 +193,9 @@ data/                    本地数据库、上传文件与缓存（Git 忽略）
 
 ## 文档
 
-- [项目导览](openwiki/quickstart.md)：代码与工作流入口。
-- [架构概览](openwiki/architecture/overview.md)与[源码导航](openwiki/architecture/source-map.md)：运行边界及源码位置。
-- [投资组合与风险模型](openwiki/domain/portfolio-and-risk.md)：会计规则、产品分层、敞口与情景估算。
-- [外部集成](openwiki/integrations/external-systems.md)：数据来源、缓存与回退行为。
 - [部署运行手册](docs/deployment-runbook.md)：发布、验证、回滚和 SSH 隧道访问。
 - [前端 Worktree 开发](docs/frontend-worktree-development.md)：多工作区共用后端。
 - [Python 工具说明](backend/python/README.md)：提供商、命令行与数据库迁移。
-
-OpenWiki 页面由工作流生成；涉及文档更新时，请优先修改源代码或维护的文档，让 OpenWiki 重新生成对应内容。
 
 ## 开发与测试
 
