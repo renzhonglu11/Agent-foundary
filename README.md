@@ -192,6 +192,7 @@ Selected endpoints are listed below. See [`backend/src/api/router.rs`](backend/s
 | `GET` | `/data/portfolio-summary.json` | Compatibility path for the portfolio summary |
 | `POST` | `/api/upload-data` | CSV/PDF upload using the multipart field `files` |
 | `GET` | `/api/stock-analysis/alpaca-quotes` | Equity quotes using the `symbols` query parameter |
+| `GET` | `/api/stock-analysis/alpaca-daily-stats` | Daily-bar statistics (realized volatility, moving averages, trailing returns) using the `symbols` query parameter |
 | `GET` | `/api/structured-products-enrichment` | Persisted product data |
 | `GET` | `/api/structured-products-risk` | Persisted risk assessments |
 | `POST` | `/api/structured-products-enrichment/refresh` | Start asynchronous enrichment and risk calculation |

@@ -112,7 +112,7 @@ function productName(item) {
   return String(item?.instrument || item?.stockName || item?.displayName || item?.symbol || '未知产品').trim()
 }
 
-function groupKey(entry) {
+export function groupKey(entry) {
   return String(entry?.group?.key || entry?.group?.groupName || entry?.item?.underlying || entry?.item?.symbol || 'unknown')
 }
 
@@ -144,7 +144,7 @@ function underlyingLevelInEur(item, value) {
   return level
 }
 
-function calculationItem(entry) {
+export function calculationItem(entry) {
   const item = entry.item || {}
   return {
     ...item,
@@ -208,7 +208,7 @@ function barrierBreached(item, scenarioSpot) {
   return direction === 'put' ? scenarioSpot >= knockout : scenarioSpot <= knockout
 }
 
-function productLeverage(entry) {
+export function productLeverage(entry) {
   const item = entry.item || {}
   return positive(item.leverage)
     ?? positive(item.effectiveLeverage)

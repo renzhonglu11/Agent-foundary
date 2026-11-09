@@ -1,5 +1,6 @@
 pub mod alpaca_market_data;
 pub mod apewisdom;
+pub mod daily_bars;
 pub mod fred;
 pub mod hermes_cron_status;
 pub mod market_calendar;

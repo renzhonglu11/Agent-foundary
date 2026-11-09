@@ -21,6 +21,8 @@ import TrendingDownRoundedIcon from '@mui/icons-material/TrendingDownRounded'
 
 import { compactCurrency, number } from '../utils/formatters.js'
 import { buildWatchlistGroups, canonicalGroupKey } from '../utils/watchlistGrouping.js'
+import { useAlpacaDailyStats } from '../hooks/useAlpacaDailyStats.js'
+import ExitSignalsPanel from './ExitSignalsPanel.jsx'
 import PortfolioStressTestPanel from './PortfolioStressTestPanel.jsx'
 import ProductMonitoringDashboard from './ProductMonitoringDashboard.jsx'
 
@@ -115,6 +117,8 @@ export default function PositionsActionBoard({ data, riskData, riskLoading, risk
       .filter(({ riskGroup }) => Boolean(riskGroup))
   ), [riskByKey, tier1Groups])
   const productEntries = useMemo(() => buildProductActionEntries(groupsWithRisk, totalMarketValue), [groupsWithRisk, totalMarketValue])
+  const underlyingSymbols = useMemo(() => productEntries.map(entry => entry.group.alpacaSymbol).filter(Boolean), [productEntries])
+  const dailyStats = useAlpacaDailyStats(underlyingSymbols)
   const sections = useMemo(() => (
     actionDefinitions.map((definition) => ({
       ...definition,
@@ -217,6 +221,18 @@ export default function PositionsActionBoard({ data, riskData, riskLoading, risk
             </Box>
           ) : null}
         </Box>
+
+        <ExitSignalsPanel
+          entries={productEntries}
+          dailyStats={dailyStats.data}
+          dailyStatsLoading={dailyStats.loading}
+          dailyStatsError={dailyStats.error}
+          dailyStatsWarnings={dailyStats.warnings}
+          onSelectProduct={(id) => {
+            const entry = productEntries.find(candidate => candidate.item.symbol === id)
+            if (entry) setSelectedProduct(entry)
+          }}
+        />
 
         <PortfolioStressTestPanel
           positions={data.positions}

@@ -21,7 +21,7 @@ pub use portfolio_monitor::{
     portfolio_monitor_history, portfolio_monitor_snapshot, portfolio_monitor_status,
 };
 pub use portfolio_stress::{portfolio_stress_hermes_review, portfolio_stress_hermes_status};
-pub use stock_analysis::stock_analysis_alpaca_quotes;
+pub use stock_analysis::{stock_analysis_alpaca_daily_stats, stock_analysis_alpaca_quotes};
 pub use structured_products::{
     persisted_structured_products_enrichment, persisted_structured_products_risk,
     refresh_structured_products_enrichment, structured_products_enrichment_status,

@@ -69,6 +69,10 @@ pub fn build(state: Arc<AppState>, frontend_origin: &str) -> anyhow::Result<Rout
             get(handlers::stock_analysis_alpaca_quotes),
         )
         .route(
+            "/api/stock-analysis/alpaca-daily-stats",
+            get(handlers::stock_analysis_alpaca_daily_stats),
+        )
+        .route(
             "/api/pnl-snapshots",
             get(handlers::list_pnl_snapshots).post(handlers::create_pnl_snapshot),
         )
