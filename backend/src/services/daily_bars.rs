@@ -39,6 +39,8 @@ pub struct DailyBarStats {
     pub last_close: Option<f64>,
     pub realized_vol_20d: Option<f64>,
     pub realized_vol_60d: Option<f64>,
+    /// Share of the earlier rolling 20-day volatilities below the current one, 0 to 100.
+    pub realized_vol_20d_percentile: Option<f64>,
     pub sma_20: Option<f64>,
     pub sma_50: Option<f64>,
     pub sma_200: Option<f64>,
@@ -82,6 +84,7 @@ pub fn summarize(symbol: &str, bars: &[DailyBar], fetched_at: &str, stale: bool)
         last_close: closes.last().copied(),
         realized_vol_20d: realized_volatility(&log_returns, 20),
         realized_vol_60d: realized_volatility(&log_returns, 60),
+        realized_vol_20d_percentile: rolling_volatility_percentile(&log_returns, 20),
         sma_20: moving_average(&closes, 20),
         sma_50: moving_average(&closes, 50),
         sma_200: moving_average(&closes, 200),
@@ -110,6 +113,29 @@ fn realized_volatility(log_returns: &[f64], window: usize) -> Option<f64> {
         .sum::<f64>()
         / (window - 1) as f64;
     Some((variance * TRADING_DAYS_PER_YEAR).sqrt())
+}
+
+/// Rank of the last value among the ones before it: the percentage of earlier
+/// values that are lower. `None` without any earlier value.
+pub(crate) fn percentile_rank(values: &[f64]) -> Option<f64> {
+    let (latest, earlier) = values.split_last()?;
+    if earlier.is_empty() {
+        return None;
+    }
+    let below = earlier.iter().filter(|value| *value < latest).count();
+    Some(below as f64 / earlier.len() as f64 * 100.0)
+}
+
+/// Needs at least 60 rolling windows, so about four months of history.
+fn rolling_volatility_percentile(log_returns: &[f64], window: usize) -> Option<f64> {
+    const MIN_WINDOWS: usize = 60;
+    if window < 2 || log_returns.len() < window + MIN_WINDOWS - 1 {
+        return None;
+    }
+    let series: Vec<f64> = (window..=log_returns.len())
+        .filter_map(|end| realized_volatility(&log_returns[..end], window))
+        .collect();
+    percentile_rank(&series)
 }
 
 fn moving_average(closes: &[f64], window: usize) -> Option<f64> {
@@ -165,6 +191,7 @@ mod tests {
         let expected = (step.powi(2) * 20.0 / 19.0 * 252.0).sqrt();
         assert!(close_to(stats.realized_vol_20d, expected));
         assert_eq!(stats.realized_vol_60d, None);
+        assert_eq!(stats.realized_vol_20d_percentile, None);
         assert!(close_to(stats.worst_day_pct, ((-step).exp() - 1.0) * 100.0));
         assert!(close_to(stats.best_day_pct, (step.exp() - 1.0) * 100.0));
         Ok(())
@@ -191,6 +218,30 @@ mod tests {
     }
 
     #[test]
+    fn volatility_percentile_ranks_the_current_window_against_the_past() -> anyhow::Result<()> {
+        // Daily moves that keep growing, and ones that keep shrinking, so every
+        // rolling window differs from the one before it.
+        let series = |growing: bool| {
+            let mut closes = vec![100.0_f64];
+            for index in 0..120 {
+                let position = if growing { index } else { 119 - index };
+                let step = 0.004 + f64::from(position) * 0.0002;
+                let sign = if index % 2 == 0 { 1.0 } else { -1.0 };
+                let previous = closes[closes.len() - 1];
+                closes.push(previous * (sign * step).exp());
+            }
+            closes
+        };
+        let rising = summarize("UP", &bars(&series(true))?, "fetched", false);
+        assert_eq!(rising.realized_vol_20d_percentile, Some(100.0));
+        let calming = summarize("DOWN", &bars(&series(false))?, "fetched", false);
+        assert_eq!(calming.realized_vol_20d_percentile, Some(0.0));
+        assert_eq!(percentile_rank(&[1.0]), None);
+        assert_eq!(percentile_rank(&[1.0, 3.0, 2.0]), Some(50.0));
+        Ok(())
+    }
+
+    #[test]
     fn empty_history_yields_no_statistics() {
         let stats = summarize("NONE", &[], "never", true);
         assert_eq!(stats.bar_count, 0);
@@ -210,6 +261,7 @@ mod tests {
             "lastClose",
             "realizedVol20d",
             "realizedVol60d",
+            "realizedVol20dPercentile",
             "sma20",
             "sma50",
             "sma200",

@@ -25,6 +25,7 @@ pub use stock_analysis::{stock_analysis_alpaca_daily_stats, stock_analysis_alpac
 pub use structured_products::{
     persisted_structured_products_enrichment, persisted_structured_products_risk,
     refresh_structured_products_enrichment, structured_products_enrichment_status,
+    structured_products_iv_history,
 };
 pub use systemd::systemd_units;
 pub use upload::upload_data;

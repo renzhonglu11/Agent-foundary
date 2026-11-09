@@ -3,6 +3,7 @@ pub mod apewisdom;
 pub mod daily_bars;
 pub mod fred;
 pub mod hermes_cron_status;
+pub mod iv_history;
 pub mod market_calendar;
 pub mod monitor_calendar;
 pub mod monitor_symbols;

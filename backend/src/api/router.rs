@@ -61,6 +61,10 @@ pub fn build(state: Arc<AppState>, frontend_origin: &str) -> anyhow::Result<Rout
             get(handlers::persisted_structured_products_risk),
         )
         .route(
+            "/api/structured-products/iv-history",
+            get(handlers::structured_products_iv_history),
+        )
+        .route(
             "/api/structured-products-enrichment/status",
             get(handlers::structured_products_enrichment_status),
         )

@@ -3,7 +3,7 @@ use serde_json::{Map, Number, Value};
 use sqlx::{Row, Sqlite, SqlitePool, Transaction};
 
 use crate::application::ports::market_data_repository::{
-    MarketDataRepository, MarketQuoteRecord, RealtimePayloadRecord,
+    IvObservation, MarketDataRepository, MarketQuoteRecord, RealtimePayloadRecord,
 };
 
 const STRUCTURED_PRODUCTS_PAYLOAD_KEY: &str = "structured_products_enrichment";
@@ -374,6 +374,29 @@ impl SqliteMarketDataRepository {
 
 #[async_trait::async_trait]
 impl MarketDataRepository for SqliteMarketDataRepository {
+    async fn load_iv_history(&self, since: &str) -> anyhow::Result<Vec<IvObservation>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT isin, observed_on, iv
+            FROM structured_product_iv_history
+            WHERE observed_on >= ?1
+            ORDER BY isin, observed_on
+            "#,
+        )
+        .bind(since)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter()
+            .map(|row| {
+                Ok(IvObservation {
+                    isin: row.try_get("isin")?,
+                    observed_on: row.try_get("observed_on")?,
+                    iv: row.try_get("iv")?,
+                })
+            })
+            .collect()
+    }
+
     async fn load_quotes(
         &self,
         provider: &str,
@@ -551,6 +574,57 @@ impl MarketDataRepository for SqliteMarketDataRepository {
     }
 }
 
+/// Keeps one implied-volatility observation per product and UTC day. Greeks
+/// from a stale cache are skipped: they would repeat an old value as if new.
+async fn record_iv_observations(
+    tx: &mut Transaction<'_, Sqlite>,
+    items: &[Value],
+    updated_at: &str,
+) -> anyhow::Result<()> {
+    let Some(observed_on) = updated_at.get(..10) else {
+        return Ok(());
+    };
+    for item in items {
+        let (Some(isin), Some(iv)) = (
+            item.get("isin").and_then(Value::as_str),
+            item.get("iv").and_then(Value::as_f64),
+        ) else {
+            continue;
+        };
+        let greeks_source = item.get("greeks_source").and_then(Value::as_str);
+        if !iv.is_finite()
+            || iv <= 0.0
+            || greeks_source.is_none_or(|source| source.contains("cache_stale"))
+        {
+            continue;
+        }
+        sqlx::query(
+            r#"
+            INSERT INTO structured_product_iv_history (
+                isin, observed_on, iv, quote_price, underlying, greeks_source, observed_at
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            ON CONFLICT(isin, observed_on) DO UPDATE SET
+                iv = excluded.iv,
+                quote_price = excluded.quote_price,
+                underlying = excluded.underlying,
+                greeks_source = excluded.greeks_source,
+                observed_at = excluded.observed_at
+            "#,
+        )
+        .bind(isin)
+        .bind(observed_on)
+        .bind(iv)
+        .bind(item.get("quote_price").and_then(Value::as_f64))
+        .bind(item.get("underlying").and_then(Value::as_str))
+        .bind(greeks_source)
+        .bind(updated_at)
+        .execute(&mut **tx)
+        .await?;
+    }
+    Ok(())
+}
+
 async fn store_structured_products_enrichment(
     tx: &mut Transaction<'_, Sqlite>,
     payload_json: &str,
@@ -592,6 +666,8 @@ async fn store_structured_products_enrichment(
         .bind(STRUCTURED_PRODUCTS_PAYLOAD_KEY)
         .execute(&mut **tx)
         .await?;
+
+    record_iv_observations(tx, &items, updated_at).await?;
 
     for (item_index, item) in items.iter().enumerate() {
         sqlx::query(
@@ -1046,6 +1122,47 @@ mod tests {
         assert_eq!(loaded[0]["legs"][0]["primaryAction"], "REDUCE_RISK");
         assert_eq!(loaded[0]["legs"][0]["actionReason"], "Product is on watch.");
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn records_one_iv_observation_per_product_and_day_and_skips_stale_greeks() -> Result<()> {
+        let pool = test_pool().await?;
+        run_migrations(&pool).await?;
+        let repository = SqliteMarketDataRepository::new(pool.clone());
+        let payload = |fresh_iv: f64| {
+            serde_json::json!({
+                "source": "test",
+                "items": [
+                    {"isin": "FRESH", "iv": fresh_iv, "greeks_source": "onvista+gs.de", "quote_price": 1.5},
+                    {"isin": "STALE", "iv": 0.6, "greeks_source": "gs.de+cache_stale"},
+                    {"isin": "NO_SOURCE", "iv": 0.7},
+                    {"isin": "NO_IV", "greeks_source": "onvista"},
+                ],
+            })
+            .to_string()
+        };
+        for (updated_at, iv) in [
+            ("2026-11-08T09:00:00+00:00", 0.40),
+            ("2026-11-09T09:00:00+00:00", 0.45),
+            ("2026-11-09T15:00:00+00:00", 0.50),
+        ] {
+            repository
+                .store_payload(STRUCTURED_PRODUCTS_PAYLOAD_KEY, &payload(iv), updated_at)
+                .await?;
+        }
+
+        let history = repository.load_iv_history("2026-01-01").await?;
+        let observed: Vec<_> = history
+            .iter()
+            .map(|row| (row.isin.as_str(), row.observed_on.as_str(), row.iv))
+            .collect();
+        // The later refresh of the 9th replaces the earlier one.
+        assert_eq!(
+            observed,
+            [("FRESH", "2026-11-08", 0.40), ("FRESH", "2026-11-09", 0.50)]
+        );
+        assert_eq!(repository.load_iv_history("2026-11-09").await?.len(), 1);
         Ok(())
     }
 

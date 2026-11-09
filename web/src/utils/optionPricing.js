@@ -27,6 +27,18 @@ export function blackScholesPrice({ spot, strike, years, volatility, rate = 0, d
     : spot * normalCdf(d1) - discountedStrike * normalCdf(d2)
 }
 
+// Sensitivity of the price to the spot: positive for calls, negative for puts.
+export function blackScholesDelta({ spot, strike, years, volatility, rate = 0, direction }) {
+  const put = direction === 'put'
+  if (!(strike > 0) || !(spot > 0)) return null
+  if (!(years > 0) || !(volatility > 0)) {
+    const inTheMoney = put ? spot < strike : spot > strike
+    return inTheMoney ? (put ? -1 : 1) : 0
+  }
+  const d1 = (Math.log(spot / strike) + (rate + volatility ** 2 / 2) * years) / (volatility * Math.sqrt(years))
+  return put ? normalCdf(d1) - 1 : normalCdf(d1)
+}
+
 export const IMPLIED_VOLATILITY_RANGE = [0.05, 3]
 
 // Bisection on the quote. Returns null when no volatility inside the accepted

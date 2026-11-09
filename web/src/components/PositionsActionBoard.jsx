@@ -21,9 +21,14 @@ import TrendingDownRoundedIcon from '@mui/icons-material/TrendingDownRounded'
 
 import { compactCurrency, number } from '../utils/formatters.js'
 import { buildExitSignals } from '../utils/exitSignals.js'
+import { buildOpportunityScreen } from '../utils/opportunityScreen.js'
+import { buildGroupShockScales } from '../utils/portfolioStress.js'
+import { buildRollWhatIfs } from '../utils/rollWhatIf.js'
 import { buildWatchlistGroups, canonicalGroupKey } from '../utils/watchlistGrouping.js'
 import { useAlpacaDailyStats } from '../hooks/useAlpacaDailyStats.js'
+import { useIvHistory } from '../hooks/useIvHistory.js'
 import ExitSignalsPanel from './ExitSignalsPanel.jsx'
+import OpportunitiesPanel from './OpportunitiesPanel.jsx'
 import PortfolioStressTestPanel from './PortfolioStressTestPanel.jsx'
 import ProductMonitoringDashboard from './ProductMonitoringDashboard.jsx'
 
@@ -103,11 +108,13 @@ export default function PositionsActionBoard({ data, riskData, riskLoading, risk
   const [clickedRowId, setClickedRowId] = useState(null)
   const totalMarketValue = Number(data?.summary?.totalMarketValue) || 0
   const totalCostBasis = Number(data?.summary?.totalCostBasis) || 0
-  const tier1Groups = useMemo(() => {
+  const watchlistGroups = useMemo(() => {
     const heldSymbols = new Set((data?.positions || []).filter(position => Math.abs(Number(position.quantity) || 0) > 1e-6).map(position => position.symbol))
     const heldEnrichment = (structuredProducts || []).filter(item => heldSymbols.has(item.isin))
-    return buildWatchlistGroups(data, heldEnrichment, alpacaQuotes).tier1
+    return buildWatchlistGroups(data, heldEnrichment, alpacaQuotes)
   }, [data, structuredProducts, alpacaQuotes])
+  const tier1Groups = watchlistGroups.tier1
+  const allGroups = useMemo(() => [...watchlistGroups.tier1, ...watchlistGroups.tier2, ...watchlistGroups.tier3], [watchlistGroups])
   const riskByKey = useMemo(() => buildRiskMap(riskData), [riskData])
   const groupsWithRisk = useMemo(() => (
     tier1Groups
@@ -118,9 +125,20 @@ export default function PositionsActionBoard({ data, riskData, riskLoading, risk
       .filter(({ riskGroup }) => Boolean(riskGroup))
   ), [riskByKey, tier1Groups])
   const productEntries = useMemo(() => buildProductActionEntries(groupsWithRisk, totalMarketValue), [groupsWithRisk, totalMarketValue])
-  const underlyingSymbols = useMemo(() => productEntries.map(entry => entry.group.alpacaSymbol).filter(Boolean), [productEntries])
+  // Tier 1 underlyings first, so they are kept if the backend's symbol limit cuts the list.
+  const underlyingSymbols = useMemo(() => [...new Set(allGroups.map(group => group.alpacaSymbol).filter(Boolean))].slice(0, 100), [allGroups])
   const dailyStats = useAlpacaDailyStats(underlyingSymbols)
+  const ivHistory = useIvHistory()
   const exitReport = useMemo(() => buildExitSignals(productEntries, dailyStats.data), [productEntries, dailyStats.data])
+  const opportunityScreen = useMemo(() => buildOpportunityScreen({
+    groups: allGroups,
+    dailyStats: dailyStats.data,
+    impliedByGroup: new Map(buildGroupShockScales(productEntries).groups.map(group => [group.key, group.volatilityPct != null ? group.volatilityPct / 100 : null])),
+    ivHistoryByIsin: new Map(ivHistory.data.map(history => [history.isin, history])),
+    exitSignals: exitReport.signals,
+    totalMarketValue,
+  }), [allGroups, dailyStats.data, productEntries, ivHistory.data, exitReport, totalMarketValue])
+  const rollWhatIfs = useMemo(() => buildRollWhatIfs(productEntries, exitReport.signals), [productEntries, exitReport])
   const sections = useMemo(() => (
     actionDefinitions.map((definition) => ({
       ...definition,
@@ -243,6 +261,14 @@ export default function PositionsActionBoard({ data, riskData, riskLoading, risk
           loading={loading}
           totalMarketValue={totalMarketValue}
           totalCostBasis={totalCostBasis}
+        />
+
+        <OpportunitiesPanel
+          screen={opportunityScreen}
+          rolls={rollWhatIfs}
+          loading={dailyStats.loading}
+          statsError={dailyStats.error}
+          ivMinObservations={ivHistory.minObservations}
         />
       </Stack>
 

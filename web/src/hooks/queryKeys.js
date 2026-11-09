@@ -9,4 +9,5 @@ export const queryKeys = {
     symbols.join(','),
   ],
   alpacaDailyStats: (symbols) => ['alpacaDailyStats', symbols.join(',')],
+  ivHistory: ['ivHistory'],
 };

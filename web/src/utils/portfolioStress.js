@@ -155,19 +155,15 @@ function usdUnderlying(item) {
   return String(item?.underlyingSpotRawCurrency || '').toUpperCase() === 'USD'
 }
 
-// Full Black-Scholes revaluation of a warrant that outlives the horizon. The
-// volatility is calibrated to the observed quote. Deep in the money a small
-// quote/spot mismatch calibrates to an absurd volatility, so a result more than
-// 2x away from the provider IV, or no result at all, hands over to the provider
-// IV. The model change is
-// added to the quote, so an unchanged scenario returns the quote; when the model
-// value exceeds the quote the change is scaled down to the quote's size, which
-// keeps a mismatched ratio or stale spot from wiping out the position.
-function repriceWarrant(item, scenario, currentPrice, spot, scenarioSpot, dte, horizonDays) {
+// Volatility for pricing a warrant, calibrated to the observed quote. Deep in
+// the money a small quote/spot mismatch calibrates to an absurd volatility, so
+// a result more than 2x away from the provider IV, or no result at all, hands
+// over to the provider IV. `item` carries strike and spot in one currency.
+export function warrantVolatility(item, currentPrice, spot, dte) {
   const strike = positive(item?.strikePrice)
   const ratio = positive(item?.ratio)
   const direction = getOptionDirection(item)
-  if (strike == null || ratio == null || direction == null || dte == null || dte <= horizonDays) return null
+  if (strike == null || ratio == null || direction == null || !(currentPrice > 0) || !(spot > 0) || !(dte > 0)) return null
 
   const rate = referenceRate(item)
   const years = dte / 365
@@ -177,7 +173,19 @@ function repriceWarrant(item, scenario, currentPrice, spot, scenarioSpot, dte, h
   const implied = impliedVolatility({ price: currentPrice / ratio, spot, strike, years, rate, direction })
   const calibrated = implied != null && (provider == null || (implied >= provider / 2 && implied <= provider * 2)) ? implied : null
   const volatility = calibrated ?? provider
-  if (volatility == null) return null
+  return volatility == null ? null : { volatility, calibrated: calibrated != null, strike, ratio, direction, rate, years }
+}
+
+// Full Black-Scholes revaluation of a warrant that outlives the horizon. The
+// model change is added to the quote, so an unchanged scenario returns the
+// quote; when the model value exceeds the quote the change is scaled down to
+// the quote's size, which keeps a mismatched ratio or stale spot from wiping
+// out the position.
+function repriceWarrant(item, scenario, currentPrice, spot, scenarioSpot, dte, horizonDays) {
+  if (dte == null || dte <= horizonDays) return null
+  const model = warrantVolatility(item, currentPrice, spot, dte)
+  if (!model) return null
+  const { volatility, strike, ratio, direction, rate, years } = model
 
   const shocked = Math.max(0.01, volatility * (1 + (finite(scenario.ivMovePct) ?? 0) / 100))
   const base = blackScholesPrice({ spot, strike, years, volatility, rate, direction })
@@ -185,7 +193,7 @@ function repriceWarrant(item, scenario, currentPrice, spot, scenarioSpot, dte, h
   const anchor = base * ratio > currentPrice ? currentPrice / (base * ratio) : 1
   return {
     projectedPrice: Math.max(0, currentPrice + (next - base) * ratio * anchor),
-    method: calibrated != null ? 'bs' : 'bs_iv',
+    method: model.calibrated ? 'bs' : 'bs_iv',
   }
 }
 

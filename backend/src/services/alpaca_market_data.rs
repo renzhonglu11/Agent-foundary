@@ -21,7 +21,7 @@ use crate::{
     services::daily_bars::{DailyBar, DailyBarStats, StoredDailyBars, summarize},
 };
 
-const DAILY_BARS_MAX_SYMBOLS: usize = 60;
+const DAILY_BARS_MAX_SYMBOLS: usize = 100;
 // Enough sessions for a 200-day average and a one-year range.
 const DAILY_BARS_LOOKBACK_DAYS: i64 = 400;
 const DAILY_BARS_REFRESH_HOURS: i64 = 12;
@@ -782,16 +782,27 @@ async fn fetch_daily_bars(
         ..Default::default()
     }
     .init(symbol, start, end, bars::TimeFrame::OneDay);
-    let page = tokio::time::timeout(
+    let response = tokio::time::timeout(
         Duration::from_secs(15),
         client.issue::<bars::List>(&request),
     )
-    .await??;
+    .await?;
+    let bars = match response {
+        Ok(page) => page.bars.iter().filter_map(convert_bar).collect(),
+        // The provider does not know the symbol. That is an answer, not an
+        // outage: an empty history is cached so the symbol is not asked for
+        // again on every request, and it cannot stall the refresh of others.
+        Err(apca::RequestError::Endpoint(bars::ListError::InvalidInput(_))) => {
+            info!(%symbol, "Alpaca rejected the symbol for daily bars");
+            Vec::new()
+        }
+        Err(error) => return Err(error.into()),
+    };
     Ok(StoredDailyBars {
         symbol: symbol.to_owned(),
         feed: "iex".to_owned(),
         adjustment: "all".to_owned(),
-        bars: page.bars.iter().filter_map(convert_bar).collect(),
+        bars,
     })
 }
 
