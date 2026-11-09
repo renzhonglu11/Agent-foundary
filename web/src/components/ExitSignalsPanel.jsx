@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import {
   Alert,
   Box,
@@ -18,7 +18,7 @@ import {
 } from '@mui/material'
 
 import { compactCurrency, number } from '../utils/formatters.js'
-import { EXIT_SIGNAL_DEFAULTS, buildExitSignals } from '../utils/exitSignals.js'
+import { EXIT_SIGNAL_DEFAULTS } from '../utils/exitSignals.js'
 
 const levelMeta = {
   urgent: { label: '优先复核', color: 'error' },
@@ -83,9 +83,8 @@ function KeyMetrics({ signal }) {
   </>
 }
 
-export default function ExitSignalsPanel({ entries, dailyStats, dailyStatsLoading, dailyStatsError, dailyStatsWarnings = [], onSelectProduct }) {
+export default function ExitSignalsPanel({ report, dailyStats, dailyStatsLoading, dailyStatsError, dailyStatsWarnings = [], onSelectProduct }) {
   const [showAll, setShowAll] = useState(false)
-  const report = useMemo(() => buildExitSignals(entries, dailyStats), [entries, dailyStats])
   const flagged = report.counts.urgent + report.counts.warn + report.counts.unknown
   const rows = showAll ? report.signals : report.signals.filter(signal => signal.level !== 'ok')
   const staleCount = (dailyStats || []).filter(stats => stats.stale).length

@@ -1,4 +1,4 @@
-export { allocateEqualWeight } from './allocation.js'
+export { allocateEqualWeight, scaleProfile } from './allocation.js'
 export { CANDIDATE_STRATEGIES, STRATEGY_DEFINITIONS, strategyScores } from './definitions.js'
 export { candidateEligible, candidatePolicy, eligibleForAnyStrategy } from './eligibility.js'
 export {

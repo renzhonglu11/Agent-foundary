@@ -34,7 +34,7 @@ function equalWeightValues(caps, budget) {
   return values
 }
 
-function scaleProfile(profile, scale, value, totals) {
+export function scaleProfile(profile, scale, value, totals) {
   const costBasis = scale <= 1 ? profile.costBasis * scale : profile.costBasis + value - profile.currentValue
   return {
     ...profile,

@@ -4,6 +4,8 @@
 
 规则以代码为准；修改 `web/src/strategies/` 时同步更新本文。
 
+> 仓位监控页已改为比较当前持仓与减仓方案（见 [portfolio-stress-model.md](portfolio-stress-model.md) 的 Scenarios and comparisons），不再展示这三个候选组合。下面的选取、打分和分配规则只在不传 `options.plans` 调用 `buildPortfolioStressReport` 时生效；持有成本和模型可信度两节仍适用于所有情景计算。
+
 ## 代码位置
 
 | 文件 | 内容 |

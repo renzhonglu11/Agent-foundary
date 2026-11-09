@@ -20,6 +20,7 @@ import CheckCircleRoundedIcon from '@mui/icons-material/CheckCircleRounded'
 import TrendingDownRoundedIcon from '@mui/icons-material/TrendingDownRounded'
 
 import { compactCurrency, number } from '../utils/formatters.js'
+import { buildExitSignals } from '../utils/exitSignals.js'
 import { buildWatchlistGroups, canonicalGroupKey } from '../utils/watchlistGrouping.js'
 import { useAlpacaDailyStats } from '../hooks/useAlpacaDailyStats.js'
 import ExitSignalsPanel from './ExitSignalsPanel.jsx'
@@ -119,6 +120,7 @@ export default function PositionsActionBoard({ data, riskData, riskLoading, risk
   const productEntries = useMemo(() => buildProductActionEntries(groupsWithRisk, totalMarketValue), [groupsWithRisk, totalMarketValue])
   const underlyingSymbols = useMemo(() => productEntries.map(entry => entry.group.alpacaSymbol).filter(Boolean), [productEntries])
   const dailyStats = useAlpacaDailyStats(underlyingSymbols)
+  const exitReport = useMemo(() => buildExitSignals(productEntries, dailyStats.data), [productEntries, dailyStats.data])
   const sections = useMemo(() => (
     actionDefinitions.map((definition) => ({
       ...definition,
@@ -223,7 +225,7 @@ export default function PositionsActionBoard({ data, riskData, riskLoading, risk
         </Box>
 
         <ExitSignalsPanel
-          entries={productEntries}
+          report={exitReport}
           dailyStats={dailyStats.data}
           dailyStatsLoading={dailyStats.loading}
           dailyStatsError={dailyStats.error}
@@ -235,6 +237,7 @@ export default function PositionsActionBoard({ data, riskData, riskLoading, risk
         />
 
         <PortfolioStressTestPanel
+          exitSignals={exitReport.signals}
           positions={data.positions}
           entries={productEntries}
           loading={loading}

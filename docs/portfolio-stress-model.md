@@ -52,26 +52,58 @@ requiring underlying prices or Greeks; it is not the same as an underlying shock
 
 ## Scenarios and comparisons
 
-The page compares the current holdings with candidates that reallocate the same
-tested capital; candidates are modeled structures, not trade instructions. A
-single table compares invested value, remaining hypothetical cash, downside/upside
-endpoint P&L and worst P&L. Deltas compare each portfolio's own worst outcome and
-its same upward endpoint against the current calculable baseline. Selecting a row
-shows modeled increases, reductions and exits with before/after weights on common
-tested capital,
-then optional scenario-specific loss and offset contributions. Full membership,
-all scenario results, monitoring and methodology are expandable details. Zero
-instantaneous P&L with no target exposure is labeled explicitly rather than shown
-as an apparently empty portfolio. Product contributions use the sized positions
-and reconcile to scenario P&L; hypothetical cash earns zero.
+The page compares the current holdings with plans that trim them. A plan maps
+products to the share sold (`options.plans` of `buildPortfolioStressReport`); the
+proceeds stay in the plan as zero-return cash and nothing is bought, so every
+plan uses the same tested capital as the baseline. Plans are modeled structures,
+not trade instructions. A single table compares invested value, released cash,
+downside/upside endpoint P&L and worst P&L. Deltas compare each plan's own worst
+outcome and its same upward endpoint against the baseline. Selecting a row shows
+the reductions and exits with before/after weights on common tested capital, then
+scenario-specific loss and offset contributions. Full membership, all scenario
+results, monitoring and methodology are expandable details. Product
+contributions use the sized positions and reconcile to scenario P&L.
 
-The page first displays candidate holdings, weights, value and hypothetical cash.
-Stress testing is optional and off by default. Candidate scores use a fixed 30-day,
-all-underlying ±10% reference and existing risk rules. Changing the displayed shock
-range, amplitude or horizon only revalues those members; IDs, sizing and cash stay
-stable. New input data regenerates the candidates. Products lacking expiry inputs
-needed within the supported 90-day horizon are omitted consistently and reported
-in coverage, rather than disappearing when a longer stress horizon is selected.
+Preset plans come from `buildPresetPlans` (`web/src/utils/positionWhatIf.js`):
+
+- sell every product whose exit signal is "优先复核" (see [exit-signals.md](exit-signals.md));
+- the same, plus halving every product flagged "留意";
+- halve the five largest losers of the baseline's current worst scenario.
+
+The first two do not depend on the shock settings; the third follows the
+scenario being viewed. A custom plan collects the reductions the user picks in
+the ranking table.
+
+### Reduction ranking
+
+`rankReductions` answers what selling 25%, 50% or all of one product, or of all
+products on one underlying, does while everything else stays. It works from the
+baseline's per-product scenario P&L, which scales linearly with position size,
+and re-chooses the adverse scenario because an underlying's worst direction can
+flip when one of its products shrinks. Per row:
+
+- worst-case improvement: change of the portfolio's worst scenario P&L;
+- upside given up: change of the P&L in the largest upward endpoint scenario;
+- protection efficiency: the first divided by the second. One means a euro less
+  loss for a euro less gain;
+- worst loss per euro: worst-case improvement divided by the cash released.
+
+A position that gains in the synchronous downward scenario is labeled a hedge
+and ranked last, even though the adverse scenario counts it as a loser. Rows can
+be ordered by efficiency, by improvement in euros or by worst loss per euro.
+
+Efficiency carries no probability. Under an instantaneous shock, option
+convexity makes out-of-the-money warrants look cheap to keep, because they have
+little left to lose and much to gain; their cost is time decay. The table
+therefore shows the 30-day flat return from the exit signals beside it, and a
+30-day horizon prices the decay into every scenario.
+
+Stress testing is on by default. Changing the shock range, amplitude or horizon
+only revalues the plans. Products lacking expiry inputs needed within the
+supported 90-day horizon are omitted consistently and reported in coverage,
+rather than disappearing when a longer stress horizon is selected. Zero
+instantaneous P&L with no target exposure is labeled explicitly rather than shown
+as an apparently empty portfolio.
 
 When stress testing is enabled, users select synchronous or single-underlying shocks and maximum amplitudes of
 10, 20, 30 or 50 percent. Three further controls change the shock itself, never
@@ -106,18 +138,19 @@ factors pay financing, an index fee and volatility drag; see
 assumptions. Actual issuer financing terms, intraday resets, actual settlement
 terms, FX changes, liquidity and transaction costs are omitted.
 
-All candidates use the baseline tested capital. It is split equally across the
-selected products, subject to the 8% exposure cap; WATCH, SELL or
-unknown-exposure products are not increased. Capital no product can absorb is
-zero-return hypothetical cash. The table shows return on that common
-capital and impact relative to account valuation. Untested positions are retained
-but their scenario P&L is unknown, so account impact is partial, not whole-account
-VaR. Selection scores remain heuristic and do not optimize probabilities. The
-eligibility, scoring, allocation and selection rules are documented in
-[portfolio-candidate-policy.md](portfolio-candidate-policy.md).
+The table shows return on the common tested capital and impact relative to
+account valuation. Untested positions are retained but their scenario P&L is
+unknown, so account impact is partial, not whole-account VaR. Plans ignore
+transaction costs, bid-ask spreads and taxes.
+
+Called without `options.plans`, `buildPortfolioStressReport` still builds the
+earlier strategy-selected candidates described in
+[portfolio-candidate-policy.md](portfolio-candidate-policy.md). The page no
+longer uses that path.
 
 Hermes receives common-capital returns, cash/untested context and an
-`assumptions` string describing the active shock settings. Single-underlying
+`assumptions` string describing the active shock settings and, for each plan,
+how many products it sells and reduces. Single-underlying
 reviews remain disabled because the bounded review contract does not identify the
 shocked group. A stale review is discarded when its originating report changes.
 
@@ -128,4 +161,5 @@ Run `npm --prefix web test`, `npm --prefix web run build`, and
 instantaneous flat shocks, targeting, factor compounding, intermediate knockout,
 missing-data coverage, capital conservation with candidate cash, Black-Scholes
 revaluation against reference values, the provider-IV fallback, volatility and
-currency shocks, volatility-scaled moves and the adverse scenario.
+currency shocks, volatility-scaled moves, the adverse scenario, plan conservation and the
+reduction ranking.

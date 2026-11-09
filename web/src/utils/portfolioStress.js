@@ -18,6 +18,7 @@ import {
   modelQualityPenalty,
   productRiskPenalty,
   productRiskSignals,
+  scaleProfile,
   selectDiversified,
   strategyScores,
 } from '../strategies/index.js'
@@ -500,11 +501,28 @@ function aggregatePortfolio(id, title, description, inputProfiles, scenarios, ho
   }
 }
 
+// A plan trims the current holdings: `reductions` maps a product id to the
+// percentage sold. The proceeds stay in the plan as zero-return cash and a
+// product sold completely leaves it.
+function applyReductions(profiles, reductions = {}, totals) {
+  return profiles.flatMap((profile) => {
+    const reductionPct = clamp(finite(reductions[profile.id]) ?? 0, 0, 100)
+    if (reductionPct >= 100) return []
+    if (reductionPct <= 0) return [profile]
+    const scale = 1 - reductionPct / 100
+    return [scaleProfile(profile, scale, profile.currentValue * scale, totals)]
+  })
+}
+
+// With `options.plans` ([{ id, title, description, reductions }]) the report
+// compares the current holdings with those plans. Without it, it compares them
+// with the strategy-selected candidates.
 export function buildPortfolioStressReport(
   entries,
   horizonDays = 30,
   scenarios = PORTFOLIO_STRESS_SCENARIOS,
   portfolioTotals = {},
+  options = {},
 ) {
   const horizon = PORTFOLIO_STRESS_HORIZONS.includes(Number(horizonDays)) ? Number(horizonDays) : 30
   const totals = {
@@ -579,7 +597,19 @@ export function buildPortfolioStressReport(
     ),
   ]
 
-  for (const definition of STRATEGY_DEFINITIONS) {
+  for (const plan of options.plans || []) {
+    candidates.push(aggregatePortfolio(
+      String(plan.id),
+      plan.title,
+      plan.description || '',
+      applyReductions(profiles, plan.reductions, totals),
+      scenarios,
+      horizon,
+      'plan',
+    ))
+  }
+
+  for (const definition of options.plans ? [] : STRATEGY_DEFINITIONS) {
     const selected = selectDiversified(
       candidatePools[definition.strategy],
       definition.strategy,
@@ -600,6 +630,7 @@ export function buildPortfolioStressReport(
 
   return {
     modelMode: 'stress_only',
+    comparison: options.plans ? 'plans' : 'candidates',
     coverage,
     horizonDays: horizon,
     scenarios,
@@ -619,6 +650,15 @@ export function buildPortfolioStressReport(
 
 const signed = value => `${value > 0 ? '+' : ''}${value}%`
 
+// The product list sent to Hermes is truncated, so each plan states its size here.
+function planSummaries(report) {
+  const baseline = report.portfolios.find(portfolio => portfolio.kind === 'baseline')
+  return report.portfolios.filter(portfolio => portfolio.kind === 'plan').slice(0, 7).map((portfolio) => {
+    const reduced = portfolio.products.filter(product => product.positionScalePct < 100).length
+    return `${portfolio.id}: ${(baseline?.productCount ?? 0) - portfolio.productCount} sold, ${reduced} reduced.`
+  }).join(' ')
+}
+
 // Plain-language statement of the shock settings for the Hermes review.
 function stressAssumptions(report) {
   const scenarios = report.scenarios || []
@@ -629,6 +669,7 @@ function stressAssumptions(report) {
     ivMovePct ? `Warrant IV ${signed(ivMovePct)} relative in every scenario.` : '',
     fxMovePct ? `USD ${signed(fxMovePct)} vs EUR in every scenario, applied to products on USD underlyings only.` : '',
     scenarios.some(scenario => scenario.adverse) ? 'Scenario "adverse": each underlying takes the endpoint move that hurts that portfolio most; its movePct 0 is a placeholder.' : '',
+    report.comparison === 'plans' ? `Portfolios other than "current" trim the current holdings; proceeds are zero-return cash and nothing is bought. ${planSummaries(report)}` : '',
   ].filter(Boolean).join(' ')
 }
 
