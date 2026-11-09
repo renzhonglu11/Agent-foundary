@@ -39,13 +39,14 @@ export function buildScenarioContributions(portfolio, scenarioId) {
     name: product.name,
     groupName: product.groupName,
     pnl: product.scenarioPnls?.find(result => result.scenarioId === scenarioId)?.pnl ?? null,
+    movePct: product.scenarioPnls?.find(result => result.scenarioId === scenarioId)?.movePct ?? null,
   })).sort((a, b) => (a.pnl ?? 0) - (b.pnl ?? 0))
 }
 
 export function comparePortfolioStress(baseline, candidate) {
   if (!baseline || !candidate) return null
   const up = portfolio => portfolio.scenarioResults
-    .filter(scenario => !scenario.pathMoves?.length)
+    .filter(scenario => !scenario.pathMoves?.length && !scenario.adverse)
     .reduce((selected, scenario) => !selected || scenario.movePct > selected.movePct ? scenario : selected, null)
   const baselineUp = up(baseline)
   const candidateUp = up(candidate)

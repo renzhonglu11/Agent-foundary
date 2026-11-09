@@ -16,6 +16,7 @@
 | `web/src/strategies/index.js` | 统一导出 |
 | `web/src/utils/portfolioStress.js` | 编排：`buildProductProfile` 计算收益指标，`buildPortfolioStressReport` 组装候选组合 |
 | `web/src/utils/carryCost.js` | Turbo、Factor 持有成本与默认假设 `CARRY_ASSUMPTIONS` |
+| `web/src/utils/optionPricing.js` | 权证的 Black-Scholes 定价与隐含波动率反推 |
 
 ## 流程
 
@@ -44,7 +45,7 @@ Tier 1 产品条目
 **打分只用固定参考情景，和页面上的冲击幅度、冲击范围、时间维度无关。** 页面控件只改变选中后的重估结果，不改变选了谁、缩仓比例和现金。
 
 - 情景：`PORTFOLIO_STRESS_SCENARIOS`，所有标的同步 −10%、−5%、0%、+5%、+10%
-- 时间：30 天。权证计入时间衰减，Turbo、Factor 计入持有成本（见下文），三类产品在同一口径下比较。
+- 时间：30 天。权证按 Black-Scholes 重估到 30 天后（已含时间衰减，见 [portfolio-stress-model.md](portfolio-stress-model.md)），Turbo、Factor 计入持有成本（见下文），三类产品在同一口径下比较。
 
 每只产品用 `盈亏 / 当前持仓市值` 计算单位收益率，得到：
 
@@ -116,9 +117,9 @@ exp( ±融资 × 天数/360 − (年费 + ½·β(β−1)·σ²) × 天数/365 )
 
 | 方法组件 | 扣分 |
 |---|---|
-| `delta`、`expiry_intrinsic`、`knockout`、`factor_leverage`、`factor_path`、`theta`、`financing`、`carry_iv` | 0 |
+| `bs`、`delta`、`expiry_intrinsic`、`knockout`、`factor_leverage`、`factor_path`、`theta`、`financing`、`carry_iv` | 0 |
 | `carry_group_iv` | 0.02 |
-| `omega`、`linear` | 0.03 |
+| `bs_iv`（报价无法反推波动率，改用提供方 IV）、`omega`、`linear` | 0.03 |
 | `carry_default_vol` | 0.05 |
 | `intrinsic`、`leverage` | 0.06 |
 | `approx` | 0.08 |
@@ -176,7 +177,8 @@ exp( ±融资 × 天数/360 − (年费 + ½·β(β−1)·σ²) × 天数/365 )
 - **集中度取决于敞口上限。** 等权起点是测试本金的 1/5–1/8；其他产品触顶时，多出的本金会转给未触顶的产品，单只占比可能更高。单只规模只受 8% 敞口上限约束，而上限依赖 `exposureWeightPct` 的准确性。
 - **持有成本是假设值。** 利率、利差和年费没有数据源，用的是统一默认值，不反映具体发行商条款。缺行权价且缺杠杆的 Turbo 不计融资成本。
 - **依赖衍生品数据。** 置信度、动作和模型可信度扣分都依赖增强数据（Greeks、杠杆、行权价、到期日）。不联网的刷新（如上传数据后）会合并本地缓存；缓存中没有的产品仍按兜底模型计算并被扣分。
-- **选股与页面冲击设置无关。** 冲击范围下拉框只列出当前所选组合中的标的（`buildShockTargets`），所以所选组合一定有该标的敞口；切换到不含该标的的组合时，冲击范围恢复为所有标的。对比表中的其他组合仍可能没有该标的，显示为"无直接敞口"。
+- **换用完整重估后排序会变。** 打分公式没有改，但权证的参考情景收益率由线性外推改为 Black-Scholes 重估，虚值权证的最差收益不再被高估，候选成员会与之前不同。
+- **选股与页面冲击设置无关。** 波动率缩放、IV 冲击、汇率冲击和"各标的逆向"情景同样只改变重估结果。 冲击范围下拉框只列出当前所选组合中的标的（`buildShockTargets`），所以所选组合一定有该标的敞口；切换到不含该标的的组合时，冲击范围恢复为所有标的。对比表中的其他组合仍可能没有该标的，显示为"无直接敞口"。
 
 ## 修改与验证
 

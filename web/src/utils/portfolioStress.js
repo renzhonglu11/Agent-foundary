@@ -6,7 +6,8 @@ import {
   getOptionDirection,
 } from './productCalculations.js'
 import { clamp, finite, positive, round } from './numbers.js'
-import { factorCarry, turboCarry, underlyingVolatility } from './carryCost.js'
+import { factorCarry, median, referenceRate, turboCarry, underlyingVolatility, volatilityFraction } from './carryCost.js'
+import { IMPLIED_VOLATILITY_RANGE, blackScholesPrice, impliedVolatility } from './optionPricing.js'
 import {
   CANDIDATE_STRATEGIES,
   STRATEGY_DEFINITIONS,
@@ -23,16 +24,64 @@ import {
 
 export const PORTFOLIO_STRESS_HORIZONS = [0, 7, 30, 90]
 
-export function buildStressScenarios(move = 20, targetGroup = null, paths = false) {
+export const GROUP_SHOCK_SCALE_RANGE = [0.4, 2.5]
+
+// Options: groupScales multiplies the move per underlying (ignored for a single
+// target), ivMovePct shifts warrant volatility relatively, fxMovePct moves USD
+// against EUR, and adverse adds the scenario where every underlying takes the
+// endpoint move that hurts the portfolio most.
+export function buildStressScenarios(move = 20, targetGroup = null, paths = false, options = {}) {
   const magnitude = clamp(Math.abs(finite(move) ?? 20), 1, 100)
+  const groupScales = !targetGroup && options.groupScales ? options.groupScales : null
+  const shared = {
+    targetGroup,
+    ...(groupScales ? { groupScales } : {}),
+    ...(finite(options.ivMovePct) ? { ivMovePct: finite(options.ivMovePct) } : {}),
+    ...(finite(options.fxMovePct) ? { fxMovePct: finite(options.fxMovePct) } : {}),
+  }
+  const prefix = targetGroup ? '单标的' : groupScales ? '按波动率' : '同步'
   const scenarios = [-magnitude, -magnitude / 2, 0, magnitude / 2, magnitude].map((movePct, i) => ({
-    id: i === 2 ? 'flat' : `shock_${i}`, label: `${targetGroup ? '单标的' : '同步'} ${movePct > 0 ? '+' : ''}${movePct}%`, movePct, targetGroup,
+    id: i === 2 ? 'flat' : `shock_${i}`, label: `${prefix} ${movePct > 0 ? '+' : ''}${movePct}%`, movePct, ...shared,
   }))
   if (paths) scenarios.push(
-    { id: 'recovery', label: '先跌后恢复（两步路径）', movePct: 0, targetGroup, pathMoves: [-magnitude, 0] },
-    { id: 'roundtrip', label: '先涨后回落（两步路径）', movePct: 0, targetGroup, pathMoves: [magnitude, 0] },
+    { id: 'recovery', label: '先跌后恢复（两步路径）', movePct: 0, ...shared, pathMoves: [-magnitude, 0] },
+    { id: 'roundtrip', label: '先涨后回落（两步路径）', movePct: 0, ...shared, pathMoves: [magnitude, 0] },
+  )
+  if (options.adverse && !targetGroup) scenarios.push(
+    { id: 'adverse', label: `各标的逆向 ±${magnitude}%`, movePct: 0, ...shared, adverse: true },
   )
   return scenarios
+}
+
+// Scales each underlying's shock by its implied volatility relative to the
+// median underlying, so the stated magnitude is the move of a typical holding.
+// Underlyings without any warrant IV keep the stated magnitude.
+export function buildGroupShockScales(entries = []) {
+  const groups = new Map()
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    const key = groupKey(entry)
+    const group = groups.get(key) ?? { key, name: groupName(entry), volatilities: new Map() }
+    groups.set(key, group)
+    for (const row of [entry.item, ...(entry.group?.derivatives || [])]) {
+      const volatility = volatilityFraction(row?.iv)
+      if (volatility != null) group.volatilities.set(row.symbol ?? row.id ?? group.volatilities.size, volatility)
+    }
+  }
+  const rows = [...groups.values()].map(({ key, name, volatilities }) => ({ key, name, volatility: median([...volatilities.values()]) }))
+  const reference = median(rows.map(row => row.volatility).filter(value => value != null))
+  const [minimum, maximum] = GROUP_SHOCK_SCALE_RANGE
+  const scaled = rows.map(row => ({
+    key: row.key,
+    name: row.name,
+    volatilityPct: row.volatility != null ? round(row.volatility * 100, 1) : null,
+    scale: row.volatility != null && reference ? round(clamp(row.volatility / reference, minimum, maximum), 4) : 1,
+  }))
+  return {
+    referenceVolatilityPct: reference != null ? round(reference * 100, 1) : null,
+    unknownCount: scaled.filter(row => row.volatilityPct == null).length,
+    groups: scaled,
+    scales: Object.fromEntries(scaled.map(row => [row.key, row.scale])),
+  }
 }
 
 export const PORTFOLIO_STRESS_SCENARIOS = [
@@ -114,6 +163,44 @@ function expiryIntrinsicPrice(item, scenarioSpot) {
   return Math.max(0, scenarioSpot - strike) * ratio
 }
 
+function usdUnderlying(item) {
+  return String(item?.underlyingSpotRawCurrency || '').toUpperCase() === 'USD'
+}
+
+// Full Black-Scholes revaluation of a warrant that outlives the horizon. The
+// volatility is calibrated to the observed quote. Deep in the money a small
+// quote/spot mismatch calibrates to an absurd volatility, so a result more than
+// 2x away from the provider IV, or no result at all, hands over to the provider
+// IV. The model change is
+// added to the quote, so an unchanged scenario returns the quote; when the model
+// value exceeds the quote the change is scaled down to the quote's size, which
+// keeps a mismatched ratio or stale spot from wiping out the position.
+function repriceWarrant(item, scenario, currentPrice, spot, scenarioSpot, dte, horizonDays) {
+  const strike = positive(item?.strikePrice)
+  const ratio = positive(item?.ratio)
+  const direction = getOptionDirection(item)
+  if (strike == null || ratio == null || direction == null || dte == null || dte <= horizonDays) return null
+
+  const rate = referenceRate(item)
+  const years = dte / 365
+  const [minimum, maximum] = IMPLIED_VOLATILITY_RANGE
+  const quoted = volatilityFraction(item?.iv)
+  const provider = quoted != null && quoted >= minimum && quoted <= maximum ? quoted : null
+  const implied = impliedVolatility({ price: currentPrice / ratio, spot, strike, years, rate, direction })
+  const calibrated = implied != null && (provider == null || (implied >= provider / 2 && implied <= provider * 2)) ? implied : null
+  const volatility = calibrated ?? provider
+  if (volatility == null) return null
+
+  const shocked = Math.max(0.01, volatility * (1 + (finite(scenario.ivMovePct) ?? 0) / 100))
+  const base = blackScholesPrice({ spot, strike, years, volatility, rate, direction })
+  const next = blackScholesPrice({ spot: scenarioSpot, strike, years: (dte - horizonDays) / 365, volatility: shocked, rate, direction })
+  const anchor = base * ratio > currentPrice ? currentPrice / (base * ratio) : 1
+  return {
+    projectedPrice: Math.max(0, currentPrice + (next - base) * ratio * anchor),
+    method: calibrated != null ? 'bs' : 'bs_iv',
+  }
+}
+
 function barrierBreached(item, scenarioSpot) {
   const knockout = positive(item?.knockoutPrice)
   const direction = getOptionDirection(item)
@@ -147,6 +234,10 @@ export function calculatePositionStress(entry, scenario, horizonDays) {
   if (scenario.targetGroup && scenario.targetGroup !== groupKey(entry)) {
     scenario = { ...scenario, movePct: 0, pathMoves: undefined }
   }
+  const scale = positive(scenario.groupScales?.[groupKey(entry)])
+  if (scale != null && scale !== 1) {
+    scenario = { ...scenario, movePct: scenario.movePct * scale, pathMoves: scenario.pathMoves?.map(move => move * scale) }
+  }
   const item = calculationItem(entry)
   const currentPrice = positive(item.price)
   const quantity = positive(item.quantity)
@@ -163,6 +254,9 @@ export function calculatePositionStress(entry, scenario, horizonDays) {
   const carryDays = type === 'knock_out' && dte != null ? Math.min(horizonDays, dte) : horizonDays
   const financing = isTurbo ? turboCarry(item, productLeverage(entry), carryDays) : null
   const barrierItem = financing ? { ...item, knockoutPrice: financing.knockoutPrice } : item
+  const repriced = type === 'optionsschein'
+    ? repriceWarrant(item, scenario, currentPrice, spot, scenarioSpot, dte, horizonDays)
+    : null
 
   if (type === 'factor_certificate') {
     if (scenario.pathMoves?.length) {
@@ -194,6 +288,9 @@ export function calculatePositionStress(entry, scenario, horizonDays) {
     if (intrinsic == null) return null
     projectedPrice = intrinsic
     method = 'expiry_intrinsic'
+  } else if (repriced) {
+    projectedPrice = repriced.projectedPrice
+    method = repriced.method
   } else {
     // Anchor a flat shock to the observed quote even when inferred intrinsic
     // value and the asynchronously fetched spot do not agree.
@@ -219,6 +316,10 @@ export function calculatePositionStress(entry, scenario, horizonDays) {
       method = `${method}+financing`
     }
   }
+
+  // The payoff of a USD underlying converts to EUR at the shocked rate.
+  const fxMovePct = finite(scenario.fxMovePct) ?? 0
+  if (fxMovePct && usdUnderlying(item)) projectedPrice *= Math.max(0, 1 + fxMovePct / 100)
 
   projectedPrice = Math.max(0, projectedPrice)
   const pnl = (projectedPrice - currentPrice) * quantity
@@ -278,6 +379,7 @@ function buildProductProfile(entry, horizonDays, scenarios, portfolioTotals) {
     delta: finite(entry.item?.delta),
     theta: finite(entry.item?.theta),
     ivPct: impliedVolatilityPct(entry.item?.iv),
+    fxExposed: usdUnderlying(entry.item),
     riskSignals,
     currentValue: round(currentValue),
     costBasis: round(costBasis),
@@ -294,7 +396,36 @@ function buildProductProfile(entry, horizonDays, scenarios, portfolioTotals) {
   }
 }
 
-function aggregatePortfolio(id, title, description, profiles, scenarios, horizonDays, kind) {
+// For each adverse scenario, every underlying takes the endpoint move that
+// costs this portfolio most, so opposite positions on different underlyings no
+// longer offset. The choice depends on the portfolio's own sizing.
+function withAdverseResults(profiles, scenarios) {
+  const adverse = scenarios.filter(scenario => scenario.adverse)
+  if (!adverse.length) return profiles
+  const endpointIds = scenarios.filter(scenario => !scenario.adverse && !scenario.pathMoves?.length).map(scenario => scenario.id)
+  const groupPnl = new Map()
+  for (const profile of profiles) {
+    const totals = groupPnl.get(profile.groupKey) ?? new Map()
+    groupPnl.set(profile.groupKey, totals)
+    for (const result of profile.results) {
+      if (result && endpointIds.includes(result.scenarioId)) totals.set(result.scenarioId, (totals.get(result.scenarioId) ?? 0) + result.pnl)
+    }
+  }
+  const worstId = new Map([...groupPnl].map(([key, totals]) => [
+    key,
+    endpointIds.reduce((selected, id) => (totals.get(id) ?? 0) < (totals.get(selected) ?? 0) ? id : selected, endpointIds[0]),
+  ]))
+  return profiles.map(profile => {
+    const source = profile.results.find(result => result?.scenarioId === worstId.get(profile.groupKey))
+    return {
+      ...profile,
+      results: [...profile.results, ...(source ? adverse.map(scenario => ({ ...source, scenarioId: scenario.id, scenarioLabel: scenario.label })) : [])],
+    }
+  })
+}
+
+function aggregatePortfolio(id, title, description, inputProfiles, scenarios, horizonDays, kind) {
+  const profiles = withAdverseResults(inputProfiles, scenarios)
   const currentValue = profiles.reduce((sum, profile) => sum + profile.currentValue, 0)
   const navWeightPct = profiles.reduce((sum, profile) => sum + profile.navWeightPct, 0)
   const capitalWeightPct = profiles.reduce((sum, profile) => sum + profile.capitalWeightPct, 0)
@@ -359,7 +490,8 @@ function aggregatePortfolio(id, title, description, profiles, scenarios, horizon
       capitalWeightPct: profile.capitalWeightPct,
       positionScalePct: profile.positionScalePct ?? 100,
       selectionFlags: profile.selectionFlags || [],
-      scenarioPnls: profile.results.map(result => ({ scenarioId: result.scenarioId, pnl: result.pnl })),
+      fxExposed: profile.fxExposed,
+      scenarioPnls: profile.results.map(result => ({ scenarioId: result.scenarioId, pnl: result.pnl, movePct: round(result.movePct) })),
       scenarioMethods: profile.results.map((result) => ({
         scenarioId: result.scenarioId,
         method: result.method,
@@ -391,7 +523,7 @@ export function buildPortfolioStressReport(
     if (!profile || !calculatePositionStress(entry, { id: 'flat', movePct: 0 }, 90)) return null
     return {
       ...profile,
-      results: scenarios.map((scenario) => calculatePositionStress(entry, scenario, horizon)),
+      results: scenarios.filter(scenario => !scenario.adverse).map((scenario) => calculatePositionStress(entry, scenario, horizon)),
     }
   }).filter(Boolean)
   const coveredValue = profiles.reduce((sum, profile) => sum + profile.currentValue, 0)
@@ -485,10 +617,26 @@ export function buildPortfolioStressReport(
   }
 }
 
+const signed = value => `${value > 0 ? '+' : ''}${value}%`
+
+// Plain-language statement of the shock settings for the Hermes review.
+function stressAssumptions(report) {
+  const scenarios = report.scenarios || []
+  const { groupScales, ivMovePct, fxMovePct } = scenarios[0] || {}
+  return [
+    'Warrants outliving the horizon: Black-Scholes endpoint revaluation, volatility calibrated to the quote (bs) or provider IV (bs_iv).',
+    groupScales ? 'Each underlying moves by the stated move x its IV / median IV (0.4-2.5x); scenario movePct is the stated move.' : '',
+    ivMovePct ? `Warrant IV ${signed(ivMovePct)} relative in every scenario.` : '',
+    fxMovePct ? `USD ${signed(fxMovePct)} vs EUR in every scenario, applied to products on USD underlyings only.` : '',
+    scenarios.some(scenario => scenario.adverse) ? 'Scenario "adverse": each underlying takes the endpoint move that hurts that portfolio most; its movePct 0 is a placeholder.' : '',
+  ].filter(Boolean).join(' ')
+}
+
 export function buildHermesStressReviewPayload(report) {
   return {
     modelMode: report.modelMode,
     horizonDays: report.horizonDays,
+    assumptions: stressAssumptions(report),
     portfolios: report.portfolios.slice(0, 8).map((portfolio) => ({
       id: portfolio.id,
       title: portfolio.title,

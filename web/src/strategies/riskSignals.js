@@ -54,6 +54,8 @@ export function productRiskPenalty(entry, signals) {
 // Penalty per stress-method component: how far the projection is from priced
 // sensitivities. The worst scenario sets the product's model penalty.
 const MODEL_COMPONENT_PENALTIES = {
+  bs: 0,
+  bs_iv: 0.03,
   delta: 0,
   expiry_intrinsic: 0,
   knockout: 0,

@@ -2,8 +2,31 @@
 
 The first revision is a deterministic scenario tool using existing portfolio,
 structured-product and Alpaca responses. It neither adds providers nor estimates
-probabilities. Default mode is an instantaneous shock; 7/30/90 day modes retain
-the existing approximate warrant decay model.
+probabilities. Default mode is an instantaneous shock; 7/30/90 day modes move the
+valuation date forward.
+
+## Warrant revaluation
+
+A warrant that expires after the stress horizon is fully revalued with
+Black-Scholes (`web/src/utils/optionPricing.js`) instead of extrapolating Delta
+and Theta, so large shocks keep their convexity and time decay accelerates
+towards expiry. For an out-of-the-money call the linear estimate overstated a
+-20% shock by roughly 20 points and understated a +50% shock by about 100.
+
+- Volatility is calibrated to the current quote (method `bs`). Strike and spot
+  are both in EUR, the rate is the reference rate of the underlying's quote
+  currency, exercise is European and dividends are ignored; calibration absorbs
+  what these simplifications miss at the current spot.
+- If no volatility between 5% and 300% reproduces the quote, or the result is
+  more than 2x away from the provider IV, the provider IV is used (`bs_iv`).
+  This is common deep in the money, where a small quote/spot mismatch calibrates
+  to an absurd volatility.
+- The model change is added to the quote, so an unchanged scenario returns the
+  quote. When the model value exceeds the quote, the change is scaled down to
+  the quote's size, so a stale spot or wrong ratio cannot wipe out the position.
+- Without strike, ratio, direction or any usable volatility, the previous
+  Delta / Omega / intrinsic chain still applies.
+- A warrant expiring within the horizon is valued at intrinsic value as before.
 
 ## Valuation and coverage
 
@@ -51,7 +74,25 @@ needed within the supported 90-day horizon are omitted consistently and reported
 in coverage, rather than disappearing when a longer stress horizon is selected.
 
 When stress testing is enabled, users select synchronous or single-underlying shocks and maximum amplitudes of
-10, 20, 30 or 50 percent. Single-underlying targets are limited to the underlyings held
+10, 20, 30 or 50 percent. Three further controls change the shock itself, never
+the membership or sizing of the portfolios:
+
+- **Volatility-scaled moves.** `buildGroupShockScales` takes the median warrant
+  IV per underlying and divides it by the median across underlyings, clamped to
+  0.4-2.5x. The stated amplitude is then the move of the median underlying;
+  underlyings without any warrant IV keep the stated amplitude. Not applied to
+  single-underlying shocks.
+- **Implied volatility.** A relative change of -20% or +20% applied in every
+  scenario. Only warrants revalued with Black-Scholes respond.
+- **USD against EUR.** -10% to +10% in every scenario, applied as a multiplier
+  to products whose underlying quote is in USD. Other currencies are not
+  modeled, and a US-listed proxy for a non-US underlying is treated as USD.
+
+For all-underlying shocks an extra `adverse` scenario lets every underlying take
+whichever endpoint move costs that portfolio most, so a call on one underlying
+and a put on another no longer offset. It ignores correlation and is an upper
+bound on the endpoint scenarios; each portfolio chooses its own directions, and
+the scenario counts towards the worst P&L. Single-underlying targets are limited to the underlyings held
 by the selected portfolio; selecting a portfolio without the current target
 resets the shock to all underlyings. For longer horizons two additional synthetic paths reach
 that down/up level on one reset period, recover to the starting level on the next,
@@ -75,7 +116,8 @@ VaR. Selection scores remain heuristic and do not optimize probabilities. The
 eligibility, scoring, allocation and selection rules are documented in
 [portfolio-candidate-policy.md](portfolio-candidate-policy.md).
 
-Hermes receives common-capital returns and cash/untested context. Single-underlying
+Hermes receives common-capital returns, cash/untested context and an
+`assumptions` string describing the active shock settings. Single-underlying
 reviews remain disabled because the bounded review contract does not identify the
 shocked group. A stale review is discarded when its originating report changes.
 
@@ -84,4 +126,6 @@ shocked group. A stale review is discarded when its originating report changes.
 Run `npm --prefix web test`, `npm --prefix web run build`, and
 `cargo test portfolio_stress --lib`. Regression cases cover stale valuation,
 instantaneous flat shocks, targeting, factor compounding, intermediate knockout,
-missing-data coverage and capital conservation with candidate cash.
+missing-data coverage, capital conservation with candidate cash, Black-Scholes
+revaluation against reference values, the provider-IV fallback, volatility and
+currency shocks, volatility-scaled moves and the adverse scenario.

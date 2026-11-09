@@ -31,6 +31,7 @@ import {
   buildPortfolioStressReport,
   buildStressScenarios,
   buildDirectPriceStress,
+  buildGroupShockScales,
 } from '../utils/portfolioStress.js'
 
 const confidenceLabels = {
@@ -86,7 +87,17 @@ export default function PortfolioStressTestPanel({ entries, positions = [], load
   const [horizonDays, setHorizonDays] = useState(0)
   const [shock, setShock] = useState(20)
   const [target, setTarget] = useState('')
-  const scenarios = useMemo(() => buildStressScenarios(shock, target || null, horizonDays > 0), [shock, target, horizonDays])
+  const [shockMode, setShockMode] = useState('uniform')
+  const [ivMove, setIvMove] = useState(0)
+  const [fxMove, setFxMove] = useState(0)
+  const groupShock = useMemo(() => buildGroupShockScales(entries), [entries])
+  const volScaled = shockMode === 'volatility' && !target
+  const scenarios = useMemo(() => buildStressScenarios(shock, target || null, horizonDays > 0, {
+    groupScales: volScaled ? groupShock.scales : null,
+    ivMovePct: ivMove,
+    fxMovePct: fxMove,
+    adverse: true,
+  }), [shock, target, horizonDays, volScaled, groupShock, ivMove, fxMove])
   const direct = buildDirectPriceStress(positions, entries)
   const [selectedPortfolioId, setSelectedPortfolioId] = useState(null)
   const [hermesStatus, setHermesStatus] = useState({ loading: true, available: null, model: null })
@@ -185,6 +196,11 @@ export default function PortfolioStressTestPanel({ entries, positions = [], load
   const contributions = buildScenarioContributions(selectedPortfolio, selectedScenario?.id)
   const losses = contributions.filter(row => row.pnl < 0)
   const offsets = contributions.filter(row => row.pnl > 0).reverse()
+  const selectedProducts = selectedPortfolio?.products || []
+  const repricedCount = selectedProducts.filter(product => product.scenarioMethods.some(row => /^bs/.test(row.method))).length
+  const fxExposedCount = selectedProducts.filter(product => product.fxExposed).length
+  const selectedGroupKeys = new Set(selectedProducts.map(product => product.groupKey))
+  const groupMoves = groupShock.groups.filter(group => selectedGroupKeys.has(group.key))
 
   return (
     <Box sx={{ border: '1px solid #dfe6ee', borderRadius: 2, overflow: 'hidden', backgroundColor: '#fbfdff' }}>
@@ -206,6 +222,16 @@ export default function PortfolioStressTestPanel({ entries, positions = [], load
             <TextField select size="small" label="最大冲击" value={shock} onChange={event => setShock(Number(event.target.value))}>
               {[10, 20, 30, 50].map(value => <MenuItem key={value} value={value}>±{value}%</MenuItem>)}
             </TextField>
+            <TextField select size="small" label="各标的幅度" value={volScaled ? 'volatility' : 'uniform'} disabled={Boolean(target)} onChange={event => setShockMode(event.target.value)} sx={{ minWidth: 130 }}>
+              <MenuItem value="uniform">相同幅度</MenuItem>
+              <MenuItem value="volatility">按波动率缩放</MenuItem>
+            </TextField>
+            <TextField select size="small" label="隐含波动率" value={ivMove} onChange={event => setIvMove(Number(event.target.value))} sx={{ minWidth: 110 }}>
+              {[0, -20, 20].map(value => <MenuItem key={value} value={value}>{value === 0 ? '不变' : `IV ${signedPercent(value)}`}</MenuItem>)}
+            </TextField>
+            <TextField select size="small" label="美元兑欧元" value={fxMove} onChange={event => setFxMove(Number(event.target.value))} sx={{ minWidth: 110 }}>
+              {[0, -10, -5, 5, 10].map(value => <MenuItem key={value} value={value}>{value === 0 ? '不变' : `美元 ${signedPercent(value)}`}</MenuItem>)}
+            </TextField>
             {PORTFOLIO_STRESS_HORIZONS.map(days => <Button key={days} size="small" variant={horizonDays === days ? 'contained' : 'outlined'} onClick={() => handleHorizonChange(days)}>
               {days === 0 ? '即时' : `${days} 天`}
             </Button>)}
@@ -226,10 +252,10 @@ export default function PortfolioStressTestPanel({ entries, positions = [], load
             <Table size="small" aria-label="投资组合对比" sx={{ '& th': { whiteSpace: 'nowrap' }, '& th:first-of-type, & td:first-of-type': { minWidth: 145, position: 'sticky', left: 0, zIndex: 1, backgroundColor: '#fff' }, '& tr.Mui-selected td:first-of-type': { backgroundColor: '#edf4fc' } }}>
               <TableHead><TableRow>
                 <TableCell>组合</TableCell><TableCell align="right">持仓市值</TableCell><TableCell align="right">剩余现金</TableCell>
-                {stressEnabled && <><TableCell align="right">下跌 {shock}% 盈亏</TableCell><TableCell align="right">上涨 {shock}% 盈亏</TableCell><TableCell align="right">最差情景盈亏</TableCell><TableCell>相较当前基准</TableCell></>}
+                {stressEnabled && <><TableCell align="right">下跌 {shock}%{volScaled ? '（基准）' : ''} 盈亏</TableCell><TableCell align="right">上涨 {shock}%{volScaled ? '（基准）' : ''} 盈亏</TableCell><TableCell align="right">最差情景盈亏</TableCell><TableCell>相较当前基准</TableCell></>}
               </TableRow></TableHead>
               <TableBody>{report.portfolios.map(portfolio => {
-                const noExposure = portfolio.shockProductCount === 0 && horizonDays === 0
+                const noExposure = portfolio.shockProductCount === 0 && horizonDays === 0 && !ivMove && !fxMove
                 const delta = comparePortfolioStress(baseline, portfolio)
                 const down = portfolio.scenarioResults.find(row => row.id === 'shock_0')
                 const up = portfolio.scenarioResults.find(row => row.id === 'shock_4')
@@ -259,7 +285,13 @@ export default function PortfolioStressTestPanel({ entries, positions = [], load
           <Typography variant="caption" color="text.secondary">
             各方案使用相同测试本金 {compactCurrency(report.coverage.coveredValue)}：候选方案把本金等权分配给选中产品，单只敞口不超过净值 8%，WATCH、卖出信号或敞口未知的产品不加仓，分不完的部分留作零收益现金；未覆盖仓位保持不变。
             {stressEnabled ? '最差盈亏改善比较各方案各自的最差情景；上涨盈亏变化比较同一上涨情景。切换测试参数不会重新选股；单标的冲击只能选择当前所选组合中的标的，切换到不含该标的的组合时恢复为所有标的。' : '开启冲击测试可比较调整后的情景盈亏。'}
+            {stressEnabled && !target ? ' 最差情景包含“各标的逆向”：每个标的各自取对该组合最不利的终点涨跌，不同标的上的多空仓位不再互相抵消。' : ''}
           </Typography>
+          {stressEnabled && (volScaled || ivMove !== 0 || fxMove !== 0) && <Typography variant="caption" color="text.secondary">
+            {volScaled ? `按波动率缩放：±${shock}% 是 IV 处于中位数（${groupShock.referenceVolatilityPct ?? '—'}%）的标的的幅度，其余标的按自身 IV 在 0.4–2.5 倍内放大或缩小${groupShock.unknownCount ? `；${groupShock.unknownCount} 个标的没有权证 IV，按 ±${shock}% 计算` : ''}。` : ''}
+            {ivMove !== 0 ? `IV ${signedPercent(ivMove)} 为相对变化，只影响所选组合中按 Black-Scholes 重估的 ${repricedCount} 只权证。` : ''}
+            {fxMove !== 0 ? `美元 ${signedPercent(fxMove)} 只作用于所选组合中 ${fxExposedCount} 只美元标的产品（共 ${selectedProducts.length} 只）；是否美元按标的行情的报价币种判断，其他币种未计汇率影响。` : ''}
+          </Typography>}
         </>}
 
         {selectedPortfolio && <>
@@ -294,7 +326,7 @@ export default function PortfolioStressTestPanel({ entries, positions = [], load
             </Stack>
             {selectedPortfolio.shockProductCount === 0 && <Alert severity="info" sx={{ mt: 1 }}>
               无所选标的直接敞口；模型未模拟其他标的的相关性传导。
-              {horizonDays === 0 ? '即时盈亏不变，组合市值并未归零。' : '当前期限仍计入时间损耗或到期支付影响。'}
+              {horizonDays === 0 ? (ivMove || fxMove ? '即时盈亏只来自所选的 IV 与汇率冲击。' : '即时盈亏不变，组合市值并未归零。') : '当前期限仍计入时间损耗或到期支付影响。'}
             </Alert>}
             <Typography variant="body2" sx={{ my: 1 }}>
               情景盈亏 <Box component="span" sx={{ color: pnlColor(selectedScenario?.pnl), fontWeight: 800 }}>{signedMoney(selectedScenario?.pnl)}</Box> ·
@@ -304,6 +336,12 @@ export default function PortfolioStressTestPanel({ entries, positions = [], load
               <ContributionList title="主要亏损来源" rows={losses} empty="该情景没有亏损产品" />
               <ContributionList title="收益抵消来源" rows={offsets} empty="该情景没有盈利产品" />
             </Box>
+            {volScaled && groupMoves.length > 0 && <Box component="details" sx={{ mt: 1.5 }}>
+              <Typography component="summary" variant="body2" sx={{ cursor: 'pointer' }}>各标的冲击幅度（{groupMoves.length} 个标的）</Typography>
+              <Typography variant="caption" color="text.secondary" component="div" sx={{ mt: 0.5 }}>
+                {groupMoves.map(group => `${group.name} ±${number.format(shock * group.scale)}%（${group.volatilityPct == null ? '无 IV' : `IV ${number.format(group.volatilityPct)}%`}）`).join(' · ')}
+              </Typography>
+            </Box>}
             <Box component="details" sx={{ mt: 1.5 }}>
               <Typography component="summary" variant="body2" sx={{ cursor: 'pointer' }}>完整情景结果</Typography>
               <TableContainer><Table size="small" aria-label="完整情景结果" sx={{ minWidth: 540 }}>
@@ -424,7 +462,7 @@ export default function PortfolioStressTestPanel({ entries, positions = [], load
           </Alert>
         ) : null}
         <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1.25 }}>
-          组合按固定的 30 天、全标的 ±10% 参考情景和风险规则筛选；数据更新时重新生成。冲击测试只衡量既定组合的影响，不代表预期收益或盈利概率。计算口径：候选把相同测试本金等权分配给选中产品，分不完的部分留作零收益现金，忽略交易费用；账户影响仅计已测部分的损益。权证使用局部敏感度和时间损耗近似，30/90 天误差可能很大。Turbo 按假设融资利率（美元 4%、欧元 2% 参考利率 ± 3% 利差）逐日调整融资水平，开放式敲出价随之移动；Factor 计入融资、1% 年费和波动损耗，波动率优先取同标的权证 IV，缺失按 50%。两步路径是假设连续两个重置周期发生冲击、随后持平，只有 Factor 和敲出检查使用中间路径；权证仍按终点近似。敲出按保守零回收处理，未模拟具体残值、日内重置、发行人实际融资条款、发行人信用、买卖价差及汇率变化。长期五档终点情景仍是假设末期单次冲击。
+          组合按固定的 30 天、全标的 ±10% 参考情景和风险规则筛选；数据更新时重新生成。冲击测试只衡量既定组合的影响，不代表预期收益或盈利概率。计算口径：候选把相同测试本金等权分配给选中产品，分不完的部分留作零收益现金，忽略交易费用；账户影响仅计已测部分的损益。到期晚于测试期限的权证用 Black-Scholes 完整重估：波动率由当前报价反推，再按情景后的标的价格、剩余期限和 IV 变化重新定价，已包含时间价值损耗；报价无法反推，或反推结果与提供方 IV 相差一倍以上（多见于深度价内、报价与标的不同步）时改用提供方 IV，两者都缺才退回 Delta / Omega 线性近似。重估假设欧式行权、无股息、情景前后波动率不随标的涨跌自动变化。按波动率缩放用各标的权证 IV 的中位数相对全部标的中位数的比值调整幅度。“各标的逆向”情景让每个标的各自取对该组合最不利的终点涨跌，是不考虑相关性的上限估计。汇率冲击只作用于美元标的产品，按到期支付以新汇率折算处理。Turbo 按假设融资利率（美元 4%、欧元 2% 参考利率 ± 3% 利差）逐日调整融资水平，开放式敲出价随之移动；Factor 计入融资、1% 年费和波动损耗，波动率优先取同标的权证 IV，缺失按 50%。两步路径是假设连续两个重置周期发生冲击、随后持平，只有 Factor 和敲出检查使用中间路径；权证仍按终点近似。敲出按保守零回收处理，未模拟具体残值、日内重置、发行人实际融资条款、发行人信用、买卖价差，以及美元以外的汇率变化。长期五档终点情景仍是假设末期单次冲击。
         </Typography>
         </Box>
       </Stack>
@@ -446,7 +484,7 @@ function ContributionList({ title, rows, empty }) {
     <Typography variant="body2" fontWeight={700}>{title}</Typography>
     {rows.length === 0 ? <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>{empty}</Typography> : <>
       <Typography variant="caption" color="text.secondary">合计 {signedMoney(rows.reduce((sum, row) => sum + row.pnl, 0))} · 展示前 {Math.min(5, rows.length)} 个</Typography>
-      <TableContainer><Table size="small" aria-label={title}><TableBody>{rows.slice(0, 5).map(row => <TableRow key={row.id}><TableCell>{row.name}<Typography variant="caption" component="div" color="text.secondary">{row.groupName}</Typography></TableCell><PnlCell value={row.pnl} /></TableRow>)}</TableBody></Table></TableContainer>
+      <TableContainer><Table size="small" aria-label={title}><TableBody>{rows.slice(0, 5).map(row => <TableRow key={row.id}><TableCell>{row.name}<Typography variant="caption" component="div" color="text.secondary">{row.groupName}{row.movePct ? ` · 标的 ${signedPercent(row.movePct)}` : ''}</Typography></TableCell><PnlCell value={row.pnl} /></TableRow>)}</TableBody></Table></TableContainer>
     </>}
   </Box>
 }
