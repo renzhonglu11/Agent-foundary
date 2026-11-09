@@ -1,16 +1,17 @@
 # 机会识别
 
-本文说明仓位监控页"机会识别"面板的两部分：标的筛选和换仓测算，以及为隐含波动率分位积累数据的方式。面板列出的是当天满足的规则条件和理论测算，不是预测，也不是买入建议。
+本文说明仓位监控页"机会识别"面板：标的筛选、真实权证搜索与换仓、独立观察列表、理论合约参考，以及隐含波动率历史。
+
+2026-11-10：第 4 步补齐真实产品搜索和未持有候选池，在 `feat/opportunities` 分支实现。面板列出的是规则条件、提供方报价和模型测算，不是预测或交易指令。
 
 规则以代码为准；修改下列文件时同步更新本文。
 
 ## 范围与数据边界
 
-系统的行情和条款来源都是按 ISIN 查询已持有产品，没有按标的搜索产品的数据源。因此：
-
-- 标的筛选只覆盖持仓涉及、且能映射到 Alpaca 代码的标的（含 Tier 2、Tier 3）。
-- 换仓测算给出的是合约类型（行权价与期限），不是具体产品；没有未持有产品的报价。
-- 要推荐具体的替代产品或筛选未持有的产品，需要先接入产品搜索数据源。
+- 新搜索来源为 [GS Markets 官方产品搜索](https://www.gs.de/de/produkte/hebelprodukte/call-put-optionsscheine)。使用该站公开页面的 `searchProducts` / `getSecuritizedProduct` GraphQL 查询；2026-11-10 验证了真实返回的 ISIN、标的标识、到期日、方向、条款、买卖报价、报价时间及 IV。接口不是有稳定性承诺的公共 SDK，失败时明确报错。
+- 范围是数据源可检索的普通权证（股票、指数、商品和外汇类），包括其他发行人；不代表全市场，也不能证明某券商可成交。复杂/封顶/多标的产品不纳入这个模型。
+- 标的筛选覆盖当前持仓（含 Tier 2、Tier 3）和观察列表。美股代码仅从明确的美国上市标识映射；无映射的产品仍显示在观察列表，但没有 Alpaca 日线筛选。最多请求 100 个日线标的，持仓优先。
+- 观察列表独立于交易与持仓数据。加入、刷新或删除观察产品不改变数量、市值、压力测试分母或退场信号。
 
 ## 代码位置
 
@@ -23,6 +24,11 @@
 | `backend/src/services/iv_history.rs` | IV 历史统计与分位 |
 | `backend/src/services/daily_bars.rs` | 日线统计，含 20 日波动率的一年分位 |
 | `backend/migrations/20261109010000_create_structured_product_iv_history.sql` | IV 历史表 |
+| `backend/src/services/product_candidates.rs`、`warrant_fields.graphql` | 搜索、精确换仓筛选、报价解析与观察列表刷新 |
+| `backend/src/api/handlers/product_candidates.rs` | 搜索和观察列表接口 |
+| `backend/migrations/20261110010000_create_product_watchlist.sql` | 独立观察列表 |
+| `web/src/utils/productCandidates.js` | 实际买卖报价、等资金换仓计算和机会标的合并 |
+| `web/src/components/ProductCandidatesPanel.jsx`、`web/src/hooks/useProductCandidates.js` | 搜索、分页、观察列表及失败状态 |
 
 ## 标的筛选
 
@@ -44,7 +50,35 @@
 
 20 日波动率的一年分位由后端计算：对每个交易日取截至当日的 20 日年化波动率，当前值高于其中多少比例即为分位；至少需要 60 个滚动窗口（约四个月日线）。
 
-## 换仓测算
+## 真实产品搜索与换仓
+
+- 可输入标的名称、代码或 ISIN，按 Call/Put 和最早到期日筛选；每页 30 只，有前后分页。页面明确区分提供方总数、本页结果和因条款不符排除的记录。搜索排序为到期日、点差；本页还可按横盘损耗或最差情景改善排序。
+- 从持仓权证进入换仓时，先按原 ISIN 读取真实条款，再用精确的 `assets.id`、同方向、严格更晚到期日搜索；解析后再次检查，不能用公司名模糊匹配 ADR 或另一上市地。无法识别原产品时明确失败，仍可单独按名称搜索研究。
+- 展示具体 ISIN/WKN、发行人、来源链接、行权价、到期日、比率、买价/卖价、报价和抓取时间、IV 与其历史分位。搜索结果和观察列表都可显示模型指标。
+- 用中间价反推 IV；反推无解，或与提供方 IV 相差超过两倍时，回退提供方 IV 并注明。GS IV 原始单位为百分数，统一转换为小数。行权价与标的保留原币种，模型值乘比率后按明确汇率换成 EUR。
+- 30 天内标的 −20% / 不变 / +20% 的预估卖出价，按当前买价乘模型价格变化比计算，相当于固定当前相对点差；新购收益以当前卖价为成本。到期后的模型价格为内在价值。
+- 换仓资金 = 原产品买价 × 实际持有数量。候选数量 = 向下取整（换仓资金 ÷ 候选卖价），余款留现金。比较双方在相同标的现价、汇率和情景下的欧元损益，列出最差损失改善、横盘改善、上涨损益差和新产品点差成本。
+- 仅对 EUR 报价、USD/EUR 标的、明确 `DOMESTIC` 结算的普通权证估算。Quanto、未知条款、过期产品、暂停/未知交易状态、无有效双边报价均保留明细但不生成模型数字。
+- 产品和标的市场时间必须已知、不得超前超过 2 分钟、年龄不超过 36 小时，双方时差不超过 1 小时；换仓两份产品的报价时差也不得超过 1 小时。该阈值是保守的数据门槛，周末也不自动放宽，不声称是交易日历判断。页面每分钟重新检查时间。
+- USD 换算须有最近 7 天内的 Frankfurter 汇率；配置兜底汇率不用于此处买入测算。手续费、税费、交易单位限制、未来点差变化、波动率曲面和现金利息未计入。
+
+## 观察列表与接口
+
+`product_watchlist` 以 ISIN 去重，最多 100 只；添加只接受 ISIN，由后端独立取数验证，不信任浏览器提交的报价。支持直接输入 ISIN、搜索结果加入、逐只刷新与删除，重新启动后保留。
+
+| 接口 | 用途 |
+|---|---|
+| `GET /api/structured-products/candidates?query=Tesla&direction=call&minExpiry=2027-01-01&offset=0` | 普通搜索，条件除 query 外可选 |
+| `GET /api/structured-products/candidates?rollFrom=ISIN[&minExpiry=YYYY-MM-DD&offset=0]` | 同标的、同方向、更长期限换仓搜索 |
+| `GET /api/structured-products/watchlist` | 读取保存的产品与原始时间 |
+| `POST /api/structured-products/watchlist`，JSON `{"isin":"…"}` | 添加或刷新一只产品 |
+| `DELETE /api/structured-products/watchlist/{isin}` | 删除观察记录，保留已积累的 IV 历史 |
+
+公开来源请求串行执行，15 秒超时；相同查询缓存 5 分钟，最多 128 个缓存项，缓存读取不重置抓取时间。接口异常不会被解释为空搜索成功，也不会覆盖已有观察记录。
+
+后端启动时及每 6 小时刷新观察列表，各产品间隔 500 毫秒。删除期间的后台刷新不会把已删产品加回；页面不用打开也能积累观察产品的 IV。这仅是第 4 步的数据收集，不包含第 5 步的后台风险引擎或预警生命周期。
+
+## 理论合约参考
 
 对象是可以定价的权证；退场信号原因为到期、保本概率或横盘损耗的排在前面并默认显示，仅趋势逆向不算换仓理由。
 
@@ -72,6 +106,8 @@
 - `GET /api/structured-products/iv-history` 返回最近两年内每个产品的观测天数、首末日期、最新值、最小值、最大值；观测达到 20 天后给出分位，即此前观测中低于最新值的比例。
 - 标的层面取该标的各产品分位的中位数。
 
+观察列表使用同一 IV 历史表。GS 没有给出独立的 Greek 市场时间，因此以关联报价的 UTC 日期作为观测日期，并标记 `gs.de:watchlist_quote_date`；只接受最近 36 小时内、未超前超过 2 分钟的报价。旧报价反复刷新不增加观测天数，也不会覆盖同日更新的观测。不补造无法取得的历史 IV。真实可用的分位仍需累积至少 20 个观测日。
+
 局限：单只权证的 IV 会随价内外程度和剩余期限漂移，分位只能粗略反映期权贵贱；持仓更换后新产品要重新积累。
 
 ## 验证
@@ -82,4 +118,4 @@ npm --prefix web run build
 cargo test
 ```
 
-回归测试在 `web/src/utils/opportunityScreen.test.js`、`web/src/utils/rollWhatIf.test.js`、`backend/src/services/iv_history.rs`、`backend/src/services/daily_bars.rs` 和 `backend/src/infrastructure/db/sqlite_market_data_repository.rs`（按日去重与跳过过期缓存）。
+回归测试还包括 `web/src/utils/productCandidates.test.js` 和 `backend/src/services/product_candidates.rs`：真实公开响应解析、ISIN 校验、标的/方向/期限匹配、提供方失败和缓存、观察列表不改变持仓、IV 日期去重、币种与报价时差、买卖价差及换仓资金守恒。`fixtures/gs_warrant_search.json` 是公开提供方样例，不包含账户数据。

@@ -27,6 +27,8 @@ import { buildRollWhatIfs } from '../utils/rollWhatIf.js'
 import { buildWatchlistGroups, canonicalGroupKey } from '../utils/watchlistGrouping.js'
 import { useAlpacaDailyStats } from '../hooks/useAlpacaDailyStats.js'
 import { useIvHistory } from '../hooks/useIvHistory.js'
+import { useProductWatchlist } from '../hooks/useProductCandidates.js'
+import { mergeOpportunityGroups } from '../utils/productCandidates.js'
 import ExitSignalsPanel from './ExitSignalsPanel.jsx'
 import OpportunitiesPanel from './OpportunitiesPanel.jsx'
 import PortfolioStressTestPanel from './PortfolioStressTestPanel.jsx'
@@ -108,6 +110,8 @@ export default function PositionsActionBoard({ data, riskData, riskLoading, risk
   const [clickedRowId, setClickedRowId] = useState(null)
   const totalMarketValue = Number(data?.summary?.totalMarketValue) || 0
   const totalCostBasis = Number(data?.summary?.totalCostBasis) || 0
+  const productWatchlist = useProductWatchlist()
+  const heldIsins = useMemo(() => new Set((data?.positions || []).filter(p => Math.abs(Number(p.quantity) || 0) > 1e-6).map(p => p.symbol)), [data])
   const watchlistGroups = useMemo(() => {
     const heldSymbols = new Set((data?.positions || []).filter(position => Math.abs(Number(position.quantity) || 0) > 1e-6).map(position => position.symbol))
     const heldEnrichment = (structuredProducts || []).filter(item => heldSymbols.has(item.isin))
@@ -115,6 +119,7 @@ export default function PositionsActionBoard({ data, riskData, riskLoading, risk
   }, [data, structuredProducts, alpacaQuotes])
   const tier1Groups = watchlistGroups.tier1
   const allGroups = useMemo(() => [...watchlistGroups.tier1, ...watchlistGroups.tier2, ...watchlistGroups.tier3], [watchlistGroups])
+  const opportunityGroups = useMemo(() => mergeOpportunityGroups(allGroups, productWatchlist.items, heldIsins), [allGroups, productWatchlist.items, heldIsins])
   const riskByKey = useMemo(() => buildRiskMap(riskData), [riskData])
   const groupsWithRisk = useMemo(() => (
     tier1Groups
@@ -126,18 +131,18 @@ export default function PositionsActionBoard({ data, riskData, riskLoading, risk
   ), [riskByKey, tier1Groups])
   const productEntries = useMemo(() => buildProductActionEntries(groupsWithRisk, totalMarketValue), [groupsWithRisk, totalMarketValue])
   // Tier 1 underlyings first, so they are kept if the backend's symbol limit cuts the list.
-  const underlyingSymbols = useMemo(() => [...new Set(allGroups.map(group => group.alpacaSymbol).filter(Boolean))].slice(0, 100), [allGroups])
+  const underlyingSymbols = useMemo(() => [...new Set(opportunityGroups.map(group => group.alpacaSymbol).filter(Boolean))].slice(0, 100), [opportunityGroups])
   const dailyStats = useAlpacaDailyStats(underlyingSymbols)
   const ivHistory = useIvHistory()
   const exitReport = useMemo(() => buildExitSignals(productEntries, dailyStats.data), [productEntries, dailyStats.data])
   const opportunityScreen = useMemo(() => buildOpportunityScreen({
-    groups: allGroups,
+    groups: opportunityGroups,
     dailyStats: dailyStats.data,
     impliedByGroup: new Map(buildGroupShockScales(productEntries).groups.map(group => [group.key, group.volatilityPct != null ? group.volatilityPct / 100 : null])),
     ivHistoryByIsin: new Map(ivHistory.data.map(history => [history.isin, history])),
     exitSignals: exitReport.signals,
     totalMarketValue,
-  }), [allGroups, dailyStats.data, productEntries, ivHistory.data, exitReport, totalMarketValue])
+  }), [opportunityGroups, dailyStats.data, productEntries, ivHistory.data, exitReport, totalMarketValue])
   const rollWhatIfs = useMemo(() => buildRollWhatIfs(productEntries, exitReport.signals), [productEntries, exitReport])
   const sections = useMemo(() => (
     actionDefinitions.map((definition) => ({
@@ -264,6 +269,10 @@ export default function PositionsActionBoard({ data, riskData, riskLoading, risk
         />
 
         <OpportunitiesPanel
+          watchlist={productWatchlist}
+          entries={productEntries}
+          heldIsins={heldIsins}
+          ivHistory={ivHistory.data}
           screen={opportunityScreen}
           rolls={rollWhatIfs}
           loading={dailyStats.loading}

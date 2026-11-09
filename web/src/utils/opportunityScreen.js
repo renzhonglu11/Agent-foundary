@@ -67,8 +67,14 @@ export function buildOpportunityScreen({ groups = [], dailyStats = [], impliedBy
     const sma50 = positive(stats.sma50)
     const sma200 = positive(stats.sma200)
     const realized = positive(stats.realizedVol60d) ?? positive(stats.realizedVol20d)
-    const implied = positive(impliedByGroup.get(group.key))
-    const products = (group.derivatives || []).map(row => row.symbol)
+    const watchCandidates = group.watchCandidates || []
+    const freshCandidateIv = watchCandidates.filter(p => {
+      const age = Date.now() - Date.parse(p.quoteAsOf)
+      return age >= -120_000 && age <= 36 * 3_600_000 && p.status === 'ACTIVE'
+    }).map(p => positive(p.iv)).filter(v => v != null)
+    const heldIv = (group.derivatives || []).map(p => positive(p.iv)).filter(v => v != null).map(v => v > 1 ? v / 100 : v)
+    const implied = median([...(heldIv.length ? heldIv : [positive(impliedByGroup.get(group.key))]), ...freshCandidateIv].filter(v => v != null))
+    const products = [...new Set([...(group.derivatives || []).map(row => row.symbol), ...watchCandidates.map(p => p.isin)])]
     const histories = products.map(isin => ivHistoryByIsin.get(isin)).filter(Boolean)
     const ivPercentiles = histories.map(history => finite(history.percentile)).filter(value => value != null)
     const exitLevel = products.map(isin => exitLevelById.get(isin)).filter(Boolean)
@@ -100,6 +106,7 @@ export function buildOpportunityScreen({ groups = [], dailyStats = [], impliedBy
       ivObservations: histories.length ? Math.max(...histories.map(history => history.observations || 0)) : 0,
       weightPct: round(totalMarketValue > 0 ? Math.abs(Number(group.marketValue) || 0) / totalMarketValue * 100 : 0),
       productCount: (group.derivatives?.length || 0) + (group.stocks?.length || 0),
+      watchCount: watchCandidates.length,
       exitLevel,
     }
     const tags = tagsFor(row, thresholds)

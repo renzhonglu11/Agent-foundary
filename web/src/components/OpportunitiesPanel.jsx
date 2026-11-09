@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import {
   Alert,
   Box,
+  Button,
   Chip,
   Divider,
   FormControlLabel,
@@ -20,6 +21,7 @@ import {
 import { compactCurrency, number } from '../utils/formatters.js'
 import { OPPORTUNITY_DEFAULTS } from '../utils/opportunityScreen.js'
 import { ROLL_ASSUMPTIONS, ROLL_EXTENSION_DAYS } from '../utils/rollWhatIf.js'
+import ProductCandidatesPanel from './ProductCandidatesPanel.jsx'
 
 const toneColors = { positive: 'success', caution: 'warning', neutral: 'default' }
 const exitLevelMeta = {
@@ -52,6 +54,7 @@ function ScreenTable({ rows, minObservations }) {
             <TableCell sx={{ maxWidth: 220 }}>
               <Typography variant="body2" fontWeight={700} noWrap title={row.name}>{row.name}</Typography>
               <Line>{row.symbol} · 仓位 {percentage(row.weightPct)} · {row.productCount} 个持仓</Line>
+              {row.watchCount > 0 && <Line>{row.watchCount} 个未持有观察产品</Line>}
               {exitLevelMeta[row.exitLevel] && <Chip size="small" color={exitLevelMeta[row.exitLevel].color} label={exitLevelMeta[row.exitLevel].label} sx={{ height: 18, mt: 0.25 }} />}
             </TableCell>
             <TableCell sx={{ minWidth: 220, maxWidth: 320 }}>
@@ -84,13 +87,14 @@ function ScreenTable({ rows, minObservations }) {
   )
 }
 
-function RollBlock({ roll }) {
+function RollBlock({ roll, onSearch }) {
   const rows = [roll.current, ...roll.alternatives]
   return (
     <Paper variant="outlined" sx={{ p: 1.25 }}>
       <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap', alignItems: 'baseline' }}>
         <Typography variant="body2" fontWeight={800}>{roll.name}</Typography>
         <Typography variant="caption" color="text.secondary">{roll.groupName} · 标的现价 {number.format(roll.spot)} {roll.currency} · 持仓 {compactCurrency(roll.currentValue)}</Typography>
+        <Button size="small" onClick={() => onSearch(roll.id)}>查找真实替代品</Button>
       </Stack>
       {roll.reasons.length > 0 && <Line color="warning.main">{roll.reasons.join('；')}</Line>}
       {!roll.calibrated && <Line>当前报价无法反推波动率，当前合约按提供方 IV 估算，可信度较低。</Line>}
@@ -121,15 +125,19 @@ function RollBlock({ roll }) {
   )
 }
 
-export default function OpportunitiesPanel({ screen = [], rolls = [], loading, statsError, ivMinObservations = 20 }) {
+export default function OpportunitiesPanel({ screen = [], rolls = [], loading, statsError, ivMinObservations = 20, watchlist, entries = [], heldIsins, ivHistory = [] }) {
   const [showAllUnderlyings, setShowAllUnderlyings] = useState(false)
   const [showAllWarrants, setShowAllWarrants] = useState(false)
+  const [rollFrom, setRollFrom] = useState('')
+  const searchRef = useRef(null)
+  const searchRoll = isin => {
+    setRollFrom(isin)
+    searchRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
   const flaggedRolls = rolls.filter(roll => roll.flagged)
   const visibleRolls = showAllWarrants ? rolls : flaggedRolls.slice(0, ROLL_PREVIEW_COUNT)
   const visibleScreen = showAllUnderlyings ? screen : screen.slice(0, SCREEN_PREVIEW_ROWS)
   const thresholds = OPPORTUNITY_DEFAULTS
-
-  if (!screen.length && !rolls.length && !loading) return null
 
   return (
     <Box sx={{ border: '1px solid #dfe6ee', borderRadius: 2, overflow: 'hidden', backgroundColor: '#fbfdff' }}>
@@ -143,7 +151,7 @@ export default function OpportunitiesPanel({ screen = [], rolls = [], loading, s
           <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
             <Box>
               <Typography variant="body2" fontWeight={800}>标的筛选</Typography>
-              <Typography variant="caption" color="text.secondary">覆盖持仓中能取得美股日线的 {screen.length} 个标的，按“有利条件数 − 需谨慎条件数”排序。</Typography>
+              <Typography variant="caption" color="text.secondary">覆盖持仓与观察列表中能取得美股日线的 {screen.length} 个标的，按“有利条件数 − 需谨慎条件数”排序。日线请求上限 100 个标的，持仓优先。</Typography>
             </Box>
             {screen.length > SCREEN_PREVIEW_ROWS && <FormControlLabel control={<Switch size="small" checked={showAllUnderlyings} onChange={event => setShowAllUnderlyings(event.target.checked)} />} label="显示全部" />}
           </Stack>
@@ -152,17 +160,19 @@ export default function OpportunitiesPanel({ screen = [], rolls = [], loading, s
             : <Typography variant="body2" color="text.secondary">{loading ? '读取日线统计…' : '没有可筛选的标的。'}</Typography>}
         </Box>
 
+        {watchlist && <Box ref={searchRef}><ProductCandidatesPanel {...{ watchlist, entries, rolls, heldIsins, rollFrom, ivHistory }} onRollFromChange={setRollFrom} /></Box>}
+
         <Box>
           <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
             <Box>
-              <Typography variant="body2" fontWeight={800}>换仓测算</Typography>
+              <Typography variant="body2" fontWeight={800}>理论合约参考</Typography>
               <Typography variant="caption" color="text.secondary">
-                {flaggedRolls.length} 只权证的退场信号指向到期、保本概率或时间损耗。下面把它们与同一标的上的三种理论合约对比；没有产品搜索数据，所以给出的是合约类型而不是具体产品。
+                {flaggedRolls.length} 只权证的退场信号指向到期、保本概率或时间损耗。下面保留三种理论合约作为参考；点击“查找真实替代品”可查询具体 ISIN 和报价。
               </Typography>
             </Box>
             {rolls.length > 0 && <FormControlLabel control={<Switch size="small" checked={showAllWarrants} onChange={event => setShowAllWarrants(event.target.checked)} />} label={`显示全部 ${rolls.length} 只权证`} />}
           </Stack>
-          {visibleRolls.length ? <Stack spacing={1} sx={{ maxHeight: 640, overflowY: 'auto' }}>{visibleRolls.map(roll => <RollBlock key={roll.id} roll={roll} />)}</Stack>
+          {visibleRolls.length ? <Stack spacing={1} sx={{ maxHeight: 640, overflowY: 'auto' }}>{visibleRolls.map(roll => <RollBlock key={roll.id} roll={roll} onSearch={searchRoll} />)}</Stack>
             : <Typography variant="body2" color="text.secondary">当前没有需要测算换仓的权证。</Typography>}
           {!showAllWarrants && flaggedRolls.length > ROLL_PREVIEW_COUNT && <Line>另有 {flaggedRolls.length - ROLL_PREVIEW_COUNT} 只被标记的权证，打开“显示全部”查看。</Line>}
         </Box>
@@ -181,7 +191,7 @@ export default function OpportunitiesPanel({ screen = [], rolls = [], loading, s
           <Typography variant="caption" color="text.secondary" component="div" sx={{ mt: 0.75 }}>
             换仓测算中的三种合约都在原到期日上延长 {ROLL_EXTENSION_DAYS} 天，行权价分别为原行权价、标的现价、价内 10%，比率与当前合约相同。理论价格按 Black-Scholes 计算，波动率取同标的权证 IV 的中位数；当前合约用自己报价反推的波动率。
             真实产品的报价含发行人点差，不同行权价和期限的波动率也不同，所以理论价格只用于比较合约类型。保本概率是持有到期的口径。杠杆是标的变动 1% 时合约价格的变动百分比。
-            筛选和测算都只覆盖已有持仓涉及的标的；系统没有未持有产品的数据来源。
+            真实产品来自 GS Markets 可检索范围，观察列表独立保存；日线筛选仅支持能精确映射到美股代码的标的，其余产品仍保留在观察列表中。
           </Typography>
         </Box>
       </Stack>

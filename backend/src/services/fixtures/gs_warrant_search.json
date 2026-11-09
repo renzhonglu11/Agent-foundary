@@ -1,0 +1,165 @@
+{
+  "data": {
+    "searchProducts": {
+      "paginatedProducts": {
+        "totalCount": 4542,
+        "results": [
+          {
+            "id": "DE000UG7MVU1",
+            "status": "ACTIVE",
+            "synonyms": {
+              "isn": "DE000UG7MVU1",
+              "wpk": "UG7MVU"
+            },
+            "assets": [
+              {
+                "id": "TSLA UW",
+                "name": "Tesla",
+                "currency": "USD",
+                "assetSynonyms": {
+                  "isn": "US88160R1014",
+                  "ticker": null
+                },
+                "assetPrice": {
+                  "spotPrice": 378.2
+                }
+              }
+            ],
+            "classificationInfo": {
+              "flavour": {
+                "code": "COVPLAIN",
+                "description": "Optionsschein"
+              }
+            },
+            "issuanceInfo": {
+              "issuer": {
+                "symbol": "Unicredit",
+                "name": "UniCredit Bank GmbH"
+              }
+            },
+            "productTerms": {
+              "denominated": "EUR",
+              "paymentStyle": "DOMESTIC",
+              "ratio": 0.1,
+              "expirationDate": {
+                "year": 2027,
+                "month": "JUNE",
+                "day": 16,
+                "localeFormatted": "2027-06-16"
+              },
+              "levels": [
+                {
+                  "claimType": {
+                    "key": "CALL"
+                  },
+                  "direction": null
+                }
+              ],
+              "strike": 690
+            },
+            "economics": {
+              "underlyingPricings": [
+                {
+                  "assetName": "TSLA UW",
+                  "value": 378.2,
+                  "currency": "USD",
+                  "time": 1794257999119,
+                  "priceSource": "GOLDMAN_SACHS_INDICATION"
+                }
+              ],
+              "price": {
+                "bid": 0.3499999940395355,
+                "ask": 0.4399999976158142,
+                "spot": null,
+                "time": 1794257781000
+              },
+              "realTimeData": {
+                "tradableStatus": true,
+                "delta": 0.07,
+                "omega": 5.11,
+                "impliedVolatility": 51.52
+              }
+            }
+          },
+          {
+            "id": "DE000UG3NHT9",
+            "status": "ACTIVE",
+            "synonyms": {
+              "isn": "DE000UG3NHT9",
+              "wpk": "UG3NHT"
+            },
+            "assets": [
+              {
+                "id": "TSLA UW",
+                "name": "Tesla",
+                "currency": "USD",
+                "assetSynonyms": {
+                  "isn": "US88160R1014",
+                  "ticker": null
+                },
+                "assetPrice": {
+                  "spotPrice": 378.2
+                }
+              }
+            ],
+            "classificationInfo": {
+              "flavour": {
+                "code": "COVPLAIN",
+                "description": "Optionsschein"
+              }
+            },
+            "issuanceInfo": {
+              "issuer": {
+                "symbol": "Unicredit",
+                "name": "UniCredit Bank GmbH"
+              }
+            },
+            "productTerms": {
+              "denominated": "EUR",
+              "paymentStyle": "DOMESTIC",
+              "ratio": 0.1,
+              "expirationDate": {
+                "year": 2027,
+                "month": "JUNE",
+                "day": 16,
+                "localeFormatted": "2027-06-16"
+              },
+              "levels": [
+                {
+                  "claimType": {
+                    "key": "CALL"
+                  },
+                  "direction": null
+                }
+              ],
+              "strike": 300
+            },
+            "economics": {
+              "underlyingPricings": [
+                {
+                  "assetName": "TSLA UW",
+                  "value": 378.2,
+                  "currency": "USD",
+                  "time": 1794257999119,
+                  "priceSource": "GOLDMAN_SACHS_INDICATION"
+                }
+              ],
+              "price": {
+                "bid": 9.5,
+                "ask": 9.59000015258789,
+                "spot": null,
+                "time": 1794257996000
+              },
+              "realTimeData": {
+                "tradableStatus": false,
+                "delta": 0.78,
+                "omega": 2.74,
+                "impliedVolatility": 51.45
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}

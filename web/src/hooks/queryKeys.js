@@ -10,4 +10,5 @@ export const queryKeys = {
   ],
   alpacaDailyStats: (symbols) => ['alpacaDailyStats', symbols.join(',')],
   ivHistory: ['ivHistory'],
+  productWatchlist: ['productWatchlist'],
 };

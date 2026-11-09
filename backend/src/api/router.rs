@@ -65,6 +65,18 @@ pub fn build(state: Arc<AppState>, frontend_origin: &str) -> anyhow::Result<Rout
             get(handlers::structured_products_iv_history),
         )
         .route(
+            "/api/structured-products/candidates",
+            get(handlers::search_product_candidates),
+        )
+        .route(
+            "/api/structured-products/watchlist",
+            get(handlers::product_watchlist).post(handlers::save_product_watchlist),
+        )
+        .route(
+            "/api/structured-products/watchlist/{isin}",
+            delete(handlers::remove_product_watchlist),
+        )
+        .route(
             "/api/structured-products-enrichment/status",
             get(handlers::structured_products_enrichment_status),
         )
