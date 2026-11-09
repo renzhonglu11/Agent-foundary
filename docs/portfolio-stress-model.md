@@ -134,8 +134,8 @@ Options still use the endpoint calculation. The five endpoint scenarios assume
 a single terminal shock, including for factors. For horizons above zero, turbos
 accrue assumed financing on the strike (open-end barriers move with it) and
 factors pay financing, an index fee and volatility drag; see
-[portfolio-candidate-policy.md](portfolio-candidate-policy.md) for formulas and
-assumptions. Actual issuer financing terms, intraday resets, actual settlement
+[Holding costs](#holding-costs-for-turbos-and-factor-certificates) for formulas
+and assumptions. Actual issuer financing terms, intraday resets, actual settlement
 terms, FX changes, liquidity and transaction costs are omitted.
 
 The table shows return on the common tested capital and impact relative to
@@ -143,16 +143,70 @@ account valuation. Untested positions are retained but their scenario P&L is
 unknown, so account impact is partial, not whole-account VaR. Plans ignore
 transaction costs, bid-ask spreads and taxes.
 
-Called without `options.plans`, `buildPortfolioStressReport` still builds the
-earlier strategy-selected candidates described in
-[portfolio-candidate-policy.md](portfolio-candidate-policy.md). The page no
-longer uses that path.
-
 Hermes receives common-capital returns, cash/untested context and an
 `assumptions` string describing the active shock settings and, for each plan,
 how many products it sells and reduces. Single-underlying
 reviews remain disabled because the bounded review contract does not identify the
 shocked group. A stale review is discarded when its originating report changes.
+
+## Holding costs for turbos and factor certificates
+
+Applied only for horizons above zero (`web/src/utils/carryCost.js`). No data
+source supplies issuer terms, so these are assumptions in `CARRY_ASSUMPTIONS`:
+
+| Parameter | Default |
+|---|---|
+| Reference rate r, by the underlying's quote currency | USD 4%, otherwise EUR 2% |
+| Financing spread s | 3% |
+| Factor index fee | 1% per year |
+| Volatility when no IV is available σ | 50% |
+
+**Turbos (`open_end_turbo`, `knock_out`).** The financing level accrues daily. A
+call loses `strike × ratio × (r + s)` per year; a put gains
+`strike × ratio × (r − s)`, which is a loss when `s > r`. Without a strike the
+financed amount is approximated from leverage: `price × (L − 1)` for calls and
+`price × (L + 1)` for puts. An open-end turbo's barrier moves with the financing
+level and the knock-out check uses the barrier at the end of the horizon; a
+`knock_out` barrier is fixed and interest accrues for at most the remaining
+life. Method suffix `+financing`.
+
+**Factor certificates.** The endpoint price is multiplied by
+
+```
+exp( ±financing × days/360 − (fee + ½·β(β−1)·σ²) × days/365 )
+```
+
+- β is the signed leverage: `L` long, `−L` short.
+- Financing: long pays `(L − 1)(r + s)`, short earns `(L + 1)(r − s)`.
+- σ is the product's own IV, else the median IV of products on the same
+  underlying, else the default. Method suffixes `+carry_iv`, `+carry_group_iv`
+  and `+carry_default_vol`.
+- The endpoint shock stays a single jump (`1 + β × move`); the volatility drag
+  stands for the cost of the underlying moving back and forth meanwhile.
+
+A turbo without strike and without leverage carries no financing cost.
+
+## Model reliability
+
+Every projection names the methods it used, joined by `+`. Their penalties add
+up and the worst of the fixed reference scenarios (30 days, all underlyings
+−10% to +10%) sets the product's score (`web/src/utils/modelQuality.js`):
+
+| Method component | Penalty |
+|---|---|
+| `bs`, `delta`, `expiry_intrinsic`, `knockout`, `factor_leverage`, `factor_path`, `theta`, `financing`, `carry_iv` | 0 |
+| `carry_group_iv` | 0.02 |
+| `bs_iv`, `omega`, `linear` | 0.03 |
+| `carry_default_vol` | 0.05 |
+| `intrinsic`, `leverage` | 0.06 |
+| `approx` | 0.08 |
+| `default_leverage` (no leverage data, 1x assumed) | 0.15 |
+| unknown component | 0.10 |
+
+A product scoring 0.10 or more is flagged `MODEL_FALLBACK` and shown as
+"模型兜底估算" in the membership table. The flag marks results that deserve less
+trust; it does not change any P&L. When adding a method component, add its
+penalty.
 
 ## Verification
 

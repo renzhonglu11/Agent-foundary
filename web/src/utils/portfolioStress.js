@@ -8,20 +8,7 @@ import {
 import { clamp, finite, positive, round } from './numbers.js'
 import { factorCarry, median, referenceRate, turboCarry, underlyingVolatility, volatilityFraction } from './carryCost.js'
 import { IMPLIED_VOLATILITY_RANGE, blackScholesPrice, impliedVolatility } from './optionPricing.js'
-import {
-  CANDIDATE_STRATEGIES,
-  STRATEGY_DEFINITIONS,
-  allocateEqualWeight,
-  candidateEligible,
-  candidatePolicy,
-  eligibleForAnyStrategy,
-  modelQualityPenalty,
-  productRiskPenalty,
-  productRiskSignals,
-  scaleProfile,
-  selectDiversified,
-  strategyScores,
-} from '../strategies/index.js'
+import { MODEL_FALLBACK_THRESHOLD, modelQualityPenalty } from './modelQuality.js'
 
 export const PORTFOLIO_STRESS_HORIZONS = [0, 7, 30, 90]
 
@@ -357,15 +344,7 @@ function buildProductProfile(entry, horizonDays, scenarios, portfolioTotals) {
   const capitalWeightPct = portfolioTotals.totalCostBasis > 0
     ? (costBasis / portfolioTotals.totalCostBasis) * 100
     : 0
-  const returns = results.map((result) => result.pnl / currentValue)
-  const flat = results.find((result) => result.scenarioId === 'flat') || results[Math.floor(results.length / 2)]
-  const worstReturn = Math.min(...returns)
-  const bestReturn = Math.max(...returns)
-  const meanReturn = returns.reduce((sum, value) => sum + value, 0) / returns.length
-  const flatReturn = flat ? flat.pnl / currentValue : 0
-  const riskSignals = productRiskSignals(entry)
-  const modelPenalty = modelQualityPenalty(results)
-  const riskPenalty = productRiskPenalty(entry, riskSignals) + modelPenalty
+  const daysToExpiry = finite(entry.riskLeg?.daysToExpiry)
 
   return {
     id: String(entry.item?.symbol || entry.item?.id || productName(entry.item)),
@@ -381,19 +360,15 @@ function buildProductProfile(entry, horizonDays, scenarios, portfolioTotals) {
     theta: finite(entry.item?.theta),
     ivPct: impliedVolatilityPct(entry.item?.iv),
     fxExposed: usdUnderlying(entry.item),
-    riskSignals,
+    daysToExpiry,
+    // The current contract is about to end, whatever is done with the exposure.
+    isRoll: entry.primaryAction === 'ROLL' || (daysToExpiry != null && daysToExpiry >= 0 && daysToExpiry < 7),
     currentValue: round(currentValue),
     costBasis: round(costBasis),
     navWeightPct: round(navWeightPct),
     capitalWeightPct: round(capitalWeightPct),
     results,
-    worstReturn,
-    bestReturn,
-    meanReturn,
-    flatReturn,
-    modelPenalty,
-    riskPenalty,
-    scores: strategyScores({ worstReturn, bestReturn, meanReturn, flatReturn, riskPenalty }),
+    modelPenalty: modelQualityPenalty(results),
   }
 }
 
@@ -484,13 +459,13 @@ function aggregatePortfolio(id, title, description, inputProfiles, scenarios, ho
       delta: profile.delta,
       theta: profile.theta,
       ivPct: profile.ivPct,
-      daysToExpiry: profile.riskSignals.daysToExpiry,
+      daysToExpiry: profile.daysToExpiry,
       currentValue: round(profile.currentValue),
       allocationPct: round(currentValue > 0 ? (profile.currentValue / currentValue) * 100 : 0),
       navWeightPct: profile.navWeightPct,
       capitalWeightPct: profile.capitalWeightPct,
       positionScalePct: profile.positionScalePct ?? 100,
-      selectionFlags: profile.selectionFlags || [],
+      selectionFlags: profile.modelPenalty >= MODEL_FALLBACK_THRESHOLD ? ['MODEL_FALLBACK'] : [],
       fxExposed: profile.fxExposed,
       scenarioPnls: profile.results.map(result => ({ scenarioId: result.scenarioId, pnl: result.pnl, movePct: round(result.movePct) })),
       scenarioMethods: profile.results.map((result) => ({
@@ -498,6 +473,25 @@ function aggregatePortfolio(id, title, description, inputProfiles, scenarios, ho
         method: result.method,
       })),
     })),
+  }
+}
+
+// Scales a position and everything derived from its size.
+function scaleProfile(profile, scale, totals) {
+  const costBasis = profile.costBasis * scale
+  return {
+    ...profile,
+    // Unrounded so the plan's total matches the capital it keeps invested exactly.
+    currentValue: profile.currentValue * scale,
+    costBasis: round(costBasis),
+    navWeightPct: round(profile.navWeightPct * scale),
+    capitalWeightPct: round(totals.totalCostBasis > 0 ? costBasis / totals.totalCostBasis * 100 : 0),
+    results: profile.results.map((result) => ({
+      ...result,
+      currentValue: round(result.currentValue * scale),
+      pnl: round(result.pnl * scale),
+    })),
+    positionScalePct: round(scale * 100),
   }
 }
 
@@ -509,14 +503,12 @@ function applyReductions(profiles, reductions = {}, totals) {
     const reductionPct = clamp(finite(reductions[profile.id]) ?? 0, 0, 100)
     if (reductionPct >= 100) return []
     if (reductionPct <= 0) return [profile]
-    const scale = 1 - reductionPct / 100
-    return [scaleProfile(profile, scale, profile.currentValue * scale, totals)]
+    return [scaleProfile(profile, 1 - reductionPct / 100, totals)]
   })
 }
 
-// With `options.plans` ([{ id, title, description, reductions }]) the report
-// compares the current holdings with those plans. Without it, it compares them
-// with the strategy-selected candidates.
+// Compares the current holdings with `options.plans`
+// ([{ id, title, description, reductions }]).
 export function buildPortfolioStressReport(
   entries,
   horizonDays = 30,
@@ -534,8 +526,9 @@ export function buildPortfolioStressReport(
     totals.totalMarketValue = buildDirectPriceStress(portfolioTotals.positions, inputEntries)[0].value
   }
   const inputValue = inputEntries.reduce((sum, entry) => sum + currentPositionValue(entry.item), 0)
-  // Rank against a fixed reference, independent of the optional stress controls.
-  // Require expiry inputs up front so changing the horizon cannot remove members.
+  // A product is covered when the fixed reference scenarios and a 90-day flat
+  // scenario can all be priced, so changing the stress controls or the horizon
+  // cannot add or remove members.
   const profiles = inputEntries.map((entry) => {
     const profile = buildProductProfile(entry, 30, PORTFOLIO_STRESS_SCENARIOS, totals)
     if (!profile || !calculatePositionStress(entry, { id: 'flat', movePct: 0 }, 90)) return null
@@ -554,19 +547,13 @@ export function buildPortfolioStressReport(
     outsideValue: round(Math.max(0, totals.totalMarketValue - coveredValue)),
     omitted: inputEntries.filter(entry => !profiles.some(p => p.id === String(entry.item?.symbol || entry.item?.id || productName(entry.item)))).map(entry => ({ name: productName(entry.item), value: round(currentPositionValue(entry.item)), reason: '缺少有效报价、数量、标的价格或到期支付参数' })),
   }
-  const candidatePools = Object.fromEntries(CANDIDATE_STRATEGIES.map((strategy) => [
-    strategy,
-    profiles.filter((profile) => candidateEligible(profile, strategy)),
-  ]))
-  const eligible = profiles.filter(eligibleForAnyStrategy)
-  const excluded = profiles.filter((profile) => !eligibleForAnyStrategy(profile))
   const rollOpportunities = profiles
-    .filter((profile) => candidatePolicy(profile).excludedReason === 'roll_current_contract')
+    .filter(profile => profile.isRoll)
     .map((profile) => ({
       id: profile.id,
       name: profile.name,
       groupName: profile.groupName,
-      daysToExpiry: profile.riskSignals.daysToExpiry,
+      daysToExpiry: profile.daysToExpiry,
     }))
 
   if (!profiles.length) {
@@ -577,19 +564,15 @@ export function buildPortfolioStressReport(
       portfolios: [],
       coverage,
       productCount: 0,
-      eligibleProductCount: 0,
-      excludedProductCount: 0,
-      watchIncludedProductCount: 0,
-      exposureCappedProductCount: 0,
       rollOpportunities: [],
     }
   }
 
-  const candidates = [
+  const portfolios = [
     aggregatePortfolio(
       'current',
       '当前监控基准',
-      '保留全部可计算 Tier 1 仓位，用于对比候选组合。',
+      '全部可计算的 Tier 1 仓位，作为各减仓方案的比较起点。',
       profiles,
       scenarios,
       horizon,
@@ -598,7 +581,7 @@ export function buildPortfolioStressReport(
   ]
 
   for (const plan of options.plans || []) {
-    candidates.push(aggregatePortfolio(
+    portfolios.push(aggregatePortfolio(
       String(plan.id),
       plan.title,
       plan.description || '',
@@ -609,41 +592,17 @@ export function buildPortfolioStressReport(
     ))
   }
 
-  for (const definition of options.plans ? [] : STRATEGY_DEFINITIONS) {
-    const selected = selectDiversified(
-      candidatePools[definition.strategy],
-      definition.strategy,
-      definition.limit,
-    )
-    if (selected.length) {
-      candidates.push(aggregatePortfolio(
-        definition.id,
-        definition.title,
-        definition.description,
-        allocateEqualWeight(selected, coveredValue, totals),
-        scenarios,
-        horizon,
-        definition.strategy,
-      ))
-    }
-  }
-
   return {
     modelMode: 'stress_only',
-    comparison: options.plans ? 'plans' : 'candidates',
     coverage,
     horizonDays: horizon,
     scenarios,
-    portfolios: candidates.map(candidate => ({
-      ...candidate,
-      cashValue: round(Math.max(0, coveredValue - candidate.currentValue)),
-      scenarioResults: candidate.scenarioResults.map(result => ({ ...result, accountImpactPct: round(totals.totalMarketValue > 0 ? result.pnl / totals.totalMarketValue * 100 : 0), testedCapitalReturnPct: round(coveredValue > 0 ? result.pnl / coveredValue * 100 : 0) })),
+    portfolios: portfolios.map(portfolio => ({
+      ...portfolio,
+      cashValue: round(Math.max(0, coveredValue - portfolio.currentValue)),
+      scenarioResults: portfolio.scenarioResults.map(result => ({ ...result, accountImpactPct: round(totals.totalMarketValue > 0 ? result.pnl / totals.totalMarketValue * 100 : 0), testedCapitalReturnPct: round(coveredValue > 0 ? result.pnl / coveredValue * 100 : 0) })),
     })),
     productCount: profiles.length,
-    eligibleProductCount: eligible.length,
-    excludedProductCount: excluded.length,
-    watchIncludedProductCount: eligible.filter((profile) => profile.riskStatus === 'WATCH').length,
-    exposureCappedProductCount: eligible.filter((profile) => profile.riskSignals.isOverexposed).length,
     rollOpportunities,
   }
 }
@@ -669,7 +628,7 @@ function stressAssumptions(report) {
     ivMovePct ? `Warrant IV ${signed(ivMovePct)} relative in every scenario.` : '',
     fxMovePct ? `USD ${signed(fxMovePct)} vs EUR in every scenario, applied to products on USD underlyings only.` : '',
     scenarios.some(scenario => scenario.adverse) ? 'Scenario "adverse": each underlying takes the endpoint move that hurts that portfolio most; its movePct 0 is a placeholder.' : '',
-    report.comparison === 'plans' ? `Portfolios other than "current" trim the current holdings; proceeds are zero-return cash and nothing is bought. ${planSummaries(report)}` : '',
+    report.portfolios.some(portfolio => portfolio.kind === 'plan') ? `Portfolios other than "current" trim the current holdings; proceeds are zero-return cash and nothing is bought. ${planSummaries(report)}` : '',
   ].filter(Boolean).join(' ')
 }
 

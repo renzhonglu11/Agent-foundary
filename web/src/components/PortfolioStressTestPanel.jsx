@@ -54,7 +54,6 @@ const productTypeLabels = {
 const adjustmentLabels = {
   exit: '模拟退出',
   reduce: '减仓',
-  increase: '加仓',
 }
 
 const exitLevelMeta = {
@@ -65,10 +64,6 @@ const exitLevelRank = ['urgent', 'warn', 'ok', 'unknown']
 const reductionLabel = pct => (pct >= 100 ? '退出' : `减 ${pct}%`)
 
 const selectionFlagLabels = {
-  WATCH_PENALIZED: 'WATCH 降权',
-  ELASTIC_ONLY: '仅高弹性',
-  EXPOSURE_CAPPED_8_PCT: '敞口限至 8%',
-  HELD_AT_CURRENT: '不加仓',
   MODEL_FALLBACK: '模型兜底估算',
 }
 
@@ -418,12 +413,12 @@ export default function PortfolioStressTestPanel({ entries, positions = [], exit
           <Paper variant="outlined" sx={{ p: 1.5 }}>
             <Typography variant="body2" fontWeight={800}>调整差异</Typography>
             <Typography variant="body2" sx={{ mt: 0.5, mb: 1 }}>
-              保留 {adjustments.filter(row => row.action === 'retain').length} 个 · 加仓 {adjustments.filter(row => row.action === 'increase').length} 个 · 减仓 {adjustments.filter(row => row.action === 'reduce').length} 个 · 模拟退出 {adjustments.filter(row => row.action === 'exit').length} 个；
+              保留 {adjustments.filter(row => row.action === 'retain').length} 个 · 减仓 {adjustments.filter(row => row.action === 'reduce').length} 个 · 模拟退出 {adjustments.filter(row => row.action === 'exit').length} 个；
               释放现金 {compactCurrency(selectedPortfolio.cashValue)}。
             </Typography>
             <Typography variant="caption" color="text.secondary">权重统一以当前可测试本金为分母，包含假设现金；以下是模型差异，未生成交易指令。</Typography>
             {changed.length ? <TableContainer sx={{ maxHeight: 320 }}><Table size="small" stickyHeader aria-label="调整差异" sx={{ minWidth: 540, '& th': { whiteSpace: 'nowrap' } }}>
-              <TableHead><TableRow><TableCell>产品 / 标的</TableCell><TableCell>方案变化</TableCell><TableCell align="right">当前 → 候选权重</TableCell><TableCell align="right">金额变化</TableCell></TableRow></TableHead>
+              <TableHead><TableRow><TableCell>产品 / 标的</TableCell><TableCell>方案变化</TableCell><TableCell align="right">当前 → 方案权重</TableCell><TableCell align="right">金额变化</TableCell></TableRow></TableHead>
               <TableBody>{changed.map(row => <TableRow key={row.id}>
                 <TableCell>{row.name}<Typography variant="caption" component="div" color="text.secondary">{row.groupName}</Typography></TableCell>
                 <TableCell>{adjustmentLabels[row.action]}</TableCell>
@@ -485,7 +480,7 @@ export default function PortfolioStressTestPanel({ entries, positions = [], exit
                     <TableRow>
                       <TableCell>产品</TableCell>
                       <TableCell>标的</TableCell>
-                      <TableCell>风险处理 / 置信度</TableCell>
+                      <TableCell>置信度 / 模型</TableCell>
                       <TableCell align="right">组合 / 持仓市值 / 本金</TableCell>
                     </TableRow>
                   </TableHead>
@@ -504,7 +499,7 @@ export default function PortfolioStressTestPanel({ entries, positions = [], exit
                               <Chip
                                 key={flag}
                                 size="small"
-                                color={flag === 'ELASTIC_ONLY' ? 'warning' : 'default'}
+                                color="warning"
                                 variant="outlined"
                                 label={selectionFlagLabels[flag] || flag}
                                 sx={{ height: 19 }}
@@ -518,7 +513,7 @@ export default function PortfolioStressTestPanel({ entries, positions = [], exit
                             持仓市值 {number.format(product.navWeightPct)}% · 本金 {number.format(product.capitalWeightPct)}%
                           </Typography>
                           {product.positionScalePct !== 100 ? (
-                            <Typography variant="caption" color={product.positionScalePct < 100 ? 'warning.main' : 'info.main'}>按原仓位的 {number.format(product.positionScalePct)}% 配置</Typography>
+                            <Typography variant="caption" color="warning.main">按原仓位的 {number.format(product.positionScalePct)}% 配置</Typography>
                           ) : null}
                         </TableCell>
                       </TableRow>

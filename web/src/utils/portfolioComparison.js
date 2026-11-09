@@ -1,10 +1,10 @@
 const round = value => Math.round(value * 100) / 100
 
 // Both weights include the same tested capital, including hypothetical cash.
-// Exits, reductions and increases are modeled differences, not trade instructions.
-export function buildPortfolioAdjustments(baseline, candidate) {
-  if (!baseline || !candidate) return []
-  const retained = new Map(candidate.products.map(product => [product.id, product]))
+// Exits and reductions are modeled differences, not trade instructions.
+export function buildPortfolioAdjustments(baseline, plan) {
+  if (!baseline || !plan) return []
+  const retained = new Map(plan.products.map(product => [product.id, product]))
   return baseline.products.map(product => {
     const next = retained.get(product.id)
     const before = product.currentValue
@@ -13,7 +13,7 @@ export function buildPortfolioAdjustments(baseline, candidate) {
       id: product.id,
       name: product.name,
       groupName: product.groupName,
-      action: !next ? 'exit' : next.positionScalePct < 100 ? 'reduce' : next.positionScalePct > 100 ? 'increase' : 'retain',
+      action: !next ? 'exit' : next.positionScalePct < 100 ? 'reduce' : 'retain',
       before,
       after,
       changeValue: round(after - before),
@@ -43,15 +43,15 @@ export function buildScenarioContributions(portfolio, scenarioId) {
   })).sort((a, b) => (a.pnl ?? 0) - (b.pnl ?? 0))
 }
 
-export function comparePortfolioStress(baseline, candidate) {
-  if (!baseline || !candidate) return null
+export function comparePortfolioStress(baseline, plan) {
+  if (!baseline || !plan) return null
   const up = portfolio => portfolio.scenarioResults
     .filter(scenario => !scenario.pathMoves?.length && !scenario.adverse)
     .reduce((selected, scenario) => !selected || scenario.movePct > selected.movePct ? scenario : selected, null)
   const baselineUp = up(baseline)
-  const candidateUp = up(candidate)
+  const planUp = up(plan)
   return {
-    worstPnlImprovement: round(candidate.worstPnl - baseline.worstPnl),
-    upPnlDifference: baselineUp && candidateUp ? round(candidateUp.pnl - baselineUp.pnl) : null,
+    worstPnlImprovement: round(plan.worstPnl - baseline.worstPnl),
+    upPnlDifference: baselineUp && planUp ? round(planUp.pnl - baselineUp.pnl) : null,
   }
 }

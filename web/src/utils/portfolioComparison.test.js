@@ -26,10 +26,6 @@ test('adjustment differences preserve common weights and cash conservation for r
   assert.equal(rows.reduce((sum, row) => sum + row.releasedValue, 0), baseline.currentValue - candidate.currentValue)
   assert.ok(buildPortfolioAdjustments(baseline, baseline).every(row => row.action === 'retain'))
   assert.deepEqual(buildPortfolioAdjustments(null, candidate), [])
-
-  const reallocated = { ...candidate, products: [{ ...baseline.products[2], currentValue: 600, positionScalePct: 200 }] }
-  const increase = buildPortfolioAdjustments(baseline, reallocated).find(row => row.id === 'c')
-  assert.deepEqual([increase.id, increase.action, increase.changeValue, increase.releasedValue], ['c', 'increase', 300, 0])
 })
 
 test('comparison separates worst-case improvement from the same upward endpoint tradeoff', () => {
@@ -63,10 +59,10 @@ test('shock targets list only the underlyings held by the selected portfolio', (
     entry('N2', 'nvda', 'NVIDIA'),
     entry('M1', 'mu', 'Micron', 'HARD_BLOCKED'),
     entry('A1', 'amd', 'AMD'),
-  ], 0)
+  ], 0, undefined, {}, { plans: [{ id: 'plan', title: 'Plan', reductions: { M1: 100, N1: 50 } }] })
   const baselineTargets = buildShockTargets(report.portfolios.find(p => p.kind === 'baseline'))
-  const candidateTargets = buildShockTargets(report.portfolios.find(p => p.kind === 'defensive'))
+  const planTargets = buildShockTargets(report.portfolios.find(p => p.kind === 'plan'))
   assert.deepEqual(baselineTargets, [{ key: 'amd', name: 'AMD' }, { key: 'mu', name: 'Micron' }, { key: 'nvda', name: 'NVIDIA' }])
-  assert.deepEqual(candidateTargets, [{ key: 'amd', name: 'AMD' }, { key: 'nvda', name: 'NVIDIA' }])
+  assert.deepEqual(planTargets, [{ key: 'amd', name: 'AMD' }, { key: 'nvda', name: 'NVIDIA' }])
   assert.deepEqual(buildShockTargets(null), [])
 })

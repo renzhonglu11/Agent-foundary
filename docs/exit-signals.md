@@ -48,7 +48,7 @@
 **Turbo / Knock-out**
 
 - 障碍距离：标的现价到敲出价的百分比，以及折合多少个日波动（`|ln(敲出价 / 现价)| ÷ (σ ÷ √252)`）。
-- 7 天、30 天敲出概率：价格无漂移的对数正态路径在连续观察下触及敲出价的概率（反射原理公式，对数漂移 −σ²/2）。开放式 Turbo 的敲出价按假设融资成本上移（见 [portfolio-candidate-policy.md](portfolio-candidate-policy.md)）。
+- 7 天、30 天敲出概率：价格无漂移的对数正态路径在连续观察下触及敲出价的概率（反射原理公式，对数漂移 −σ²/2）。开放式 Turbo 的敲出价按假设融资成本上移（见 [portfolio-stress-model.md](portfolio-stress-model.md) 的 Holding costs 一节）。
 
 **权证**
 

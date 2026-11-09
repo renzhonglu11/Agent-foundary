@@ -39,7 +39,6 @@ const baseline = report([]).portfolios[0]
 
 test('a plan trims the current holdings, keeps the proceeds as cash and never buys', () => {
   const result = report([{ id: 'plan', title: 'Plan', reductions: { NEAR: 100, FAR: 50, UNKNOWN: 100 } }])
-  assert.equal(result.comparison, 'plans')
   assert.deepEqual(result.portfolios.map(p => [p.id, p.kind]), [['current', 'baseline'], ['plan', 'plan']])
   const plan = result.portfolios[1]
   assert.deepEqual(plan.products.map(p => [p.id, p.positionScalePct, p.currentValue]), [['FAR', 50, 500], ['HEDGE', 100, 500]])
@@ -57,13 +56,6 @@ test('a plan trims the current holdings, keeps the proceeds as cash and never bu
   // Selling everything leaves cash only.
   const cash = report([{ id: 'cash', title: 'Cash', reductions: { NEAR: 100, FAR: 100, HEDGE: 100 } }]).portfolios[1]
   assert.deepEqual([cash.productCount, cash.currentValue, cash.cashValue, cash.worstPnl], [0, 0, 2500, 0])
-})
-
-test('the report without plans still compares strategy candidates', () => {
-  const legacy = buildPortfolioStressReport(entries, 0, scenarios, totals)
-  assert.equal(legacy.comparison, 'candidates')
-  assert.ok(legacy.portfolios.some(p => p.kind === 'defensive'))
-  assert.ok(!report([]).portfolios.some(p => p.kind === 'defensive'))
 })
 
 test('reductions are ranked by worst-case loss avoided per euro of upside given up', () => {
