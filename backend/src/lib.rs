@@ -80,6 +80,11 @@ impl App {
             .await;
         let fx_rate_cache: Arc<dyn FxRateCache> = Arc::new(SqliteFxRateCache::new(pool.clone()));
         let fx_rate_service = FxRateService::new(fx_rate_cache, settings.fx_rates.clone());
+        let product_candidates = services::product_candidates::ProductCandidates::new(
+            pool.clone(),
+            fx_rate_service.clone(),
+        )?;
+        product_candidates.start_watchlist_refresh();
         let alpaca_market_data_service = AlpacaMarketDataService::new(
             settings.alpaca.clone(),
             fx_rate_service,
@@ -123,6 +128,7 @@ impl App {
             systemd_status_service,
             pnl_snapshot_service,
             portfolio_monitor,
+            product_candidates,
         ));
         let router = router::build(state, &settings.frontend_origin)?;
 

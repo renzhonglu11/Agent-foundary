@@ -183,6 +183,8 @@ data/                    本地数据库、上传文件与缓存（Git 忽略）
 | `GET` | `/data/portfolio-summary.json` | 投资组合摘要的兼容路径 |
 | `POST` | `/api/upload-data` | CSV/PDF 上传，使用 multipart 字段 `files` |
 | `GET` | `/api/stock-analysis/alpaca-quotes` | 股票报价，使用 `symbols` 查询参数 |
+| `GET` | `/api/stock-analysis/alpaca-daily-stats` | 标的日线统计（历史波动率、均线、区间涨跌），使用 `symbols` 查询参数 |
+| `GET` | `/api/structured-products/iv-history` | 各产品隐含波动率的历史观测统计与分位 |
 | `GET` | `/api/structured-products-enrichment` | 持久化产品数据 |
 | `GET` | `/api/structured-products-risk` | 持久化风险评估 |
 | `POST` | `/api/structured-products-enrichment/refresh` | 触发异步数据刷新与风险计算 |

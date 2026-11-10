@@ -29,6 +29,22 @@ pub fn build(state: Arc<AppState>, frontend_origin: &str) -> anyhow::Result<Rout
             get(handlers::portfolio_monitor_status),
         )
         .route(
+            "/api/portfolio-monitor/settings",
+            axum::routing::put(handlers::portfolio_monitor_settings),
+        )
+        .route(
+            "/api/portfolio-monitor/alerts/{key}/acknowledge",
+            axum::routing::post(handlers::portfolio_monitor_acknowledge),
+        )
+        .route(
+            "/api/portfolio-monitor/alerts/{key}/events",
+            get(handlers::portfolio_monitor_alert_events),
+        )
+        .route(
+            "/api/portfolio-monitor/daily",
+            get(handlers::portfolio_monitor_daily),
+        )
+        .route(
             "/api/portfolio-monitor/history",
             get(handlers::portfolio_monitor_history),
         )
@@ -61,12 +77,32 @@ pub fn build(state: Arc<AppState>, frontend_origin: &str) -> anyhow::Result<Rout
             get(handlers::persisted_structured_products_risk),
         )
         .route(
+            "/api/structured-products/iv-history",
+            get(handlers::structured_products_iv_history),
+        )
+        .route(
+            "/api/structured-products/candidates",
+            get(handlers::search_product_candidates),
+        )
+        .route(
+            "/api/structured-products/watchlist",
+            get(handlers::product_watchlist).post(handlers::save_product_watchlist),
+        )
+        .route(
+            "/api/structured-products/watchlist/{isin}",
+            delete(handlers::remove_product_watchlist),
+        )
+        .route(
             "/api/structured-products-enrichment/status",
             get(handlers::structured_products_enrichment_status),
         )
         .route(
             "/api/stock-analysis/alpaca-quotes",
             get(handlers::stock_analysis_alpaca_quotes),
+        )
+        .route(
+            "/api/stock-analysis/alpaca-daily-stats",
+            get(handlers::stock_analysis_alpaca_daily_stats),
         )
         .route(
             "/api/pnl-snapshots",

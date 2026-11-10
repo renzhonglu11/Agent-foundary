@@ -32,8 +32,9 @@ export function getOptionDirection(item) {
   if (item.optionType === 'call' || item.optionType === 'put') return item.optionType
   // Otherwise detect from name text
   const text = `${item.stockName || ''} ${item.instrument || ''} ${item.displayName || ''} ${item.underlying || ''}`.toLowerCase()
-  if (/put|bear|short|turbop|fakts/i.test(text)) return 'put'
-  if (/call|bull|long|turboc|faktl/i.test(text)) return 'call'
+  // Whole words only: "Computer" must not read as a put, nor "Longi" as a call.
+  if (/\b(put|bear|short|turbop|fakts)\b/i.test(text)) return 'put'
+  if (/\b(call|bull|long|turboc|faktl)\b/i.test(text)) return 'call'
   return null
 }
 

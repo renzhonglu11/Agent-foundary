@@ -23,7 +23,7 @@ use crate::{
     },
     config::StructuredProductsSettings,
     domain::portfolio::PortfolioSummaryResponse,
-    services::market_calendar,
+    services::{iv_history, market_calendar},
 };
 
 const STRUCTURED_PRODUCTS_PAYLOAD_KEY: &str = "structured_products_enrichment";
@@ -313,6 +313,21 @@ impl StructuredProductsService {
                 format!("Failed to read persisted realtime payload {payload_key}: {error}"),
             ),
         }
+    }
+
+    /// Where each product's implied volatility stands within its recorded
+    /// observations of the last two years.
+    pub async fn iv_history_payload(&self) -> anyhow::Result<Value> {
+        let since = (chrono::Utc::now() - chrono::Duration::days(730))
+            .format("%Y-%m-%d")
+            .to_string();
+        let observations = self.market_data_repository.load_iv_history(&since).await?;
+        Ok(json!({
+            "generatedAt": chrono::Utc::now().to_rfc3339(),
+            "since": since,
+            "minObservationsForPercentile": iv_history::MIN_OBSERVATIONS_FOR_PERCENTILE,
+            "items": iv_history::summarize(&observations),
+        }))
     }
 
     pub fn status_payload(&self) -> Value {

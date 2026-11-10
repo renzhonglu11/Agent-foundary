@@ -1,11 +1,17 @@
 pub mod alpaca_market_data;
 pub mod apewisdom;
+pub mod daily_bars;
 pub mod fred;
 pub mod hermes_cron_status;
+pub mod iv_history;
 pub mod market_calendar;
+pub mod monitor_alerts;
 pub mod monitor_calendar;
+pub mod monitor_history;
+pub mod monitor_risk;
 pub mod monitor_symbols;
 pub mod pnl_snapshots;
 pub mod portfolio_monitor;
+pub mod product_candidates;
 pub mod structured_products_service;
 pub mod systemd_status;

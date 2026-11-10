@@ -5,7 +5,18 @@ import {
   calculateDrawdown,
   calculateExpiryPnl,
   calculateTimeDecay,
+  getOptionDirection,
 } from './productCalculations.js'
+
+test('direction falls back to whole words in the product name', () => {
+  assert.equal(getOptionDirection({ optionType: 'put', instrument: 'Call 18.12.26 Micron 104' }), 'put')
+  assert.equal(getOptionDirection({ instrument: 'FaktS O.End Nio 10,538' }), 'put')
+  assert.equal(getOptionDirection({ instrument: 'TurboC O.End Micron' }), 'call')
+  assert.equal(getOptionDirection({ instrument: 'Put 17.09.27 DL/YN 158' }), 'put')
+  assert.equal(getOptionDirection({ instrument: 'FaktL O.End Super Micro Computer' }), 'call')
+  assert.equal(getOptionDirection({ instrument: 'Put 17.09.27 Longi Green' }), 'put')
+  assert.equal(getOptionDirection({ instrument: 'Zertifikat Computacenter' }), null)
+})
 
 test('drawdown uses Bezugsverhaeltnis as multiplier for delta impact', () => {
   const result = calculateDrawdown({

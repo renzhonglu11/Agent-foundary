@@ -14,7 +14,7 @@ function isShort(item) {
   return getOptionDirection(item) === 'put'
 }
 
-function referenceRate(item, assumptions) {
+export function referenceRate(item, assumptions = CARRY_ASSUMPTIONS) {
   const currency = String(item?.underlyingSpotRawCurrency || '').toUpperCase()
   return assumptions.referenceRates[currency] ?? assumptions.referenceRates.EUR
 }
@@ -26,13 +26,13 @@ function financingRate(item, assumptions) {
   return isShort(item) ? rate - assumptions.financingSpread : rate + assumptions.financingSpread
 }
 
-function volatilityFraction(value) {
+export function volatilityFraction(value) {
   const numeric = positive(value)
   if (numeric == null) return null
   return numeric <= 1 ? numeric : numeric / 100
 }
 
-function median(values) {
+export function median(values) {
   if (!values.length) return null
   const sorted = [...values].sort((left, right) => left - right)
   const middle = Math.floor(sorted.length / 2)

@@ -223,6 +223,9 @@ no longer finds migrations it does not know.
 
 When no public domain is needed, Caddy serves the active frontend only on the
 VPS loopback interface and proxies `/api/*` and `/data/*` to the backend.
+The site address alone only restricts the HTTP host; `bind 127.0.0.1` must
+also be present to restrict the listening socket. After reloading, verify
+that `ss -ltn '( sport = :3000 )'` shows `127.0.0.1:3000` rather than `*:3000`.
 Install or refresh that configuration from the local checkout:
 
 ```bash

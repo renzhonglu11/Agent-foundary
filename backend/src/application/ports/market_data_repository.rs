@@ -28,8 +28,19 @@ pub struct RealtimePayloadRecord {
     pub updated_at: String,
 }
 
+/// A product's implied volatility on one UTC day (`observed_on` is YYYY-MM-DD).
+#[derive(Debug, Clone, PartialEq)]
+pub struct IvObservation {
+    pub isin: String,
+    pub observed_on: String,
+    pub iv: f64,
+}
+
 #[async_trait::async_trait]
 pub trait MarketDataRepository: Send + Sync {
+    /// Recorded implied volatilities on or after `since` (YYYY-MM-DD).
+    async fn load_iv_history(&self, since: &str) -> anyhow::Result<Vec<IvObservation>>;
+
     async fn load_quotes(
         &self,
         provider: &str,

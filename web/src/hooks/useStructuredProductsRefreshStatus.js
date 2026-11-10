@@ -4,13 +4,16 @@ import { queryKeys } from './queryKeys.js'
 
 export async function fetchStructuredProductsRefreshStatus() {
   const response = await fetch('/api/structured-products-enrichment/status', { cache: 'no-store' })
-  return response.ok ? response.json() : { running: false }
+  if (!response.ok) throw new Error(`产品更新状态读取失败 (${response.status})`)
+  return response.json()
 }
 
 export function useStructuredProductsRefreshStatus() {
   return useQuery({
     queryKey: queryKeys.structuredProductsRefreshStatus,
     queryFn: fetchStructuredProductsRefreshStatus,
+    staleTime: 2_000,
+    refetchOnWindowFocus: true,
     refetchInterval: (query) => (
       query.state.data?.running || query.state.data?.queued ? 3_000 : 30_000
     ),

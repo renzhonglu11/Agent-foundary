@@ -8,4 +8,7 @@ export const queryKeys = {
     cacheOnly ? 'persisted' : 'live',
     symbols.join(','),
   ],
+  alpacaDailyStats: (symbols) => ['alpacaDailyStats', symbols.join(',')],
+  ivHistory: ['ivHistory'],
+  productWatchlist: ['productWatchlist'],
 };

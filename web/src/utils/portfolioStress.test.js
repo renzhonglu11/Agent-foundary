@@ -7,7 +7,9 @@ import {
   calculatePositionStress,
   buildStressScenarios,
   buildDirectPriceStress,
+  buildGroupShockScales,
 } from './portfolioStress.js'
+import { blackScholesPrice } from './optionPricing.js'
 
 test('direct stress uses authoritative holdings values including bonds and signed positions', () => {
   const positions = [
@@ -100,14 +102,15 @@ test('coverage counts uncomputable holdings and consistent account capital inclu
   assert.equal(buildDirectPriceStress(positions, [valid, missing])[2].pnl, -900)
 })
 
-test('candidate cash plus retained holdings equals baseline capital and comparison uses it', () => {
-  const entries = [entry(), entry({ item: { symbol: 'B' }, groupKey: 'b', riskStatus: 'HARD_BLOCKED' })]
-  const report = buildPortfolioStressReport(entries, 0, undefined, { totalMarketValue: 1000 })
-  const candidate = report.portfolios.find(p => p.kind === 'defensive')
-  assert.equal(candidate.cashValue + candidate.currentValue, report.coverage.coveredValue)
-  for (const result of candidate.scenarioResults) {
-    assert.equal(result.testedCapitalReturnPct, Math.round(result.pnl / 400 * 10000) / 100)
-    assert.equal(result.accountImpactPct, Math.round(result.pnl / 1000 * 10000) / 100)
+test('plan cash plus retained holdings equals baseline capital and comparison uses it', () => {
+  const entries = [entry(), entry({ item: { symbol: 'B' }, groupKey: 'b' })]
+  const report = buildPortfolioStressReport(entries, 0, undefined, { totalMarketValue: 1000 }, { plans: [{ id: 'plan', title: 'Plan', reductions: { B: 100 } }] })
+  const plan = report.portfolios.find(p => p.kind === 'plan')
+  assert.equal(plan.cashValue + plan.currentValue, report.coverage.coveredValue)
+  assert.equal(plan.cashValue, 200)
+  for (const result of plan.scenarioResults) {
+    assertClose(result.testedCapitalReturnPct, result.pnl / 400 * 100, 0.0051)
+    assertClose(result.accountImpactPct, result.pnl / 1000 * 100, 0.0051)
   }
   const payload = buildHermesStressReviewPayload(report)
   assert.ok(payload.portfolios.every(p => p.description.length <= 240))
@@ -263,7 +266,7 @@ test('factor carry charges financing, fee and volatility drag on top of the endp
   assert.equal(calculatePositionStress(short, flat, 30).method, 'factor_leverage+carry_default_vol')
 })
 
-test('candidate scoring reference charges turbo and factor carry like warrant decay', () => {
+test('longer horizons charge turbo and factor carry like warrant decay', () => {
   const factor = entry({ item: { symbol: 'FACTOR', productType: 'factor_certificate', leverage: 3, delta: null, theta: null }, groupKey: 'factor' })
   for (const product of [turbo(), factor]) {
     const flatPnl = report => report.portfolios[0].scenarioResults.find(s => s.id === 'flat').pnl
@@ -272,54 +275,34 @@ test('candidate scoring reference charges turbo and factor carry like warrant de
   }
 })
 
-test('candidates reallocate the common tested capital equally instead of keeping small positions', () => {
-  const entries = [
-    entry({ item: { symbol: 'A' }, groupKey: 'a' }),
-    entry({ item: { symbol: 'B' }, groupKey: 'b' }),
-    entry({ item: { symbol: 'C' }, groupKey: 'c' }),
-    entry({ item: { symbol: 'BLOCKED' }, groupKey: 'blocked', riskStatus: 'HARD_BLOCKED' }),
-  ]
-  const report = buildPortfolioStressReport(entries, 0, undefined, { totalMarketValue: 1000 })
-  const defensive = report.portfolios.find(p => p.kind === 'defensive')
-  assert.equal(report.coverage.coveredValue, 800)
-  assert.equal(defensive.currentValue, 800)
-  assert.equal(defensive.cashValue, 0)
-  assert.ok(defensive.products.every(p => p.positionScalePct === 133.33 && p.allocationPct === 33.33))
-})
 
-test('products priced with a fallback model rank below priced ones and are flagged', () => {
+test('products priced with a fallback model are flagged', () => {
   const priced = entry({ item: { symbol: 'PRICED', theta: -0.001 }, groupKey: 'priced' })
   // No delta, omega, strike, ratio or leverage: the stress falls back to 1x.
   const fallback = entry({ item: { symbol: 'FALLBACK', delta: null, theta: null, strikePrice: null, ratio: null, iv: null }, groupKey: 'fallback' })
-  const report = buildPortfolioStressReport([fallback, priced], 30)
-  const defensive = report.portfolios.find(p => p.kind === 'defensive')
-  const methods = defensive.products.find(p => p.id === 'FALLBACK').scenarioMethods.map(m => m.method)
-  assert.ok(methods.every(method => method.includes('default_leverage')))
-  // Unpenalized, the 1x fallback's -10% worst case would outrank the priced -26.5%.
-  assert.deepEqual(defensive.products.map(p => p.id), ['PRICED', 'FALLBACK'])
-  assert.ok(defensive.products[1].selectionFlags.includes('MODEL_FALLBACK'))
-  assert.ok(!defensive.products[0].selectionFlags.includes('MODEL_FALLBACK'))
+  const [baseline] = buildPortfolioStressReport([fallback, priced], 30).portfolios
+  const product = id => baseline.products.find(p => p.id === id)
+  assert.ok(product('FALLBACK').scenarioMethods.every(({ method }) => method.includes('default_leverage')))
+  assert.deepEqual(product('FALLBACK').selectionFlags, ['MODEL_FALLBACK'])
+  assert.deepEqual(product('PRICED').selectionFlags, [])
 })
 
-test('portfolio report excludes blocked legs from candidate combinations but keeps the baseline', () => {
+test('the Hermes payload carries product sensitivities and one method per scenario', () => {
   const entries = [
     entry({ item: { id: 'a', symbol: 'A' }, groupKey: 'a' }),
     entry({ item: { id: 'b', symbol: 'B' }, groupKey: 'b' }),
-    entry({ item: { id: 'c', symbol: 'C' }, groupKey: 'c' }),
     entry({ item: { id: 'blocked', symbol: 'BLOCKED' }, groupKey: 'blocked', riskStatus: 'HARD_BLOCKED', primaryAction: 'SELL' }),
   ]
-  const report = buildPortfolioStressReport(entries, 30)
+  const report = buildPortfolioStressReport(entries, 30, undefined, {}, { plans: [{ id: 'plan', title: 'Plan', reductions: { BLOCKED: 100 } }] })
 
-  assert.equal(report.productCount, 4)
-  assert.equal(report.eligibleProductCount, 3)
-  assert.equal(report.portfolios.length, 4)
-  assert.equal(report.portfolios[0].productCount, 4)
-  assert.ok(report.portfolios.slice(1).every((portfolio) => portfolio.products.every((product) => product.id !== 'BLOCKED')))
+  assert.equal(report.productCount, 3)
+  assert.deepEqual(report.portfolios.map(portfolio => portfolio.productCount), [3, 2])
 
   const payload = buildHermesStressReviewPayload(report)
   assert.equal(payload.modelMode, 'stress_only')
-  assert.equal(payload.portfolios.length, 4)
+  assert.equal(payload.portfolios.length, 2)
   assert.ok(payload.portfolios.every((portfolio) => portfolio.scenarios.length === 5))
+  assert.ok(payload.assumptions.includes('plan: 1 sold, 0 reduced.'))
   const product = payload.portfolios[0].products.find((item) => item.id === 'A')
   assert.equal(product.delta, 0.5)
   assert.equal(product.theta, -0.01)
@@ -329,75 +312,19 @@ test('portfolio report excludes blocked legs from candidate combinations but kee
     product.scenarioMethods.map(({ scenarioId }) => scenarioId),
     payload.portfolios[0].scenarios.map(({ id }) => id),
   )
-  assert.ok(product.scenarioMethods.every(({ method }) => method === 'delta+theta'))
+  assert.ok(product.scenarioMethods.every(({ method }) => method === 'bs'))
 })
 
-test('portfolio candidates manage WATCH reasons separately and register ROLL opportunities', () => {
+test('contracts about to expire or marked ROLL are listed as roll opportunities', () => {
   const entries = [
     entry({ item: { id: 'a', symbol: 'A' }, groupKey: 'a' }),
-    entry({ item: { id: 'b', symbol: 'B' }, groupKey: 'b' }),
-    entry({ item: { id: 'c', symbol: 'C' }, groupKey: 'c' }),
-    entry({
-      item: { id: 'barrier-watch', symbol: 'BARRIER-WATCH' },
-      groupKey: 'barrier-watch',
-      riskStatus: 'WATCH',
-      primaryAction: 'SELL',
-      barrierDistancePct: 0.08,
-    }),
-    entry({
-      item: { id: 'concentrated-watch', symbol: 'CONCENTRATED-WATCH' },
-      groupKey: 'concentrated-watch',
-      riskStatus: 'WATCH',
-      primaryAction: 'SELL',
-      exposureWeightPct: 0.16,
-    }),
-    entry({
-      item: { id: 'roll', symbol: 'ROLL' },
-      groupKey: 'roll',
-      riskStatus: 'WATCH',
-      primaryAction: 'ROLL',
-      daysToExpiry: 5,
-    }),
-    entry({
-      item: { id: 'untrusted-watch', symbol: 'UNTRUSTED-WATCH' },
-      groupKey: 'untrusted-watch',
-      riskStatus: 'WATCH',
-      primaryAction: 'SELL',
-      missingScore: 6,
-    }),
+    entry({ item: { id: 'expiring', symbol: 'EXPIRING' }, groupKey: 'expiring', riskStatus: 'WATCH', primaryAction: 'SELL', daysToExpiry: 5 }),
+    entry({ item: { id: 'marked', symbol: 'MARKED' }, groupKey: 'marked', primaryAction: 'ROLL', daysToExpiry: 40 }),
   ]
-  const report = buildPortfolioStressReport(entries, 30, undefined, {
-    totalMarketValue: 2_000,
-    totalCostBasis: 1_500,
-  })
-  const defensive = report.portfolios.find((portfolio) => portfolio.kind === 'defensive')
-  const balanced = report.portfolios.find((portfolio) => portfolio.kind === 'balanced')
-  const elastic = report.portfolios.find((portfolio) => portfolio.kind === 'elastic')
-
-  assert.equal(report.productCount, 7)
-  assert.equal(report.eligibleProductCount, 5)
-  assert.equal(report.excludedProductCount, 2)
-  assert.equal(report.watchIncludedProductCount, 2)
-  assert.equal(report.exposureCappedProductCount, 1)
-  assert.equal(report.rollOpportunities.length, 1)
-  assert.equal(report.rollOpportunities[0].id, 'ROLL')
-  assert.ok(defensive)
-  assert.ok(balanced)
-  assert.ok(elastic)
-  assert.ok(!defensive.products.some((product) => product.id === 'BARRIER-WATCH'))
-  assert.ok(!balanced.products.some((product) => product.id === 'BARRIER-WATCH'))
-  assert.ok(elastic.products.some((product) => product.id === 'BARRIER-WATCH'))
-  assert.ok(report.portfolios.slice(1).every((portfolio) => (
-    portfolio.products.every((product) => !['ROLL', 'UNTRUSTED-WATCH'].includes(product.id))
-  )))
-
-  const capped = defensive.products.find((product) => product.id === 'CONCENTRATED-WATCH')
-  assert.ok(capped)
-  assert.equal(capped.positionScalePct, 50)
-  assert.equal(capped.currentValue, 100)
-  assert.equal(capped.navWeightPct, 5)
-  assert.equal(capped.capitalWeightPct, 5)
-  assert.ok(capped.selectionFlags.includes('EXPOSURE_CAPPED_8_PCT'))
+  const report = buildPortfolioStressReport(entries, 30)
+  assert.deepEqual(report.rollOpportunities.map(row => [row.id, row.daysToExpiry]), [['EXPIRING', 5], ['MARKED', 40]])
+  // They stay in the baseline; a roll is not a reason to hide the risk.
+  assert.equal(report.portfolios[0].productCount, 3)
 })
 
 test('portfolio report keeps internal, NAV, and invested-capital weights separate', () => {
@@ -424,28 +351,30 @@ test('portfolio report keeps internal, NAV, and invested-capital weights separat
   assert.equal(payload.portfolios[0].products[0].capitalWeightPct, 20)
 })
 
-test('optional shocks preserve portfolio identities, members, sizing and cash across ranges and horizons', () => {
-  const entries = Array.from({ length: 12 }, (_, i) => entry({
-    item: { symbol: `P${i}`, delta: 0.1 + i * 0.1 },
-    groupKey: `g${i}`,
-    exposureWeightPct: i === 0 ? 0.16 : 0.01,
-  }))
+test('shock settings preserve plan identities, members, sizing and cash across ranges and horizons', () => {
+  const entries = Array.from({ length: 12 }, (_, i) => entry({ item: { symbol: `P${i}` }, groupKey: `g${i}` }))
   const totals = { totalMarketValue: 3000 }
-  const base = buildPortfolioStressReport(entries, 0, buildStressScenarios(10), totals)
+  const options = { plans: [{ id: 'plan', title: 'Plan', reductions: { P0: 50, P1: 100, P2: 25 } }] }
+  const base = buildPortfolioStressReport(entries, 0, buildStressScenarios(10), totals, options)
   const composition = report => report.portfolios.map(p => ({
     id: p.id, value: p.currentValue, cash: p.cashValue,
     products: p.products.map(({ id, allocationPct, positionScalePct }) => ({ id, allocationPct, positionScalePct })),
   }))
+  assert.deepEqual(composition(base)[1].products.slice(0, 3), [
+    { id: 'P0', allocationPct: 4.88, positionScalePct: 50 },
+    { id: 'P2', allocationPct: 7.32, positionScalePct: 75 },
+    { id: 'P3', allocationPct: 9.76, positionScalePct: 100 },
+  ])
   for (const horizon of [0, 7, 30, 90]) {
     for (const target of [null, 'g0', 'g11']) {
-      const report = buildPortfolioStressReport(entries, horizon, buildStressScenarios(50, target, horizon > 0), totals)
+      const report = buildPortfolioStressReport(entries, horizon, buildStressScenarios(50, target, horizon > 0), totals, options)
       assert.deepEqual(composition(report), composition(base))
     }
   }
-  const targeted = buildPortfolioStressReport(entries, 0, buildStressScenarios(10, 'g0'), totals)
+  const targeted = buildPortfolioStressReport(entries, 0, buildStressScenarios(10, 'g0'), totals, options)
   assert.notDeepEqual(targeted.portfolios[0].scenarioResults, base.portfolios[0].scenarioResults)
-  assert.ok(targeted.portfolios.find(p => p.kind === 'defensive').products.some(p => p.id === 'P0'))
-  assert.ok(targeted.portfolios.find(p => p.kind === 'defensive').worstPnl < 0)
+  // The plan holds half of P0, so a shock on its underlying costs half as much.
+  assertClose(targeted.portfolios[1].worstPnl, targeted.portfolios[0].worstPnl / 2, 0.011)
 })
 
 test('missing expiry parameters cannot silently change membership when the stress horizon changes', () => {
@@ -475,15 +404,130 @@ test('no direct shock exposure preserves portfolio value and distinguishes time 
   assert.equal(all.portfolios[0].shockProductCount, all.portfolios[0].productCount)
 })
 
-test('product scenario contributions reconcile to portfolio P&L after exposure caps', () => {
+test('product scenario contributions reconcile to portfolio P&L after reductions', () => {
   const report = buildPortfolioStressReport([
-    entry({ exposureWeightPct: 0.16 }),
+    entry(),
     entry({ item: { symbol: 'PUT', optionType: 'put', delta: -0.5 }, groupKey: 'put' }),
-  ], 7, buildStressScenarios(20, null, true))
+  ], 7, buildStressScenarios(20, null, true, { adverse: true }), {}, { plans: [{ id: 'plan', title: 'Plan', reductions: { DE000TEST01: 25 } }] })
+  assert.equal(report.portfolios.length, 2)
   for (const portfolio of report.portfolios) {
     for (const scenario of portfolio.scenarioResults) {
       const sum = portfolio.products.reduce((sum, product) => sum + product.scenarioPnls.find(row => row.scenarioId === scenario.id).pnl, 0)
       assert.ok(Math.abs(sum - scenario.pnl) < 0.011)
     }
+  }
+})
+
+// Out-of-the-money call quoted exactly at its Black-Scholes value: spot 100,
+// strike 110, half a year, 50% volatility, EUR 2% rate.
+function warrant(item = {}, overrides = {}) {
+  const terms = { spot: 100, strike: 110, years: 0.5, volatility: 0.5, rate: 0.02, direction: item.optionType || 'call' }
+  return entry({
+    daysToExpiry: 182.5,
+    ...overrides,
+    item: { price: blackScholesPrice(terms) * 0.1, strikePrice: 110, delta: 0.48, theta: null, iv: 0.5, ...item },
+  })
+}
+
+test('warrants are fully revalued, so large shocks keep their convexity', () => {
+  const value = spot => blackScholesPrice({ spot, strike: 110, years: 0.5, volatility: 0.5, rate: 0.02, direction: 'call' }) * 0.1
+  for (const movePct of [-50, -20, 20, 50]) {
+    const result = calculatePositionStress(warrant(), { id: 'shock', movePct }, 0)
+    assert.equal(result.method, 'bs')
+    assertClose(result.projectedPrice, value(100 + movePct), 2e-4)
+  }
+  // The linear delta estimate (0.48 x 20 x 0.1 = 0.96) overstates the loss and understates the gain.
+  const quote = warrant().item.price
+  assert.ok(calculatePositionStress(warrant(), { id: 'down', movePct: -20 }, 0).projectedPrice > quote - 0.96 + 0.2)
+  assert.ok(calculatePositionStress(warrant(), { id: 'up', movePct: 20 }, 0).projectedPrice > quote + 0.96 + 0.15)
+  assert.equal(calculatePositionStress(warrant(), { id: 'crash', movePct: -100 }, 0).projectedPrice, 0)
+})
+
+test('warrant revaluation prices time decay and hands over to intrinsic value at expiry', () => {
+  const month = calculatePositionStress(warrant(), flat, 30)
+  const quarter = calculatePositionStress(warrant(), flat, 90)
+  assert.equal(month.method, 'bs')
+  assertClose(month.projectedPrice, blackScholesPrice({ spot: 100, strike: 110, years: 152.5 / 365, volatility: 0.5, rate: 0.02, direction: 'call' }) * 0.1, 2e-4)
+  // Decay accelerates: three months cost more than three times one month.
+  assert.ok(quarter.pnl < 3 * month.pnl)
+  const expiring = calculatePositionStress(warrant({}, { daysToExpiry: 30 }), { id: 'up', movePct: 20 }, 30)
+  assert.equal(expiring.method, 'expiry_intrinsic')
+  assertClose(expiring.projectedPrice, 1)
+})
+
+test('volatility shocks move revalued warrants only and currency shocks USD underlyings only', () => {
+  const lower = calculatePositionStress(warrant(), { ...flat, ivMovePct: -20 }, 0)
+  const higher = calculatePositionStress(warrant(), { ...flat, ivMovePct: 20 }, 0)
+  assert.ok(lower.pnl < 0 && higher.pnl > 0)
+  assertClose(lower.projectedPrice, blackScholesPrice({ spot: 100, strike: 110, years: 0.5, volatility: 0.4, rate: 0.02, direction: 'call' }) * 0.1, 2e-4)
+  assert.equal(calculatePositionStress(turbo(), { ...flat, ivMovePct: -20 }, 0).pnl, 0)
+
+  assert.equal(calculatePositionStress(warrant(), { ...flat, fxMovePct: -10 }, 0).pnl, 0)
+  const usd = { underlyingSpotRawCurrency: 'USD', underlyingSpotUsdEurRate: 1 }
+  assert.equal(calculatePositionStress(warrant(usd), { ...flat, fxMovePct: -10 }, 0).returnPct, -10)
+  assert.equal(calculatePositionStress(turbo(usd), { ...flat, fxMovePct: 5 }, 0).returnPct, 5)
+
+  const report = buildPortfolioStressReport([warrant(usd), turbo({ symbol: 'TURBO' }, { groupKey: 'turbo' })], 0, buildStressScenarios(20, null, false, { fxMovePct: -10 }))
+  assert.deepEqual(report.portfolios[0].products.map(p => p.fxExposed), [true, false])
+})
+
+test('a quote the model cannot reproduce falls back to provider volatility without wiping out the position', () => {
+  // The spot is far above what the quote implies, so no volatility fits.
+  const stale = warrant({ underlyingSpot: 200 })
+  assert.equal(calculatePositionStress(stale, flat, 0).pnl, 0)
+  const down = calculatePositionStress(stale, { id: 'down', movePct: -10 }, 0)
+  assert.equal(down.method, 'bs_iv')
+  // Model value falls from about 9.2 to 7.2 per warrant; the quote moves in proportion.
+  assert.ok(down.returnPct < -15 && down.returnPct > -30)
+  assert.equal(calculatePositionStress(warrant({ underlyingSpot: 200, iv: null }), { id: 'down', movePct: -10 }, 0).method, 'delta')
+})
+
+test('volatility-scaled shocks move each underlying by its implied volatility relative to the median', () => {
+  const entries = [
+    warrant({ symbol: 'CALM', iv: 0.3 }, { groupKey: 'calm' }),
+    warrant({ symbol: 'MID', iv: 0.6 }, { groupKey: 'mid' }),
+    // Values above 1 are read as percentages.
+    warrant({ symbol: 'WILD', iv: 300 }, { groupKey: 'wild' }),
+    turbo({ symbol: 'NOIV', iv: null }, { groupKey: 'noiv' }),
+  ]
+  const shock = buildGroupShockScales(entries)
+  assert.equal(shock.referenceVolatilityPct, 60)
+  assert.equal(shock.unknownCount, 1)
+  // 300% over 60% would be 5x; the scale is capped at 2.5x.
+  assert.deepEqual(shock.scales, { calm: 0.5, mid: 1, wild: 2.5, noiv: 1 })
+
+  const [down] = buildStressScenarios(20, null, false, { groupScales: shock.scales })
+  assert.equal(down.label, '按波动率 -20%')
+  assert.deepEqual(entries.map(e => calculatePositionStress(e, down, 0).movePct), [-10, -20, -50, -20])
+  // A single-underlying shock keeps the stated magnitude.
+  const [targeted] = buildStressScenarios(20, 'calm', false, { groupScales: shock.scales })
+  assert.equal(calculatePositionStress(entries[0], targeted, 0).movePct, -20)
+})
+
+test('the adverse scenario moves every underlying against the portfolio so opposite positions stop offsetting', () => {
+  const entries = [
+    warrant({ symbol: 'CALL' }, { groupKey: 'a' }),
+    warrant({ symbol: 'PUT', optionType: 'put', stockName: 'Test Put', strikePrice: 110, delta: -0.5 }, { groupKey: 'b' }),
+  ]
+  const scenarios = buildStressScenarios(20, null, false, { adverse: true })
+  assert.equal(scenarios.at(-1).id, 'adverse')
+  assert.ok(buildStressScenarios(20, 'a', false, { adverse: true }).every(s => !s.adverse))
+
+  const baseline = buildPortfolioStressReport(entries, 0, scenarios).portfolios[0]
+  const adverse = baseline.scenarioResults.find(s => s.id === 'adverse')
+  const synchronousWorst = Math.min(...baseline.scenarioResults.filter(s => !s.adverse).map(s => s.pnl))
+  assert.equal(baseline.worstPnl, adverse.pnl)
+  assert.ok(adverse.pnl < synchronousWorst)
+
+  const moves = Object.fromEntries(baseline.products.map(p => [p.id, p.scenarioPnls.find(row => row.scenarioId === 'adverse')]))
+  assert.equal(moves.CALL.movePct, -20)
+  assert.equal(moves.PUT.movePct, 20)
+  assertClose(moves.CALL.pnl + moves.PUT.pnl, adverse.pnl, 0.011)
+
+  const payload = buildHermesStressReviewPayload(buildPortfolioStressReport(entries, 0, scenarios))
+  assert.ok(payload.assumptions.includes('adverse'))
+  assert.ok(payload.assumptions.length <= 1000)
+  for (const portfolio of payload.portfolios) {
+    assert.ok(portfolio.products.every(p => p.scenarioMethods.length === portfolio.scenarios.length))
   }
 })

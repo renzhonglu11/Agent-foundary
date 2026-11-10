@@ -23,6 +23,7 @@ import {
 import AutoAwesomeRoundedIcon from '@mui/icons-material/AutoAwesomeRounded'
 import PortfolioDataMonitor from './PortfolioDataMonitor.jsx'
 import { buildPortfolioAdjustments, buildScenarioContributions, buildShockTargets, comparePortfolioStress } from '../utils/portfolioComparison.js'
+import { REDUCTION_STEPS, buildCustomPlan, buildPresetPlans, rankReductions } from '../utils/positionWhatIf.js'
 
 import { compactCurrency, number } from '../utils/formatters.js'
 import {
@@ -31,6 +32,7 @@ import {
   buildPortfolioStressReport,
   buildStressScenarios,
   buildDirectPriceStress,
+  buildGroupShockScales,
 } from '../utils/portfolioStress.js'
 
 const confidenceLabels = {
@@ -52,14 +54,16 @@ const productTypeLabels = {
 const adjustmentLabels = {
   exit: '模拟退出',
   reduce: '减仓',
-  increase: '加仓',
 }
 
+const exitLevelMeta = {
+  urgent: { label: '优先复核', color: 'error' },
+  warn: { label: '留意', color: 'warning' },
+}
+const exitLevelRank = ['urgent', 'warn', 'ok', 'unknown']
+const reductionLabel = pct => (pct >= 100 ? '退出' : `减 ${pct}%`)
+
 const selectionFlagLabels = {
-  WATCH_PENALIZED: 'WATCH 降权',
-  ELASTIC_ONLY: '仅高弹性',
-  EXPOSURE_CAPPED_8_PCT: '敞口限至 8%',
-  HELD_AT_CURRENT: '不加仓',
   MODEL_FALLBACK: '模型兜底估算',
 }
 
@@ -80,20 +84,46 @@ function quoteWindow(entries, field) {
   return dates.length ? `${new Date(dates[0]).toLocaleString()} — ${new Date(dates.at(-1)).toLocaleString()}；${unknown} 项未知` : '全部未知'
 }
 
-export default function PortfolioStressTestPanel({ entries, positions = [], loading, totalMarketValue, totalCostBasis }) {
+export default function PortfolioStressTestPanel({ entries, positions = [], exitSignals, loading, totalMarketValue, totalCostBasis }) {
   const [scenarioId, setScenarioId] = useState(null)
-  const [stressEnabled, setStressEnabled] = useState(false)
+  const [stressEnabled, setStressEnabled] = useState(true)
+  const [rankScope, setRankScope] = useState('product')
+  const [rankReduction, setRankReduction] = useState(50)
+  const [rankSort, setRankSort] = useState('efficiency')
+  const [customReductions, setCustomReductions] = useState({})
   const [horizonDays, setHorizonDays] = useState(0)
   const [shock, setShock] = useState(20)
   const [target, setTarget] = useState('')
-  const scenarios = useMemo(() => buildStressScenarios(shock, target || null, horizonDays > 0), [shock, target, horizonDays])
+  const [shockMode, setShockMode] = useState('uniform')
+  const [ivMove, setIvMove] = useState(0)
+  const [fxMove, setFxMove] = useState(0)
+  const groupShock = useMemo(() => buildGroupShockScales(entries), [entries])
+  const volScaled = shockMode === 'volatility' && !target
+  const scenarios = useMemo(() => buildStressScenarios(shock, target || null, horizonDays > 0, {
+    groupScales: volScaled ? groupShock.scales : null,
+    ivMovePct: ivMove,
+    fxMovePct: fxMove,
+    adverse: true,
+  }), [shock, target, horizonDays, volScaled, groupShock, ivMove, fxMove])
   const direct = buildDirectPriceStress(positions, entries)
   const [selectedPortfolioId, setSelectedPortfolioId] = useState(null)
   const [hermesStatus, setHermesStatus] = useState({ loading: true, available: null, model: null })
   const [hermesReview, setHermesReview] = useState({ loading: false, data: null, error: null })
+  const totals = useMemo(() => ({ totalMarketValue, totalCostBasis, positions }), [totalMarketValue, totalCostBasis, positions])
+  // The presets are derived from the current holdings, so those are priced first.
+  const holdingsReport = useMemo(
+    () => buildPortfolioStressReport(entries, horizonDays, scenarios, totals, { plans: [] }),
+    [entries, horizonDays, scenarios, totals],
+  )
+  const plans = useMemo(() => {
+    const holdings = holdingsReport.portfolios[0] || null
+    const held = new Set((holdings?.products || []).map(product => product.id))
+    const custom = buildCustomPlan(Object.fromEntries(Object.entries(customReductions).filter(([id]) => held.has(id))))
+    return [...buildPresetPlans(holdings, exitSignals), custom].filter(Boolean)
+  }, [holdingsReport, exitSignals, customReductions])
   const report = useMemo(
-    () => buildPortfolioStressReport(entries, horizonDays, scenarios, { totalMarketValue, totalCostBasis, positions }),
-    [entries, horizonDays, scenarios, totalMarketValue, totalCostBasis, positions],
+    () => (plans.length ? buildPortfolioStressReport(entries, horizonDays, scenarios, totals, { plans }) : holdingsReport),
+    [entries, horizonDays, scenarios, totals, plans, holdingsReport],
   )
   const stressEnabledRef = useRef(stressEnabled)
   stressEnabledRef.current = stressEnabled
@@ -104,16 +134,19 @@ export default function PortfolioStressTestPanel({ entries, positions = [], load
     setHermesReview({ loading: false, data: null, error: null })
   }, [report])
 
-  const defaultPortfolioId = report.portfolios.find((portfolio) => portfolio.kind === 'balanced')?.id
+  const defaultPortfolioId = report.portfolios.find((portfolio) => portfolio.id === 'custom')?.id
+    || report.portfolios[1]?.id
     || report.portfolios[0]?.id
     || null
   const resolvedPortfolioId = report.portfolios.some((portfolio) => portfolio.id === selectedPortfolioId)
     ? selectedPortfolioId
     : defaultPortfolioId
   const selectedPortfolio = report.portfolios.find((portfolio) => portfolio.id === resolvedPortfolioId) || null
-  // Membership does not depend on the shock settings, so the targets are stable
-  // while the target itself changes.
-  const shockTargets = useMemo(() => buildShockTargets(selectedPortfolio), [selectedPortfolio])
+  const baseline = report.portfolios.find(portfolio => portfolio.kind === 'baseline')
+  // Every held underlying can be shocked, whichever plan is selected.
+  const shockTargets = useMemo(() => buildShockTargets(baseline), [baseline])
+  const ranking = useMemo(() => rankReductions(baseline, { reductionPct: rankReduction, scope: rankScope, sortBy: rankSort }), [baseline, rankReduction, rankScope, rankSort])
+  const exitSignalById = useMemo(() => new Map((exitSignals || []).map(signal => [signal.id, signal])), [exitSignals])
   const targetAvailable = shockTargets.some(({ key }) => key === target)
 
   useEffect(() => {
@@ -177,21 +210,45 @@ export default function PortfolioStressTestPanel({ entries, positions = [], load
   )
   const selectedHermesReview = selectedPortfolio ? hermesReviewById.get(selectedPortfolio.id) : null
 
-  const baseline = report.portfolios.find(portfolio => portfolio.kind === 'baseline')
   const adjustments = buildPortfolioAdjustments(baseline, selectedPortfolio)
+  const customCount = Object.values(customReductions).filter(pct => pct > 0).length
+  const planReduction = row => {
+    const values = new Set(row.productIds.map(id => customReductions[id] || 0))
+    return values.size === 1 ? [...values][0] : null
+  }
+  const togglePlan = (row) => {
+    const remove = planReduction(row) === rankReduction
+    setCustomReductions(current => ({ ...current, ...Object.fromEntries(row.productIds.map(id => [id, remove ? 0 : rankReduction])) }))
+    setSelectedPortfolioId('custom')
+  }
+  const worstExitLevel = row => row.productIds
+    .map(id => exitSignalById.get(id)?.level)
+    .filter(Boolean)
+    .sort((left, right) => exitLevelRank.indexOf(left) - exitLevelRank.indexOf(right))[0]
+  // Value-weighted model return of the row's products after 30 flat days.
+  const flatMonthPct = (row) => {
+    const signals = row.productIds.map(id => exitSignalById.get(id)).filter(signal => signal?.decay?.return30dPct != null && signal.currentValue > 0)
+    const value = signals.reduce((sum, signal) => sum + signal.currentValue, 0)
+    return value > 0 ? signals.reduce((sum, signal) => sum + signal.currentValue * signal.decay.return30dPct, 0) / value : null
+  }
   const changed = adjustments.filter(row => row.action !== 'retain')
   const selectedScenario = selectedPortfolio?.scenarioResults.find(scenario => scenario.id === scenarioId)
     || selectedPortfolio?.scenarioResults.reduce((worst, scenario) => !worst || scenario.pnl < worst.pnl ? scenario : worst, null)
   const contributions = buildScenarioContributions(selectedPortfolio, selectedScenario?.id)
   const losses = contributions.filter(row => row.pnl < 0)
   const offsets = contributions.filter(row => row.pnl > 0).reverse()
+  const selectedProducts = selectedPortfolio?.products || []
+  const repricedCount = selectedProducts.filter(product => product.scenarioMethods.some(row => /^bs/.test(row.method))).length
+  const fxExposedCount = selectedProducts.filter(product => product.fxExposed).length
+  const selectedGroupKeys = new Set(selectedProducts.map(product => product.groupKey))
+  const groupMoves = groupShock.groups.filter(group => selectedGroupKeys.has(group.key))
 
   return (
     <Box sx={{ border: '1px solid #dfe6ee', borderRadius: 2, overflow: 'hidden', backgroundColor: '#fbfdff' }}>
       <Stack spacing={1.25} sx={{ p: { xs: 1.5, md: 2 } }}>
         <Box>
           <Typography variant="subtitle1" fontWeight={900}>投资组合对比</Typography>
-          <Typography variant="body2" color="text.secondary">比较当前持仓与按策略重新分配同等本金的候选方案，查看压力下的取舍；候选方案仅作参考，不构成交易指令。</Typography>
+          <Typography variant="body2" color="text.secondary">比较当前持仓与减仓、退出方案在压力情景下的取舍，并排出最值得先减的仓位；方案仅作参考，不构成交易指令。</Typography>
         </Box>
         <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap', alignItems: 'center' }}>
           <FormControlLabel control={<Switch checked={stressEnabled} onChange={event => {
@@ -205,6 +262,16 @@ export default function PortfolioStressTestPanel({ entries, positions = [], load
             </TextField>
             <TextField select size="small" label="最大冲击" value={shock} onChange={event => setShock(Number(event.target.value))}>
               {[10, 20, 30, 50].map(value => <MenuItem key={value} value={value}>±{value}%</MenuItem>)}
+            </TextField>
+            <TextField select size="small" label="各标的幅度" value={volScaled ? 'volatility' : 'uniform'} disabled={Boolean(target)} onChange={event => setShockMode(event.target.value)} sx={{ minWidth: 130 }}>
+              <MenuItem value="uniform">相同幅度</MenuItem>
+              <MenuItem value="volatility">按波动率缩放</MenuItem>
+            </TextField>
+            <TextField select size="small" label="隐含波动率" value={ivMove} onChange={event => setIvMove(Number(event.target.value))} sx={{ minWidth: 110 }}>
+              {[0, -20, 20].map(value => <MenuItem key={value} value={value}>{value === 0 ? '不变' : `IV ${signedPercent(value)}`}</MenuItem>)}
+            </TextField>
+            <TextField select size="small" label="美元兑欧元" value={fxMove} onChange={event => setFxMove(Number(event.target.value))} sx={{ minWidth: 110 }}>
+              {[0, -10, -5, 5, 10].map(value => <MenuItem key={value} value={value}>{value === 0 ? '不变' : `美元 ${signedPercent(value)}`}</MenuItem>)}
             </TextField>
             {PORTFOLIO_STRESS_HORIZONS.map(days => <Button key={days} size="small" variant={horizonDays === days ? 'contained' : 'outlined'} onClick={() => handleHorizonChange(days)}>
               {days === 0 ? '即时' : `${days} 天`}
@@ -225,11 +292,11 @@ export default function PortfolioStressTestPanel({ entries, positions = [], load
           <TableContainer component={Paper} variant="outlined">
             <Table size="small" aria-label="投资组合对比" sx={{ '& th': { whiteSpace: 'nowrap' }, '& th:first-of-type, & td:first-of-type': { minWidth: 145, position: 'sticky', left: 0, zIndex: 1, backgroundColor: '#fff' }, '& tr.Mui-selected td:first-of-type': { backgroundColor: '#edf4fc' } }}>
               <TableHead><TableRow>
-                <TableCell>组合</TableCell><TableCell align="right">持仓市值</TableCell><TableCell align="right">剩余现金</TableCell>
-                {stressEnabled && <><TableCell align="right">下跌 {shock}% 盈亏</TableCell><TableCell align="right">上涨 {shock}% 盈亏</TableCell><TableCell align="right">最差情景盈亏</TableCell><TableCell>相较当前基准</TableCell></>}
+                <TableCell>组合</TableCell><TableCell align="right">持仓市值</TableCell><TableCell align="right">释放现金</TableCell>
+                {stressEnabled && <><TableCell align="right">下跌 {shock}%{volScaled ? '（基准）' : ''} 盈亏</TableCell><TableCell align="right">上涨 {shock}%{volScaled ? '（基准）' : ''} 盈亏</TableCell><TableCell align="right">最差情景盈亏</TableCell><TableCell>相较当前基准</TableCell></>}
               </TableRow></TableHead>
               <TableBody>{report.portfolios.map(portfolio => {
-                const noExposure = portfolio.shockProductCount === 0 && horizonDays === 0
+                const noExposure = portfolio.shockProductCount === 0 && horizonDays === 0 && !ivMove && !fxMove
                 const delta = comparePortfolioStress(baseline, portfolio)
                 const down = portfolio.scenarioResults.find(row => row.id === 'shock_0')
                 const up = portfolio.scenarioResults.find(row => row.id === 'shock_4')
@@ -257,10 +324,86 @@ export default function PortfolioStressTestPanel({ entries, positions = [], load
             </Table>
           </TableContainer>
           <Typography variant="caption" color="text.secondary">
-            各方案使用相同测试本金 {compactCurrency(report.coverage.coveredValue)}：候选方案把本金等权分配给选中产品，单只敞口不超过净值 8%，WATCH、卖出信号或敞口未知的产品不加仓，分不完的部分留作零收益现金；未覆盖仓位保持不变。
-            {stressEnabled ? '最差盈亏改善比较各方案各自的最差情景；上涨盈亏变化比较同一上涨情景。切换测试参数不会重新选股；单标的冲击只能选择当前所选组合中的标的，切换到不含该标的的组合时恢复为所有标的。' : '开启冲击测试可比较调整后的情景盈亏。'}
+            各方案使用相同测试本金 {compactCurrency(report.coverage.coveredValue)}：在当前持仓上按比例卖出，卖出所得留作零收益现金，不买入其他产品；未覆盖仓位保持不变。
+            {stressEnabled ? '最差盈亏改善比较各方案各自的最差情景；上涨盈亏变化比较同一上涨情景。按退场信号生成的预设方案不随冲击设置变化；“最差情景亏损前几只减半”的名单随当前情景变化。' : '开启冲击测试可比较各方案的情景盈亏，并按保护效率排序。'}
+            {stressEnabled && !target ? ' 最差情景包含“各标的逆向”：每个标的各自取对该组合最不利的终点涨跌，不同标的上的多空仓位不再互相抵消。' : ''}
           </Typography>
+          {stressEnabled && (volScaled || ivMove !== 0 || fxMove !== 0) && <Typography variant="caption" color="text.secondary">
+            {volScaled ? `按波动率缩放：±${shock}% 是 IV 处于中位数（${groupShock.referenceVolatilityPct ?? '—'}%）的标的的幅度，其余标的按自身 IV 在 0.4–2.5 倍内放大或缩小${groupShock.unknownCount ? `；${groupShock.unknownCount} 个标的没有权证 IV，按 ±${shock}% 计算` : ''}。` : ''}
+            {ivMove !== 0 ? `IV ${signedPercent(ivMove)} 为相对变化，只影响所选组合中按 Black-Scholes 重估的 ${repricedCount} 只权证。` : ''}
+            {fxMove !== 0 ? `美元 ${signedPercent(fxMove)} 只作用于所选组合中 ${fxExposedCount} 只美元标的产品（共 ${selectedProducts.length} 只）；是否美元按标的行情的报价币种判断，其他币种未计汇率影响。` : ''}
+          </Typography>}
         </>}
+
+        {stressEnabled && ranking.length > 0 && <Paper variant="outlined" sx={{ p: 1.5 }}>
+          <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5} sx={{ justifyContent: 'space-between', alignItems: { md: 'center' } }}>
+            <Box>
+              <Typography variant="body2" fontWeight={800}>减仓效果排序</Typography>
+              <Typography variant="caption" color="text.secondary">每行只动这一项、其余不变。保护效率越高，说明减它换来的最差情景改善相对放弃的上涨越多；价外权证上涨弹性大，效率通常低于 1，它们的代价是时间损耗，见“横盘 30 天”一列和退场信号。</Typography>
+            </Box>
+            <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap', alignItems: 'center' }}>
+              <TextField select size="small" label="范围" value={rankScope} onChange={event => setRankScope(event.target.value)} sx={{ minWidth: 110 }}>
+                <MenuItem value="product">按产品</MenuItem>
+                <MenuItem value="group">按标的</MenuItem>
+              </TextField>
+              <TextField select size="small" label="幅度" value={rankReduction} onChange={event => setRankReduction(Number(event.target.value))} sx={{ minWidth: 100 }}>
+                {REDUCTION_STEPS.map(pct => <MenuItem key={pct} value={pct}>{reductionLabel(pct)}</MenuItem>)}
+              </TextField>
+              <TextField select size="small" label="排序" value={rankSort} onChange={event => setRankSort(event.target.value)} sx={{ minWidth: 150 }}>
+                <MenuItem value="efficiency">保护效率</MenuItem>
+                <MenuItem value="improvement">最差情景改善金额</MenuItem>
+                <MenuItem value="riskDensity">每欧元最差亏损</MenuItem>
+              </TextField>
+              <Button size="small" disabled={customCount === 0} onClick={() => setCustomReductions({})}>清空自定义方案</Button>
+            </Stack>
+          </Stack>
+          <TableContainer sx={{ maxHeight: 420, mt: 1 }}>
+            <Table size="small" stickyHeader aria-label="减仓效果排序" sx={{ minWidth: 1040, '& th': { whiteSpace: 'nowrap' } }}>
+              <TableHead><TableRow>
+                <TableCell>{rankScope === 'group' ? '标的' : '产品 / 标的'}</TableCell>
+                <TableCell align="right">市值 / 占比</TableCell>
+                <TableCell align="right">释放现金</TableCell>
+                <TableCell align="right">最差情景改善</TableCell>
+                <TableCell align="right">放弃上涨 {shock}%{volScaled ? '（基准）' : ''} 盈利</TableCell>
+                <TableCell align="right">保护效率</TableCell>
+                <TableCell align="right">每欧元最差亏损</TableCell>
+                <TableCell align="right">横盘 30 天</TableCell>
+                <TableCell align="right">自定义方案</TableCell>
+              </TableRow></TableHead>
+              <TableBody>{ranking.map((row) => {
+                const level = worstExitLevel(row)
+                const inPlan = planReduction(row)
+                const flatMonth = flatMonthPct(row)
+                return <TableRow key={row.id} hover>
+                  <TableCell sx={{ maxWidth: 260 }}>
+                    <Typography variant="body2" fontWeight={700} noWrap title={row.name}>{row.name}</Typography>
+                    <Stack direction="row" spacing={0.5} sx={{ alignItems: 'center' }}>
+                      <Typography variant="caption" color="text.secondary" noWrap>{rankScope === 'group' ? `${row.productCount} 个产品` : row.groupName}</Typography>
+                      {exitLevelMeta[level] && <Chip size="small" color={exitLevelMeta[level].color} label={`退场信号：${exitLevelMeta[level].label}`} sx={{ height: 18 }} />}
+                    </Stack>
+                  </TableCell>
+                  <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>{compactCurrency(row.currentValue)}<Typography variant="caption" component="div" color="text.secondary">{number.format(row.weightPct)}%</Typography></TableCell>
+                  <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>{compactCurrency(row.releasedValue)}</TableCell>
+                  <PnlCell value={row.worstImprovement} />
+                  <PnlCell value={-row.upGivenUp} />
+                  <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
+                    {row.kind === 'tradeoff' ? <Typography variant="body2" fontWeight={700} color={row.efficiency >= 1 ? 'success.main' : 'text.primary'}>{number.format(row.efficiency)}</Typography>
+                      : <Typography variant="caption" color="text.secondary">{row.kind === 'free' ? '无上涨代价' : row.kind === 'hedge' ? '对冲仓位，减仓会加大最差亏损' : '对最差情景无影响'}</Typography>}
+                  </TableCell>
+                  <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>{number.format(row.worstLossPct)}%</TableCell>
+                  <TableCell align="right" sx={{ whiteSpace: 'nowrap', color: flatMonth != null && flatMonth <= -15 ? 'error.main' : undefined }}>{flatMonth == null ? '—' : signedPercent(Math.round(flatMonth * 10) / 10)}</TableCell>
+                  <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
+                    {inPlan > 0 && inPlan !== rankReduction && <Typography variant="caption" component="div" color="text.secondary">方案中：{reductionLabel(inPlan)}</Typography>}
+                    {inPlan === null && <Typography variant="caption" component="div" color="text.secondary">方案中：部分产品</Typography>}
+                    <Button size="small" variant={inPlan === rankReduction ? 'contained' : 'outlined'} onClick={() => togglePlan(row)}>
+                      {inPlan === rankReduction ? `已选 ${reductionLabel(rankReduction)}` : reductionLabel(rankReduction)}
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              })}</TableBody>
+            </Table>
+          </TableContainer>
+        </Paper>}
 
         {selectedPortfolio && <>
           <Box>
@@ -270,12 +413,12 @@ export default function PortfolioStressTestPanel({ entries, positions = [], load
           <Paper variant="outlined" sx={{ p: 1.5 }}>
             <Typography variant="body2" fontWeight={800}>调整差异</Typography>
             <Typography variant="body2" sx={{ mt: 0.5, mb: 1 }}>
-              保留 {adjustments.filter(row => row.action === 'retain').length} 个 · 加仓 {adjustments.filter(row => row.action === 'increase').length} 个 · 减仓 {adjustments.filter(row => row.action === 'reduce').length} 个 · 模拟退出 {adjustments.filter(row => row.action === 'exit').length} 个；
-              剩余现金 {compactCurrency(selectedPortfolio.cashValue)}。
+              保留 {adjustments.filter(row => row.action === 'retain').length} 个 · 减仓 {adjustments.filter(row => row.action === 'reduce').length} 个 · 模拟退出 {adjustments.filter(row => row.action === 'exit').length} 个；
+              释放现金 {compactCurrency(selectedPortfolio.cashValue)}。
             </Typography>
             <Typography variant="caption" color="text.secondary">权重统一以当前可测试本金为分母，包含假设现金；以下是模型差异，未生成交易指令。</Typography>
             {changed.length ? <TableContainer sx={{ maxHeight: 320 }}><Table size="small" stickyHeader aria-label="调整差异" sx={{ minWidth: 540, '& th': { whiteSpace: 'nowrap' } }}>
-              <TableHead><TableRow><TableCell>产品 / 标的</TableCell><TableCell>方案变化</TableCell><TableCell align="right">当前 → 候选权重</TableCell><TableCell align="right">金额变化</TableCell></TableRow></TableHead>
+              <TableHead><TableRow><TableCell>产品 / 标的</TableCell><TableCell>方案变化</TableCell><TableCell align="right">当前 → 方案权重</TableCell><TableCell align="right">金额变化</TableCell></TableRow></TableHead>
               <TableBody>{changed.map(row => <TableRow key={row.id}>
                 <TableCell>{row.name}<Typography variant="caption" component="div" color="text.secondary">{row.groupName}</Typography></TableCell>
                 <TableCell>{adjustmentLabels[row.action]}</TableCell>
@@ -294,7 +437,7 @@ export default function PortfolioStressTestPanel({ entries, positions = [], load
             </Stack>
             {selectedPortfolio.shockProductCount === 0 && <Alert severity="info" sx={{ mt: 1 }}>
               无所选标的直接敞口；模型未模拟其他标的的相关性传导。
-              {horizonDays === 0 ? '即时盈亏不变，组合市值并未归零。' : '当前期限仍计入时间损耗或到期支付影响。'}
+              {horizonDays === 0 ? (ivMove || fxMove ? '即时盈亏只来自所选的 IV 与汇率冲击。' : '即时盈亏不变，组合市值并未归零。') : '当前期限仍计入时间损耗或到期支付影响。'}
             </Alert>}
             <Typography variant="body2" sx={{ my: 1 }}>
               情景盈亏 <Box component="span" sx={{ color: pnlColor(selectedScenario?.pnl), fontWeight: 800 }}>{signedMoney(selectedScenario?.pnl)}</Box> ·
@@ -304,6 +447,12 @@ export default function PortfolioStressTestPanel({ entries, positions = [], load
               <ContributionList title="主要亏损来源" rows={losses} empty="该情景没有亏损产品" />
               <ContributionList title="收益抵消来源" rows={offsets} empty="该情景没有盈利产品" />
             </Box>
+            {volScaled && groupMoves.length > 0 && <Box component="details" sx={{ mt: 1.5 }}>
+              <Typography component="summary" variant="body2" sx={{ cursor: 'pointer' }}>各标的冲击幅度（{groupMoves.length} 个标的）</Typography>
+              <Typography variant="caption" color="text.secondary" component="div" sx={{ mt: 0.5 }}>
+                {groupMoves.map(group => `${group.name} ±${number.format(shock * group.scale)}%（${group.volatilityPct == null ? '无 IV' : `IV ${number.format(group.volatilityPct)}%`}）`).join(' · ')}
+              </Typography>
+            </Box>}
             <Box component="details" sx={{ mt: 1.5 }}>
               <Typography component="summary" variant="body2" sx={{ cursor: 'pointer' }}>完整情景结果</Typography>
               <TableContainer><Table size="small" aria-label="完整情景结果" sx={{ minWidth: 540 }}>
@@ -322,7 +471,7 @@ export default function PortfolioStressTestPanel({ entries, positions = [], load
                 <Typography variant="caption" color="text.secondary">
                   {selectedPortfolio.kind === 'baseline'
                     ? '当前基准沿用实际持仓数量。'
-                    : '候选组合对超过持仓市值 8% 的单品风险敞口按比例缩放；只用于情景建模，未生成交易数量。'}
+                    : '方案沿用当前持仓并按所列比例减仓，已退出的产品不再列出；只用于情景建模，未生成交易数量。'}
                 </Typography>
               </Box>
               <TableContainer sx={{ maxHeight: 360 }}>
@@ -331,7 +480,7 @@ export default function PortfolioStressTestPanel({ entries, positions = [], load
                     <TableRow>
                       <TableCell>产品</TableCell>
                       <TableCell>标的</TableCell>
-                      <TableCell>风险处理 / 置信度</TableCell>
+                      <TableCell>置信度 / 模型</TableCell>
                       <TableCell align="right">组合 / 持仓市值 / 本金</TableCell>
                     </TableRow>
                   </TableHead>
@@ -350,7 +499,7 @@ export default function PortfolioStressTestPanel({ entries, positions = [], load
                               <Chip
                                 key={flag}
                                 size="small"
-                                color={flag === 'ELASTIC_ONLY' ? 'warning' : 'default'}
+                                color="warning"
                                 variant="outlined"
                                 label={selectionFlagLabels[flag] || flag}
                                 sx={{ height: 19 }}
@@ -364,7 +513,7 @@ export default function PortfolioStressTestPanel({ entries, positions = [], load
                             持仓市值 {number.format(product.navWeightPct)}% · 本金 {number.format(product.capitalWeightPct)}%
                           </Typography>
                           {product.positionScalePct !== 100 ? (
-                            <Typography variant="caption" color={product.positionScalePct < 100 ? 'warning.main' : 'info.main'}>按原仓位的 {number.format(product.positionScalePct)}% 配置</Typography>
+                            <Typography variant="caption" color="warning.main">按原仓位的 {number.format(product.positionScalePct)}% 配置</Typography>
                           ) : null}
                         </TableCell>
                       </TableRow>
@@ -411,20 +560,13 @@ export default function PortfolioStressTestPanel({ entries, positions = [], load
           标的时间：{quoteWindow(entries, 'underlyingPriceAsOf')}。
           单标的情景暂不发送 Hermes；新情景以本地计算为准。
         </Typography>
-        {report.excludedProductCount > 0
-          || report.watchIncludedProductCount > 0
-          || report.exposureCappedProductCount > 0 ? (
+        {report.rollOpportunities?.length ? (
           <Alert severity="warning" sx={{ mb: 1.5, py: 0 }}>
-            风险分层：{report.excludedProductCount} 个旧合约或数据不可信产品不进入候选；
-            {report.watchIncludedProductCount} 个 WATCH 按触发原因降权，临近障碍的产品仅可进入高弹性组合；
-            {report.exposureCappedProductCount} 个集中仓位按持仓市值 8% 的风险敞口比例缩放。
-            {report.rollOpportunities?.length
-              ? ` ${report.rollOpportunities.length} 个 ROLL 旧合约已登记为换仓机会，需要同标的远期产品数据才能建立替代仓。`
-              : ''}
+            {report.rollOpportunities.length} 个持仓将在 7 天内到期或已标记为 ROLL：{report.rollOpportunities.map(row => row.name).join('、')}。方案只模拟卖出，不模拟换入远期合约。
           </Alert>
         ) : null}
         <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1.25 }}>
-          组合按固定的 30 天、全标的 ±10% 参考情景和风险规则筛选；数据更新时重新生成。冲击测试只衡量既定组合的影响，不代表预期收益或盈利概率。计算口径：候选把相同测试本金等权分配给选中产品，分不完的部分留作零收益现金，忽略交易费用；账户影响仅计已测部分的损益。权证使用局部敏感度和时间损耗近似，30/90 天误差可能很大。Turbo 按假设融资利率（美元 4%、欧元 2% 参考利率 ± 3% 利差）逐日调整融资水平，开放式敲出价随之移动；Factor 计入融资、1% 年费和波动损耗，波动率优先取同标的权证 IV，缺失按 50%。两步路径是假设连续两个重置周期发生冲击、随后持平，只有 Factor 和敲出检查使用中间路径；权证仍按终点近似。敲出按保守零回收处理，未模拟具体残值、日内重置、发行人实际融资条款、发行人信用、买卖价差及汇率变化。长期五档终点情景仍是假设末期单次冲击。
+          对比方案都是在当前持仓上减仓或退出，卖出所得记为零收益现金，忽略交易费用、买卖价差和税；账户影响仅计已测部分的损益。冲击测试只衡量既定持仓的影响，不代表预期收益或盈利概率。保护效率 = 最差情景亏损的减少额 ÷ 最大上涨情景盈利的减少额，等于 1 表示少亏和少赚一样多；它只反映所选情景下的取舍，不含概率，仓位大小按线性缩放。即时冲击不含时间损耗，期权的凸性会让价外权证显得划算，把期限改为 30 天可以把持有成本算进去。在同步下跌情景中盈利的仓位标为对冲仓位，不参与效率排序。每欧元最差亏损 = 最差情景改善 ÷ 释放现金。到期晚于测试期限的权证用 Black-Scholes 完整重估：波动率由当前报价反推，再按情景后的标的价格、剩余期限和 IV 变化重新定价，已包含时间价值损耗；报价无法反推，或反推结果与提供方 IV 相差一倍以上（多见于深度价内、报价与标的不同步）时改用提供方 IV，两者都缺才退回 Delta / Omega 线性近似。重估假设欧式行权、无股息、情景前后波动率不随标的涨跌自动变化。按波动率缩放用各标的权证 IV 的中位数相对全部标的中位数的比值调整幅度。“各标的逆向”情景让每个标的各自取对该组合最不利的终点涨跌，是不考虑相关性的上限估计。汇率冲击只作用于美元标的产品，按到期支付以新汇率折算处理。Turbo 按假设融资利率（美元 4%、欧元 2% 参考利率 ± 3% 利差）逐日调整融资水平，开放式敲出价随之移动；Factor 计入融资、1% 年费和波动损耗，波动率优先取同标的权证 IV，缺失按 50%。两步路径是假设连续两个重置周期发生冲击、随后持平，只有 Factor 和敲出检查使用中间路径；权证仍按终点近似。敲出按保守零回收处理，未模拟具体残值、日内重置、发行人实际融资条款、发行人信用、买卖价差，以及美元以外的汇率变化。长期五档终点情景仍是假设末期单次冲击。
         </Typography>
         </Box>
       </Stack>
@@ -446,7 +588,7 @@ function ContributionList({ title, rows, empty }) {
     <Typography variant="body2" fontWeight={700}>{title}</Typography>
     {rows.length === 0 ? <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>{empty}</Typography> : <>
       <Typography variant="caption" color="text.secondary">合计 {signedMoney(rows.reduce((sum, row) => sum + row.pnl, 0))} · 展示前 {Math.min(5, rows.length)} 个</Typography>
-      <TableContainer><Table size="small" aria-label={title}><TableBody>{rows.slice(0, 5).map(row => <TableRow key={row.id}><TableCell>{row.name}<Typography variant="caption" component="div" color="text.secondary">{row.groupName}</Typography></TableCell><PnlCell value={row.pnl} /></TableRow>)}</TableBody></Table></TableContainer>
+      <TableContainer><Table size="small" aria-label={title}><TableBody>{rows.slice(0, 5).map(row => <TableRow key={row.id}><TableCell>{row.name}<Typography variant="caption" component="div" color="text.secondary">{row.groupName}{row.movePct ? ` · 标的 ${signedPercent(row.movePct)}` : ''}</Typography></TableCell><PnlCell value={row.pnl} /></TableRow>)}</TableBody></Table></TableContainer>
     </>}
   </Box>
 }

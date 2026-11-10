@@ -1,0 +1,24 @@
+id
+status
+synonyms { isn wpk }
+issuanceInfo { issuer { symbol name } }
+classificationInfo { flavour { code description } }
+assets {
+  id name currency
+  assetSynonyms { isn ticker }
+  assetPrice { spotPrice }
+}
+productTerms {
+  denominated paymentStyle ratio
+  expirationDate { localeFormatted }
+  levels { claimType { key } }
+  ... on VanillaWarrantTerms { strike }
+}
+economics {
+  underlyingPricings { assetName value currency time priceSource }
+  price { bid ask time }
+  realTimeData {
+    tradableStatus
+    ... on VanillaWarrantRealTime { delta omega impliedVolatility }
+  }
+}
