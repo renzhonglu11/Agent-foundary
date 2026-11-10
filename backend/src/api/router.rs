@@ -29,6 +29,22 @@ pub fn build(state: Arc<AppState>, frontend_origin: &str) -> anyhow::Result<Rout
             get(handlers::portfolio_monitor_status),
         )
         .route(
+            "/api/portfolio-monitor/settings",
+            axum::routing::put(handlers::portfolio_monitor_settings),
+        )
+        .route(
+            "/api/portfolio-monitor/alerts/{key}/acknowledge",
+            axum::routing::post(handlers::portfolio_monitor_acknowledge),
+        )
+        .route(
+            "/api/portfolio-monitor/alerts/{key}/events",
+            get(handlers::portfolio_monitor_alert_events),
+        )
+        .route(
+            "/api/portfolio-monitor/daily",
+            get(handlers::portfolio_monitor_daily),
+        )
+        .route(
             "/api/portfolio-monitor/history",
             get(handlers::portfolio_monitor_history),
         )

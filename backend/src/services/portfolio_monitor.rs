@@ -15,7 +15,9 @@ use crate::{
     domain::portfolio::PortfolioSummaryResponse,
     services::{
         alpaca_market_data::{AlpacaMarketDataService, AlpacaQuote, AlpacaQuoteStatus},
+        monitor_alerts::{self, SettingsRecord},
         monitor_calendar::{UsSession, quote_quality, us_session},
+        monitor_history, monitor_risk,
         monitor_symbols::underlying_symbol,
         structured_products_service::StructuredProductsService,
     },
@@ -32,6 +34,8 @@ pub struct PortfolioMonitor {
     enabled: bool,
     interval: u64,
     retention_days: i64,
+    history_retention_days: i64,
+    write_gate: Arc<Mutex<()>>,
 }
 
 impl PortfolioMonitor {
@@ -65,6 +69,12 @@ impl PortfolioMonitor {
             enabled,
             interval,
             retention_days,
+            history_retention_days: std::env::var("PORTFOLIO_MONITOR_HISTORY_RETENTION_DAYS")
+                .ok()
+                .and_then(|v| v.parse::<i64>().ok())
+                .unwrap_or(730)
+                .clamp(100, 3650),
+            write_gate: Arc::new(Mutex::new(())),
         }
     }
 
@@ -92,12 +102,15 @@ impl PortfolioMonitor {
         Ok(
             json!({"enabled":self.enabled,"intervalSeconds":self.interval,"retentionDays":self.retention_days,"runtime":self.status.lock().await.clone(),
             "snapshot":snapshot,
-            "structuredProducts":self.products.status_payload()}),
+            "structuredProducts":self.products.status_payload(),
+            "historyRetentionDays":self.history_retention_days,
+            "configuration":monitor_alerts::settings(&self.pool).await?,
+            "alerts":monitor_alerts::list(&self.pool).await?}),
         )
     }
 
     pub async fn history(&self) -> anyhow::Result<Value> {
-        let rows: Vec<(String, String)> = sqlx::query_as("SELECT snapshot_key, captured_at FROM portfolio_monitor_snapshots WHERE snapshot_key != 'latest' ORDER BY captured_at DESC LIMIT 168").fetch_all(&self.pool).await?;
+        let rows: Vec<(String, String)> = sqlx::query_as("SELECT snapshot_key, captured_at FROM portfolio_monitor_snapshots WHERE snapshot_key LIKE 'hour:%' ORDER BY captured_at DESC LIMIT 168").fetch_all(&self.pool).await?;
         Ok(json!(
             rows.into_iter()
                 .map(|(key, captured_at)| json!({"key":key,"capturedAt":captured_at}))
@@ -117,6 +130,28 @@ impl PortfolioMonitor {
             .transpose()
     }
 
+    pub async fn save_settings(&self, record: &SettingsRecord) -> anyhow::Result<bool> {
+        let _guard = self.write_gate.lock().await;
+        let saved = monitor_alerts::save_settings(&self.pool, record).await?;
+        if saved {
+            self.request_refresh();
+        }
+        Ok(saved)
+    }
+
+    pub async fn acknowledge(&self, key: &str) -> anyhow::Result<bool> {
+        let _guard = self.write_gate.lock().await;
+        monitor_alerts::acknowledge(&self.pool, key).await
+    }
+
+    pub async fn alert_events(&self, key: &str) -> anyhow::Result<Value> {
+        monitor_alerts::events(&self.pool, key).await
+    }
+
+    pub async fn daily_history(&self) -> anyhow::Result<Value> {
+        monitor_history::history(&self.pool).await
+    }
+
     pub fn start(&self) {
         if !self.enabled {
             return;
@@ -129,6 +164,7 @@ impl PortfolioMonitor {
             let mut previous_symbols = Vec::new();
             let mut last_close_fetched: Option<DateTime<Utc>> = None;
             let mut last_provider: Value = json!({"status":"not_requested"});
+            let mut next_history = Utc::now();
             loop {
                 let now = Utc::now();
                 *service.status.lock().await = json!({"running":true,"lastStartedAt":now});
@@ -168,7 +204,19 @@ impl PortfolioMonitor {
                     for chunk in symbols.chunks(service.alpaca.batch_size()) {
                         quotes.extend(service.alpaca.persisted_quotes(&chunk.join(",")).await.quotes);
                     }
+                    let mut daily_stats=Vec::new();
+                    let mut history_warnings=Vec::new();
+                    let refresh_history=now>=next_history;
+                    for chunk in symbols.chunks(30) {
+                        match tokio::time::timeout(Duration::from_secs(45),service.alpaca.daily_bar_stats(&chunk.join(","),!refresh_history)).await {
+                            Ok(response)=>{daily_stats.extend(response.stats);history_warnings.extend(response.warnings);},
+                            Err(_)=>history_warnings.push("后台日线更新超时，相关历史指标暂缺".into()),
+                        }
+                    }
+                    if refresh_history {next_history=Utc::now()+TimeDelta::minutes(15);}
                     let mut payload = evaluate(&summary, &enrichment, &quotes, &session, Utc::now());
+                    payload["inputs"]["dailyStats"]=json!(daily_stats);
+                    payload["historyWarnings"]=json!(history_warnings);
                     let product_market_open = service.products.market_open().await;
                     payload["productMarketOpen"] = json!(product_market_open);
                     if let Some(rows) = payload["positions"].as_array_mut() {
@@ -185,6 +233,12 @@ impl PortfolioMonitor {
                     payload["provider"] = last_provider.clone();
                     payload["nextQuoteAttemptAt"] = json!(next_quotes);
                     payload["structuredProducts"] = service.products.status_payload();
+                    let _guard=service.write_gate.lock().await;
+                    let configuration=monitor_alerts::settings(&service.pool).await?;
+                    let evaluated_at=monitor_risk::timestamp(&payload["evaluatedAt"]).unwrap_or_else(Utc::now);
+                    payload["risk"]=monitor_risk::evaluate(&payload,&configuration.settings,evaluated_at);
+                    payload["configuration"]=json!(configuration);
+                    payload["historyRetentionDays"]=json!(service.history_retention_days);
                     persist_snapshot(&service.pool, &payload, service.retention_days).await?;
                     Ok::<_, anyhow::Error>(())
                 }.await;
@@ -209,10 +263,31 @@ async fn persist_snapshot(
     payload: &Value,
     retention_days: i64,
 ) -> anyhow::Result<()> {
+    let mut payload = payload.clone();
+    let mut tx = pool.begin().await?;
+    if payload["risk"].is_object() {
+        let configuration: SettingsRecord =
+            serde_json::from_value(payload["configuration"].clone())?;
+        monitor_alerts::evaluate(&mut tx, &payload, &configuration).await?;
+        let counts: Vec<(String,i64)>=sqlx::query_as("SELECT json_extract(state_json,'$.status'),COUNT(*) FROM portfolio_monitor_alerts WHERE json_extract(state_json,'$.status') IN ('active','acknowledged','invalidated','resolved','pending') GROUP BY json_extract(state_json,'$.status')").fetch_all(&mut *tx).await?;
+        payload["alertSummary"] = json!(
+            counts
+                .into_iter()
+                .collect::<std::collections::BTreeMap<_, _>>()
+        );
+        monitor_history::persist_day(&mut tx, &payload).await?;
+        let now = monitor_risk::timestamp(&payload["evaluatedAt"])
+            .ok_or_else(|| anyhow::anyhow!("invalid evaluation time"))?;
+        monitor_history::prune(
+            &mut tx,
+            now,
+            payload["historyRetentionDays"].as_i64().unwrap_or(730),
+        )
+        .await?;
+    }
     let time = payload["evaluatedAt"].as_str().unwrap_or("");
     let hour = format!("hour:{}", &time[..time.len().min(13)]);
-    let content = serde_json::to_string(payload)?;
-    let mut tx = pool.begin().await?;
+    let content = serde_json::to_string(&payload)?;
     for key in ["latest", hour.as_str()] {
         sqlx::query("INSERT INTO portfolio_monitor_snapshots(snapshot_key,captured_at,payload_json) VALUES(?,?,?) ON CONFLICT(snapshot_key) DO UPDATE SET captured_at=excluded.captured_at,payload_json=excluded.payload_json")
                 .bind(key).bind(time).bind(&content).execute(&mut *tx).await?;
@@ -310,12 +385,13 @@ pub fn evaluate(
             issues.push("product_currency_unsupported".into());
         }
         rows.push(json!({"symbol":p.symbol,"name":p.display_name,"quantity":p.quantity,"marketValue":p.market_value,
+            "assetClass":p.asset_class,"instrument":p.instrument,
             "price":p.last_price,"currency":p.valuation_currency,"valuationSource":p.valuation_source,
             "marketAsOf":p.price_as_of,"fetchedAt":p.price_fetched_at,"underlyingSymbol":symbol,
             "underlyingQuality":quality,"underlyingQuote":quote,"enrichmentTier":item["enrichment_tier"],
             "greeksSource":item["greeks_source"],"greeksMarketAsOf":Value::Null,"issues":issues}));
     }
-    json!({"schemaVersion":1,"evaluatedAt":now,"basis":"holdings_market_value","currency":"EUR",
+    json!({"schemaVersion":2,"evaluatedAt":now,"basis":"holdings_market_value","currency":"EUR",
         "cashBalance":Value::Null,"liabilities":Value::Null,"accountNav":Value::Null,
         "holdingsMarketValue":summary.summary.total_market_value,"grossHoldingsValue":gross_value,
         "positionCount":rows.len(),"mappedUnderlyingValue":mapped_value,"usableUnderlyingValue":usable_value,
@@ -475,6 +551,80 @@ mod tests {
                 "latest"
             ]
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn background_cycle_persists_risk_alert_evidence_and_daily_state_across_restart()
+    -> anyhow::Result<()> {
+        use crate::infrastructure::db::migrations::run_migrations;
+        let dir = tempfile::tempdir()?;
+        let url = format!(
+            "sqlite://{}?mode=rwc",
+            dir.path().join("cycle.db").display()
+        );
+        let pool = SqlitePool::connect(&url).await?;
+        run_migrations(&pool).await?;
+        let cases: Value = serde_json::from_str(include_str!(
+            "../../tests/fixtures/monitor-risk-parity.json"
+        ))?;
+        let config = SettingsRecord {
+            revision: 0,
+            settings: monitor_risk::RiskSettings {
+                max_loss_eur: Some(1.0),
+                ..Default::default()
+            },
+        };
+        for minute in [15, 16] {
+            let time = format!("2026-11-10T21:{minute}:00Z");
+            let mut payload = json!({"evaluatedAt":time,"usSession":{"state":"closed","lastClose":"2026-11-10T21:00:00Z"},"productMarketOpen":false,
+                "configuration":config,"positions":[cases[0]["row"]],"grossHoldingsValue":200,"inputs":{"enrichment":{"items":[cases[0]["item"]]}}});
+            payload["risk"] = monitor_risk::evaluate(&payload, &config.settings, time.parse()?);
+            persist_snapshot(&pool, &payload, 30).await?;
+        }
+        assert!(monitor_alerts::acknowledge(&pool, "0:stress_loss:portfolio").await?);
+        pool.close().await;
+        let pool = SqlitePool::connect(&url).await?;
+        let alerts = monitor_alerts::list(&pool).await?;
+        assert!(
+            alerts
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|a| a["rule"] == "stress_loss" && a["status"] == "acknowledged")
+        );
+        let events = monitor_alerts::events(&pool, "0:stress_loss:portfolio").await?;
+        assert_eq!(events.as_array().map(Vec::len), Some(2));
+        let key = events[0]["state"]["evidenceKey"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("missing evidence"))?;
+        let raw: String = sqlx::query_scalar(
+            "SELECT payload_json FROM portfolio_monitor_snapshots WHERE snapshot_key=?",
+        )
+        .bind(key)
+        .fetch_one(&pool)
+        .await?;
+        let evidence: Value = serde_json::from_str(&raw)?;
+        assert_eq!(
+            evidence["risk"]["modelVersion"],
+            monitor_risk::MODEL_VERSION
+        );
+        assert!(evidence["inputs"]["enrichment"].is_object());
+        let history = monitor_history::history(&pool).await?;
+        assert_eq!(history["days"].as_array().map(Vec::len), Some(1));
+        assert_eq!(history["days"][0]["capturedAt"], "2026-11-10T21:15:00Z");
+        // An invalid frozen model rolls back both the latest update and its alert changes.
+        let mut broken = evidence;
+        broken["evaluatedAt"] = json!("2026-11-11T21:15:00Z");
+        broken["usSession"]["lastClose"] = json!("2026-11-11T21:00:00Z");
+        broken["risk"]["models"] = json!("invalid");
+        assert!(persist_snapshot(&pool, &broken, 30).await.is_err());
+        let last: String = sqlx::query_scalar(
+            "SELECT captured_at FROM portfolio_monitor_snapshots WHERE snapshot_key='latest'",
+        )
+        .fetch_one(&pool)
+        .await?;
+        assert_eq!(last, "2026-11-10T21:16:00Z");
         Ok(())
     }
 }

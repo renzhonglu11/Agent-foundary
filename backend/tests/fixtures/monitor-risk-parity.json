@@ -1,0 +1,1154 @@
+[
+  {
+    "id": "call",
+    "row": {
+      "symbol": "call",
+      "name": "call",
+      "assetClass": "DERIVATIVE",
+      "instrument": "call",
+      "quantity": 100,
+      "marketValue": 200,
+      "price": 2,
+      "currency": "EUR",
+      "underlyingSymbol": "TEST",
+      "underlyingQuality": "fresh",
+      "marketAsOf": "2026-11-10T00:00:00Z",
+      "issues": [],
+      "underlyingQuote": {
+        "rawPrice": 100,
+        "rawCurrency": "USD",
+        "usdEurRate": 0.9,
+        "fxRateSource": "frankfurter"
+      }
+    },
+    "item": {
+      "isin": "call",
+      "product_type": "optionsschein",
+      "option_type": "call",
+      "strike_price": 110,
+      "knockout_price": null,
+      "ratio": 0.1,
+      "iv": 0.5,
+      "expiry": "2027-01-09",
+      "leverage": 3,
+      "delta": 1
+    },
+    "entry": {
+      "item": {
+        "symbol": "call",
+        "productType": "optionsschein",
+        "optionType": "call",
+        "price": 2,
+        "quantity": 100,
+        "underlyingSpot": 90,
+        "underlyingSpotRaw": 100,
+        "underlyingSpotRawCurrency": "USD",
+        "underlyingSpotUsdEurRate": 0.9,
+        "strikePrice": 110,
+        "knockoutPrice": null,
+        "ratio": 0.1,
+        "iv": 0.5,
+        "leverage": 3,
+        "delta": 1
+      },
+      "riskLeg": {
+        "daysToExpiry": 60
+      },
+      "group": {
+        "key": "TEST"
+      }
+    },
+    "results": [
+      {
+        "scenario": {
+          "movePct": -20,
+          "days": 0
+        },
+        "expected": 1.6314
+      },
+      {
+        "scenario": {
+          "movePct": 0,
+          "days": 0
+        },
+        "expected": 2
+      },
+      {
+        "scenario": {
+          "movePct": 20,
+          "days": 0
+        },
+        "expected": 2.9881
+      },
+      {
+        "scenario": {
+          "movePct": -20,
+          "days": 7,
+          "ivMovePct": 20,
+          "fxMovePct": -5
+        },
+        "expected": 1.5782
+      },
+      {
+        "scenario": {
+          "movePct": 0,
+          "days": 30
+        },
+        "expected": 1.7982
+      },
+      {
+        "scenario": {
+          "movePct": 20,
+          "days": 90
+        },
+        "expected": 0.9
+      },
+      {
+        "scenario": {
+          "movePct": 0,
+          "days": 7,
+          "pathMoves": [
+            -20,
+            0
+          ]
+        },
+        "expected": 1.9567
+      },
+      {
+        "scenario": {
+          "movePct": 0,
+          "days": 7,
+          "pathMoves": [
+            20,
+            0
+          ]
+        },
+        "expected": 1.9567
+      }
+    ]
+  },
+  {
+    "id": "put",
+    "row": {
+      "symbol": "put",
+      "name": "put",
+      "assetClass": "DERIVATIVE",
+      "instrument": "put",
+      "quantity": 100,
+      "marketValue": 200,
+      "price": 2,
+      "currency": "EUR",
+      "underlyingSymbol": "TEST",
+      "underlyingQuality": "fresh",
+      "marketAsOf": "2026-11-10T00:00:00Z",
+      "issues": [],
+      "underlyingQuote": {
+        "rawPrice": 100,
+        "rawCurrency": "USD",
+        "usdEurRate": 0.9,
+        "fxRateSource": "frankfurter"
+      }
+    },
+    "item": {
+      "isin": "put",
+      "product_type": "optionsschein",
+      "option_type": "put",
+      "strike_price": 90,
+      "knockout_price": null,
+      "ratio": 0.1,
+      "iv": 0.5,
+      "expiry": "2027-01-09",
+      "leverage": 3,
+      "delta": -1
+    },
+    "entry": {
+      "item": {
+        "symbol": "put",
+        "productType": "optionsschein",
+        "optionType": "put",
+        "price": 2,
+        "quantity": 100,
+        "underlyingSpot": 90,
+        "underlyingSpotRaw": 100,
+        "underlyingSpotRawCurrency": "USD",
+        "underlyingSpotUsdEurRate": 0.9,
+        "strikePrice": 90,
+        "knockoutPrice": null,
+        "ratio": 0.1,
+        "iv": 0.5,
+        "leverage": 3,
+        "delta": -1
+      },
+      "riskLeg": {
+        "daysToExpiry": 60
+      },
+      "group": {
+        "key": "TEST"
+      }
+    },
+    "results": [
+      {
+        "scenario": {
+          "movePct": -20,
+          "days": 0
+        },
+        "expected": 2.8154
+      },
+      {
+        "scenario": {
+          "movePct": 0,
+          "days": 0
+        },
+        "expected": 2
+      },
+      {
+        "scenario": {
+          "movePct": 20,
+          "days": 0
+        },
+        "expected": 1.7481
+      },
+      {
+        "scenario": {
+          "movePct": -20,
+          "days": 7,
+          "ivMovePct": 20,
+          "fxMovePct": -5
+        },
+        "expected": 2.744
+      },
+      {
+        "scenario": {
+          "movePct": 0,
+          "days": 30
+        },
+        "expected": 1.8444
+      },
+      {
+        "scenario": {
+          "movePct": 20,
+          "days": 90
+        },
+        "expected": 0
+      },
+      {
+        "scenario": {
+          "movePct": 0,
+          "days": 7,
+          "pathMoves": [
+            -20,
+            0
+          ]
+        },
+        "expected": 1.9669
+      },
+      {
+        "scenario": {
+          "movePct": 0,
+          "days": 7,
+          "pathMoves": [
+            20,
+            0
+          ]
+        },
+        "expected": 1.9669
+      }
+    ]
+  },
+  {
+    "id": "provider_iv",
+    "row": {
+      "symbol": "provider_iv",
+      "name": "provider_iv",
+      "assetClass": "DERIVATIVE",
+      "instrument": "call",
+      "quantity": 100,
+      "marketValue": 1,
+      "price": 0.01,
+      "currency": "EUR",
+      "underlyingSymbol": "TEST",
+      "underlyingQuality": "fresh",
+      "marketAsOf": "2026-11-10T00:00:00Z",
+      "issues": [],
+      "underlyingQuote": {
+        "rawPrice": 100,
+        "rawCurrency": "USD",
+        "usdEurRate": 0.9,
+        "fxRateSource": "frankfurter"
+      }
+    },
+    "item": {
+      "isin": "provider_iv",
+      "product_type": "optionsschein",
+      "option_type": "call",
+      "strike_price": 80,
+      "knockout_price": null,
+      "ratio": 0.1,
+      "iv": 0.5,
+      "expiry": "2027-01-09",
+      "leverage": 3,
+      "delta": 1
+    },
+    "entry": {
+      "item": {
+        "symbol": "provider_iv",
+        "productType": "optionsschein",
+        "optionType": "call",
+        "price": 0.01,
+        "quantity": 100,
+        "underlyingSpot": 90,
+        "underlyingSpotRaw": 100,
+        "underlyingSpotRawCurrency": "USD",
+        "underlyingSpotUsdEurRate": 0.9,
+        "strikePrice": 80,
+        "knockoutPrice": null,
+        "ratio": 0.1,
+        "iv": 0.5,
+        "leverage": 3,
+        "delta": 1
+      },
+      "riskLeg": {
+        "daysToExpiry": 60
+      },
+      "group": {
+        "key": "TEST"
+      }
+    },
+    "results": [
+      {
+        "scenario": {
+          "movePct": -20,
+          "days": 0
+        },
+        "expected": 0.0031
+      },
+      {
+        "scenario": {
+          "movePct": 0,
+          "days": 0
+        },
+        "expected": 0.01
+      },
+      {
+        "scenario": {
+          "movePct": 20,
+          "days": 0
+        },
+        "expected": 0.0188
+      },
+      {
+        "scenario": {
+          "movePct": -20,
+          "days": 7,
+          "ivMovePct": 20,
+          "fxMovePct": -5
+        },
+        "expected": 0.0033
+      },
+      {
+        "scenario": {
+          "movePct": 0,
+          "days": 30
+        },
+        "expected": 0.0095
+      },
+      {
+        "scenario": {
+          "movePct": 20,
+          "days": 90
+        },
+        "expected": 3.6
+      },
+      {
+        "scenario": {
+          "movePct": 0,
+          "days": 7,
+          "pathMoves": [
+            -20,
+            0
+          ]
+        },
+        "expected": 0.0099
+      },
+      {
+        "scenario": {
+          "movePct": 0,
+          "days": 7,
+          "pathMoves": [
+            20,
+            0
+          ]
+        },
+        "expected": 0.0099
+      }
+    ]
+  },
+  {
+    "id": "turbo_call",
+    "row": {
+      "symbol": "turbo_call",
+      "name": "turbo_call",
+      "assetClass": "DERIVATIVE",
+      "instrument": "call",
+      "quantity": 100,
+      "marketValue": 180,
+      "price": 1.8,
+      "currency": "EUR",
+      "underlyingSymbol": "TEST",
+      "underlyingQuality": "fresh",
+      "marketAsOf": "2026-11-10T00:00:00Z",
+      "issues": [],
+      "underlyingQuote": {
+        "rawPrice": 100,
+        "rawCurrency": "USD",
+        "usdEurRate": 0.9,
+        "fxRateSource": "frankfurter"
+      }
+    },
+    "item": {
+      "isin": "turbo_call",
+      "product_type": "open_end_turbo",
+      "option_type": "call",
+      "strike_price": 95,
+      "knockout_price": 95,
+      "ratio": 0.1,
+      "iv": 0.5,
+      "expiry": "2027-01-09",
+      "leverage": 3,
+      "delta": 1
+    },
+    "entry": {
+      "item": {
+        "symbol": "turbo_call",
+        "productType": "open_end_turbo",
+        "optionType": "call",
+        "price": 1.8,
+        "quantity": 100,
+        "underlyingSpot": 90,
+        "underlyingSpotRaw": 100,
+        "underlyingSpotRawCurrency": "USD",
+        "underlyingSpotUsdEurRate": 0.9,
+        "strikePrice": 95,
+        "knockoutPrice": 95,
+        "ratio": 0.1,
+        "iv": 0.5,
+        "leverage": 3,
+        "delta": 1
+      },
+      "riskLeg": {
+        "daysToExpiry": 60
+      },
+      "group": {
+        "key": "TEST"
+      }
+    },
+    "results": [
+      {
+        "scenario": {
+          "movePct": -20,
+          "days": 0
+        },
+        "expected": 0
+      },
+      {
+        "scenario": {
+          "movePct": 0,
+          "days": 0
+        },
+        "expected": 1.8
+      },
+      {
+        "scenario": {
+          "movePct": 20,
+          "days": 0
+        },
+        "expected": 3.6
+      },
+      {
+        "scenario": {
+          "movePct": -20,
+          "days": 7,
+          "ivMovePct": 20,
+          "fxMovePct": -5
+        },
+        "expected": 0
+      },
+      {
+        "scenario": {
+          "movePct": 0,
+          "days": 30
+        },
+        "expected": 1.7501
+      },
+      {
+        "scenario": {
+          "movePct": 20,
+          "days": 90
+        },
+        "expected": 3.4504
+      },
+      {
+        "scenario": {
+          "movePct": 0,
+          "days": 7,
+          "pathMoves": [
+            -20,
+            0
+          ]
+        },
+        "expected": 0
+      },
+      {
+        "scenario": {
+          "movePct": 0,
+          "days": 7,
+          "pathMoves": [
+            20,
+            0
+          ]
+        },
+        "expected": 1.7884
+      }
+    ]
+  },
+  {
+    "id": "turbo_put",
+    "row": {
+      "symbol": "turbo_put",
+      "name": "turbo_put",
+      "assetClass": "DERIVATIVE",
+      "instrument": "put",
+      "quantity": 100,
+      "marketValue": 180,
+      "price": 1.8,
+      "currency": "EUR",
+      "underlyingSymbol": "TEST",
+      "underlyingQuality": "fresh",
+      "marketAsOf": "2026-11-10T00:00:00Z",
+      "issues": [],
+      "underlyingQuote": {
+        "rawPrice": 100,
+        "rawCurrency": "USD",
+        "usdEurRate": 0.9,
+        "fxRateSource": "frankfurter"
+      }
+    },
+    "item": {
+      "isin": "turbo_put",
+      "product_type": "knock_out",
+      "option_type": "put",
+      "strike_price": 105,
+      "knockout_price": 105,
+      "ratio": 0.1,
+      "iv": 0.5,
+      "expiry": "2027-01-09",
+      "leverage": 3,
+      "delta": -1
+    },
+    "entry": {
+      "item": {
+        "symbol": "turbo_put",
+        "productType": "knock_out",
+        "optionType": "put",
+        "price": 1.8,
+        "quantity": 100,
+        "underlyingSpot": 90,
+        "underlyingSpotRaw": 100,
+        "underlyingSpotRawCurrency": "USD",
+        "underlyingSpotUsdEurRate": 0.9,
+        "strikePrice": 105,
+        "knockoutPrice": 105,
+        "ratio": 0.1,
+        "iv": 0.5,
+        "leverage": 3,
+        "delta": -1
+      },
+      "riskLeg": {
+        "daysToExpiry": 60
+      },
+      "group": {
+        "key": "TEST"
+      }
+    },
+    "results": [
+      {
+        "scenario": {
+          "movePct": -20,
+          "days": 0
+        },
+        "expected": 3.6
+      },
+      {
+        "scenario": {
+          "movePct": 0,
+          "days": 0
+        },
+        "expected": 1.8
+      },
+      {
+        "scenario": {
+          "movePct": 20,
+          "days": 0
+        },
+        "expected": 0
+      },
+      {
+        "scenario": {
+          "movePct": -20,
+          "days": 7,
+          "ivMovePct": 20,
+          "fxMovePct": -5
+        },
+        "expected": 3.4217
+      },
+      {
+        "scenario": {
+          "movePct": 0,
+          "days": 30
+        },
+        "expected": 1.8079
+      },
+      {
+        "scenario": {
+          "movePct": 20,
+          "days": 90
+        },
+        "expected": 0
+      },
+      {
+        "scenario": {
+          "movePct": 0,
+          "days": 7,
+          "pathMoves": [
+            -20,
+            0
+          ]
+        },
+        "expected": 1.8018
+      },
+      {
+        "scenario": {
+          "movePct": 0,
+          "days": 7,
+          "pathMoves": [
+            20,
+            0
+          ]
+        },
+        "expected": 0
+      }
+    ]
+  },
+  {
+    "id": "factor_call",
+    "row": {
+      "symbol": "factor_call",
+      "name": "factor_call",
+      "assetClass": "DERIVATIVE",
+      "instrument": "call",
+      "quantity": 100,
+      "marketValue": 1000,
+      "price": 10,
+      "currency": "EUR",
+      "underlyingSymbol": "TEST",
+      "underlyingQuality": "fresh",
+      "marketAsOf": "2026-11-10T00:00:00Z",
+      "issues": [],
+      "underlyingQuote": {
+        "rawPrice": 100,
+        "rawCurrency": "USD",
+        "usdEurRate": 0.9,
+        "fxRateSource": "frankfurter"
+      }
+    },
+    "item": {
+      "isin": "factor_call",
+      "product_type": "factor_certificate",
+      "option_type": "call",
+      "strike_price": null,
+      "knockout_price": null,
+      "ratio": 0.1,
+      "iv": 0.5,
+      "expiry": "2027-01-09",
+      "leverage": 3,
+      "delta": 1
+    },
+    "entry": {
+      "item": {
+        "symbol": "factor_call",
+        "productType": "factor_certificate",
+        "optionType": "call",
+        "price": 10,
+        "quantity": 100,
+        "underlyingSpot": 90,
+        "underlyingSpotRaw": 100,
+        "underlyingSpotRawCurrency": "USD",
+        "underlyingSpotUsdEurRate": 0.9,
+        "strikePrice": null,
+        "knockoutPrice": null,
+        "ratio": 0.1,
+        "iv": 0.5,
+        "leverage": 3,
+        "delta": 1
+      },
+      "riskLeg": {
+        "daysToExpiry": 60
+      },
+      "group": {
+        "key": "TEST"
+      }
+    },
+    "results": [
+      {
+        "scenario": {
+          "movePct": -20,
+          "days": 0
+        },
+        "expected": 4
+      },
+      {
+        "scenario": {
+          "movePct": 0,
+          "days": 0
+        },
+        "expected": 10
+      },
+      {
+        "scenario": {
+          "movePct": 20,
+          "days": 0
+        },
+        "expected": 16
+      },
+      {
+        "scenario": {
+          "movePct": -20,
+          "days": 7,
+          "ivMovePct": 20,
+          "fxMovePct": -5
+        },
+        "expected": 3.7348
+      },
+      {
+        "scenario": {
+          "movePct": 0,
+          "days": 30
+        },
+        "expected": 9.2855
+      },
+      {
+        "scenario": {
+          "movePct": 20,
+          "days": 90
+        },
+        "expected": 12.8096
+      },
+      {
+        "scenario": {
+          "movePct": 0,
+          "days": 7,
+          "pathMoves": [
+            -20,
+            0
+          ]
+        },
+        "expected": 6.88
+      },
+      {
+        "scenario": {
+          "movePct": 0,
+          "days": 7,
+          "pathMoves": [
+            20,
+            0
+          ]
+        },
+        "expected": 7.8628
+      }
+    ]
+  },
+  {
+    "id": "factor_put",
+    "row": {
+      "symbol": "factor_put",
+      "name": "factor_put",
+      "assetClass": "DERIVATIVE",
+      "instrument": "put",
+      "quantity": 100,
+      "marketValue": 1000,
+      "price": 10,
+      "currency": "EUR",
+      "underlyingSymbol": "TEST",
+      "underlyingQuality": "fresh",
+      "marketAsOf": "2026-11-10T00:00:00Z",
+      "issues": [],
+      "underlyingQuote": {
+        "rawPrice": 100,
+        "rawCurrency": "USD",
+        "usdEurRate": 0.9,
+        "fxRateSource": "frankfurter"
+      }
+    },
+    "item": {
+      "isin": "factor_put",
+      "product_type": "factor_certificate",
+      "option_type": "put",
+      "strike_price": null,
+      "knockout_price": null,
+      "ratio": 0.1,
+      "iv": 0.5,
+      "expiry": "2027-01-09",
+      "leverage": 3,
+      "delta": -1
+    },
+    "entry": {
+      "item": {
+        "symbol": "factor_put",
+        "productType": "factor_certificate",
+        "optionType": "put",
+        "price": 10,
+        "quantity": 100,
+        "underlyingSpot": 90,
+        "underlyingSpotRaw": 100,
+        "underlyingSpotRawCurrency": "USD",
+        "underlyingSpotUsdEurRate": 0.9,
+        "strikePrice": null,
+        "knockoutPrice": null,
+        "ratio": 0.1,
+        "iv": 0.5,
+        "leverage": 3,
+        "delta": -1
+      },
+      "riskLeg": {
+        "daysToExpiry": 60
+      },
+      "group": {
+        "key": "TEST"
+      }
+    },
+    "results": [
+      {
+        "scenario": {
+          "movePct": -20,
+          "days": 0
+        },
+        "expected": 16
+      },
+      {
+        "scenario": {
+          "movePct": 0,
+          "days": 0
+        },
+        "expected": 10
+      },
+      {
+        "scenario": {
+          "movePct": 20,
+          "days": 0
+        },
+        "expected": 4
+      },
+      {
+        "scenario": {
+          "movePct": -20,
+          "days": 7,
+          "ivMovePct": 20,
+          "fxMovePct": -5
+        },
+        "expected": 14.7776
+      },
+      {
+        "scenario": {
+          "movePct": 0,
+          "days": 30
+        },
+        "expected": 8.8623
+      },
+      {
+        "scenario": {
+          "movePct": 20,
+          "days": 90
+        },
+        "expected": 2.7842
+      },
+      {
+        "scenario": {
+          "movePct": 0,
+          "days": 7,
+          "pathMoves": [
+            -20,
+            0
+          ]
+        },
+        "expected": 3.8888
+      },
+      {
+        "scenario": {
+          "movePct": 0,
+          "days": 7,
+          "pathMoves": [
+            20,
+            0
+          ]
+        },
+        "expected": 5.8333
+      }
+    ]
+  },
+  {
+    "id": "calibrated_call",
+    "row": {
+      "symbol": "calibrated_call",
+      "name": "call",
+      "assetClass": "DERIVATIVE",
+      "instrument": "call",
+      "quantity": 100,
+      "marketValue": 60,
+      "price": 0.6,
+      "currency": "EUR",
+      "underlyingSymbol": "TEST",
+      "underlyingQuality": "fresh",
+      "marketAsOf": "2026-11-10T00:00:00Z",
+      "issues": [],
+      "underlyingQuote": {
+        "rawPrice": 100,
+        "rawCurrency": "USD",
+        "usdEurRate": 0.9,
+        "fxRateSource": "frankfurter"
+      }
+    },
+    "item": {
+      "isin": "calibrated_call",
+      "product_type": "optionsschein",
+      "option_type": "call",
+      "strike_price": 110,
+      "knockout_price": null,
+      "ratio": 0.1,
+      "iv": 0.5,
+      "expiry": "2027-01-09",
+      "leverage": 3,
+      "delta": 1
+    },
+    "entry": {
+      "item": {
+        "symbol": "calibrated_call",
+        "productType": "optionsschein",
+        "optionType": "call",
+        "price": 0.6,
+        "quantity": 100,
+        "underlyingSpot": 90,
+        "underlyingSpotRaw": 100,
+        "underlyingSpotRawCurrency": "USD",
+        "underlyingSpotUsdEurRate": 0.9,
+        "strikePrice": 110,
+        "knockoutPrice": null,
+        "ratio": 0.1,
+        "iv": 0.5,
+        "leverage": 3,
+        "delta": 1
+      },
+      "riskLeg": {
+        "daysToExpiry": 60
+      },
+      "group": {
+        "key": "TEST"
+      }
+    },
+    "results": [
+      {
+        "scenario": {
+          "movePct": -20,
+          "days": 0
+        },
+        "expected": 0.1165
+      },
+      {
+        "scenario": {
+          "movePct": 0,
+          "days": 0
+        },
+        "expected": 0.6
+      },
+      {
+        "scenario": {
+          "movePct": 20,
+          "days": 0
+        },
+        "expected": 1.6041
+      },
+      {
+        "scenario": {
+          "movePct": -20,
+          "days": 7,
+          "ivMovePct": 20,
+          "fxMovePct": -5
+        },
+        "expected": 0.1637
+      },
+      {
+        "scenario": {
+          "movePct": 0,
+          "days": 30
+        },
+        "expected": 0.3335
+      },
+      {
+        "scenario": {
+          "movePct": 20,
+          "days": 90
+        },
+        "expected": 0.9
+      },
+      {
+        "scenario": {
+          "movePct": 0,
+          "days": 7,
+          "pathMoves": [
+            -20,
+            0
+          ]
+        },
+        "expected": 0.5437
+      },
+      {
+        "scenario": {
+          "movePct": 0,
+          "days": 7,
+          "pathMoves": [
+            20,
+            0
+          ]
+        },
+        "expected": 0.5437
+      }
+    ]
+  },
+  {
+    "id": "calibrated_put",
+    "row": {
+      "symbol": "calibrated_put",
+      "name": "put",
+      "assetClass": "DERIVATIVE",
+      "instrument": "put",
+      "quantity": 100,
+      "marketValue": 60,
+      "price": 0.6,
+      "currency": "EUR",
+      "underlyingSymbol": "TEST",
+      "underlyingQuality": "fresh",
+      "marketAsOf": "2026-11-10T00:00:00Z",
+      "issues": [],
+      "underlyingQuote": {
+        "rawPrice": 100,
+        "rawCurrency": "USD",
+        "usdEurRate": 0.9,
+        "fxRateSource": "frankfurter"
+      }
+    },
+    "item": {
+      "isin": "calibrated_put",
+      "product_type": "optionsschein",
+      "option_type": "put",
+      "strike_price": 90,
+      "knockout_price": null,
+      "ratio": 0.1,
+      "iv": 0.5,
+      "expiry": "2027-01-09",
+      "leverage": 3,
+      "delta": -1
+    },
+    "entry": {
+      "item": {
+        "symbol": "calibrated_put",
+        "productType": "optionsschein",
+        "optionType": "put",
+        "price": 0.6,
+        "quantity": 100,
+        "underlyingSpot": 90,
+        "underlyingSpotRaw": 100,
+        "underlyingSpotRawCurrency": "USD",
+        "underlyingSpotUsdEurRate": 0.9,
+        "strikePrice": 90,
+        "knockoutPrice": null,
+        "ratio": 0.1,
+        "iv": 0.5,
+        "leverage": 3,
+        "delta": -1
+      },
+      "riskLeg": {
+        "daysToExpiry": 60
+      },
+      "group": {
+        "key": "TEST"
+      }
+    },
+    "results": [
+      {
+        "scenario": {
+          "movePct": -20,
+          "days": 0
+        },
+        "expected": 1.3855
+      },
+      {
+        "scenario": {
+          "movePct": 0,
+          "days": 0
+        },
+        "expected": 0.6
+      },
+      {
+        "scenario": {
+          "movePct": 20,
+          "days": 0
+        },
+        "expected": 0.2334
+      },
+      {
+        "scenario": {
+          "movePct": -20,
+          "days": 7,
+          "ivMovePct": 20,
+          "fxMovePct": -5
+        },
+        "expected": 1.422
+      },
+      {
+        "scenario": {
+          "movePct": 0,
+          "days": 30
+        },
+        "expected": 0.3438
+      },
+      {
+        "scenario": {
+          "movePct": 20,
+          "days": 90
+        },
+        "expected": 0
+      },
+      {
+        "scenario": {
+          "movePct": 0,
+          "days": 7,
+          "pathMoves": [
+            -20,
+            0
+          ]
+        },
+        "expected": 0.5468
+      },
+      {
+        "scenario": {
+          "movePct": 0,
+          "days": 7,
+          "pathMoves": [
+            20,
+            0
+          ]
+        },
+        "expected": 0.5468
+      }
+    ]
+  }
+]

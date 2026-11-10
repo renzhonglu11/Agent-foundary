@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { Alert, Box, Chip, Stack, Typography, Table, TableHead, TableBody, TableRow, TableCell } from '@mui/material'
 import { compactCurrency } from '../utils/formatters.js'
+import PortfolioRiskMonitor from './PortfolioRiskMonitor.jsx'
 
 const qualityLabels = {
   fresh: '交易时段内有效', closed_last_session: '休市 · 最近交易时段', stale: '行情过期',
@@ -29,7 +30,7 @@ export default function PortfolioDataMonitor() {
   if (query.error) return <Alert severity="warning" sx={{ mb: 1.5 }}>{query.error.message}；当前无法确认后台数据状态。</Alert>
   const data = query.data
   const snapshot = data?.snapshot
-  if (!snapshot) return <Alert severity="info" sx={{ mb: 1.5 }}>{data?.enabled === false ? '后台数据监控已关闭。' : '后台数据监控正在准备首份快照…'}</Alert>
+  if (!snapshot) return <><Alert severity="info" sx={{ mb: 1.5 }}>{data?.enabled === false ? '后台数据监控已关闭。' : '后台数据监控正在准备首份快照…'}</Alert><PortfolioRiskMonitor data={data} /></>
   const expired = Date.now() - Date.parse(snapshot.evaluatedAt) > 180_000
   const rows = snapshot.positions || []
   const issues = rows.filter(row => row.issues?.length)
@@ -70,5 +71,6 @@ export default function PortfolioDataMonitor() {
         </Table>
       </Box>
     </Box>
+    <PortfolioRiskMonitor data={data} />
   </Box>
 }

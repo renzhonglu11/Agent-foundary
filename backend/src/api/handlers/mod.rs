@@ -19,7 +19,9 @@ pub use macro_analysis::{get_macro_analysis, refresh_macro_analysis};
 pub use pnl_snapshots::{create_pnl_snapshot, delete_pnl_snapshot, list_pnl_snapshots};
 pub use portfolio::portfolio_summary;
 pub use portfolio_monitor::{
-    portfolio_monitor_history, portfolio_monitor_snapshot, portfolio_monitor_status,
+    portfolio_monitor_acknowledge, portfolio_monitor_alert_events, portfolio_monitor_daily,
+    portfolio_monitor_history, portfolio_monitor_settings, portfolio_monitor_snapshot,
+    portfolio_monitor_status,
 };
 pub use portfolio_stress::{portfolio_stress_hermes_review, portfolio_stress_hermes_status};
 pub use product_candidates::{
