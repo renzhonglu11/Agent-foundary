@@ -7,6 +7,17 @@ async function request(path, options = {}) {
   return body
 }
 
+export function usePortfolioMonitorStatus() {
+  return useQuery({
+    queryKey: ['portfolioMonitor'],
+    queryFn: ({ signal }) => request('status', { signal }),
+    staleTime: 2_000,
+    refetchInterval: query => query.state.data?.runtime?.running ? 3_000 : 30_000,
+    refetchIntervalInBackground: true,
+    refetchOnWindowFocus: true,
+  })
+}
+
 export function useMonitorHistory() {
   return useQuery({ queryKey: ['portfolioMonitorDaily'], queryFn: () => request('daily'), refetchInterval: 60_000 })
 }

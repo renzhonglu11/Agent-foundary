@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import { AppBar, Badge, Box, Container, IconButton, Stack, Tab, Tabs, Toolbar, Typography } from '@mui/material';
+import { AppBar, Box, Container, IconButton, Stack, Tab, Tabs, Toolbar, Typography } from '@mui/material';
 import MenuIcon from '@mui/icons-material/Menu';
-import NotificationsIcon from '@mui/icons-material/Notifications';
 import SidebarNav, { navItems, sidebarCollapsedWidth, sidebarExpandedWidth } from './SidebarNav.jsx';
 import DataImportSpeedDial from './DataImportSpeedDial.jsx';
+import BackgroundUpdateStatus from './BackgroundUpdateStatus.jsx';
 
 export default function DashboardShell({ source, generatedAt, activeTab, onTabChange, children, pnlRecords = [], onRemovePnlRecord, onClearPnlRecords }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
@@ -60,11 +60,7 @@ export default function DashboardShell({ source, generatedAt, activeTab, onTabCh
             Agent-Foundry
           </Typography>
           <Box sx={{ flexGrow: 1 }} />
-          <IconButton size="large" aria-label="show notifications" color="inherit">
-            <Badge variant="dot" color="error">
-              <NotificationsIcon />
-            </Badge>
-          </IconButton>
+          <BackgroundUpdateStatus />
         </Toolbar>
       </AppBar>
 

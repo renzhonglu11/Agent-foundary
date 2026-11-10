@@ -1,5 +1,5 @@
-import { useQuery } from '@tanstack/react-query'
 import { Alert, Box, Chip, Stack, Typography, Table, TableHead, TableBody, TableRow, TableCell } from '@mui/material'
+import { usePortfolioMonitorStatus } from '../hooks/usePortfolioMonitor.js'
 import { compactCurrency } from '../utils/formatters.js'
 import PortfolioRiskMonitor from './PortfolioRiskMonitor.jsx'
 
@@ -18,15 +18,7 @@ const issueLabels = {
 const time = value => value ? new Date(value).toLocaleString() : '未知'
 
 export default function PortfolioDataMonitor() {
-  const query = useQuery({
-    queryKey: ['portfolioMonitor'],
-    queryFn: async () => {
-      const response = await fetch('/api/portfolio-monitor/status', { cache: 'no-store' })
-      if (!response.ok) throw new Error(`监控状态读取失败 (${response.status})`)
-      return response.json()
-    },
-    refetchInterval: 30_000,
-  })
+  const query = usePortfolioMonitorStatus()
   if (query.error) return <Alert severity="warning" sx={{ mb: 1.5 }}>{query.error.message}；当前无法确认后台数据状态。</Alert>
   const data = query.data
   const snapshot = data?.snapshot
