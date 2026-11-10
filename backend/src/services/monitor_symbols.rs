@@ -10,6 +10,8 @@ static SYMBOLS: LazyLock<Value> = LazyLock::new(|| {
     serde_json::from_str(include_str!("../../../web/src/utils/marketSymbols.json"))
         .unwrap_or(Value::Null)
 });
+static TICKER: LazyLock<Regex> =
+    LazyLock::new(|| constant_regex(SYMBOLS["tickerPattern"].as_str().unwrap_or("^$")));
 static WORDS: LazyLock<Regex> = LazyLock::new(|| {
     constant_regex(
         r"(?i)\b(registered|bearer|ordinary|common|preferred|shares?|aktien|adr|adrs|gdrs|ads|ord|class|dl|eur|usd|corporation|corp|inc|incorporated|company|co|ltd|limited|plc|llc|holdings?|ag|se|sa|nv)\b",
@@ -24,6 +26,12 @@ static TRAILING: LazyLock<Regex> = LazyLock::new(|| constant_regex(r"\s+\d+[\d.,
 
 fn constant_regex(pattern: &str) -> Regex {
     Regex::new(pattern).unwrap_or_else(|error| panic!("invalid constant regex: {error}"))
+}
+
+// Syntax only; names still need an explicit registry mapping. Keep the HTTP
+// boundary and browser fallback aligned, including class tickers like BRK.B.
+pub fn is_valid_alpaca_symbol(symbol: &str) -> bool {
+    TICKER.is_match(symbol)
 }
 
 fn lookup(value: &str, ticker_allowed: bool) -> Option<String> {
@@ -54,13 +62,7 @@ fn lookup(value: &str, ticker_allowed: bool) -> Option<String> {
                 .flat_map(|m| m.values()),
         )
         .any(|v| v.as_str() == Some(raw.as_str()));
-    if known
-        || (ticker_allowed
-            && value.trim() == raw
-            && raw.len() <= 5
-            && raw.chars().all(|c| c.is_ascii_uppercase() || c == '.')
-            && !raw.is_empty())
-    {
+    if known || (ticker_allowed && value.trim() == raw && is_valid_alpaca_symbol(&raw)) {
         return Some(raw);
     }
     None
@@ -125,6 +127,19 @@ mod tests {
             ("Netflix", "NFLX"),
             ("ServiceN", "NOW"),
             ("SERVICENOW INC.", "NOW"),
+            ("Disney", "DIS"),
+            ("DISNEY", "DIS"),
+            ("DISNEY (WALT) CO.", "DIS"),
+            ("The Walt Disney Company", "DIS"),
+            ("Int.Sur.", "ISRG"),
+            ("INT.SUR.", "ISRG"),
+            ("Intuitive Surgical Inc.", "ISRG"),
+            ("Intuitive Surgic.", "ISRG"),
+            ("ZSCALER", "ZS"),
+            ("Zscaler Inc.", "ZS"),
+            ("CoreWeav", "CRWV"),
+            ("COREWEAV", "CRWV"),
+            ("CoreWeave Inc.", "CRWV"),
         ] {
             let position = Position {
                 asset_class: "DERIVATIVE".into(),
@@ -135,6 +150,36 @@ mod tests {
                 underlying_symbol(&position, &item).as_deref(),
                 Some(expected),
                 "failed to resolve {underlying}"
+            );
+            let from_broker_name = Position {
+                asset_class: "DERIVATIVE".into(),
+                instrument: format!("Call 17.06.27 {underlying} 100"),
+                ..Default::default()
+            };
+            assert_eq!(
+                underlying_symbol(&from_broker_name, &Value::Null).as_deref(),
+                Some(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_class_tickers_pass_but_unknown_company_names_and_malformed_codes_do_not() {
+        let position = Position {
+            asset_class: "DERIVATIVE".into(),
+            ..Default::default()
+        };
+        for underlying in ["BRK.B", "ISRG", "CRWV"] {
+            assert_eq!(
+                underlying_symbol(&position, &serde_json::json!({"underlying":underlying}))
+                    .as_deref(),
+                Some(underlying)
+            );
+        }
+        for underlying in ["LONGNAME", "A.B.C", "ABC.", "UNKN0WN"] {
+            assert_eq!(
+                underlying_symbol(&position, &serde_json::json!({"underlying":underlying})),
+                None
             );
         }
     }

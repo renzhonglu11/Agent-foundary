@@ -906,15 +906,7 @@ fn parse_symbols_param(symbols_param: &str, limit: usize) -> (Vec<String>, Vec<S
 }
 
 fn is_valid_alpaca_symbol(symbol: &str) -> bool {
-    let mut chars = symbol.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-    first.is_ascii_uppercase()
-        && symbol.len() <= 10
-        && symbol
-            .chars()
-            .all(|value| value.is_ascii_uppercase() || value.is_ascii_digit() || value == '.')
+    super::monitor_symbols::is_valid_alpaca_symbol(symbol)
 }
 
 fn convert_quote(
@@ -1079,6 +1071,20 @@ mod tests {
         assert!(!is_valid_alpaca_symbol("US67066G1040"));
         assert!(!is_valid_alpaca_symbol("ALPHABET INC"));
         assert!(!is_valid_alpaca_symbol(""));
+        for symbol in [
+            "DISNEY", "INT.SUR.", "ZSCALER", "COREWEAV", "ABC.", "A.B.C", "ETF001",
+        ] {
+            assert!(
+                !is_valid_alpaca_symbol(symbol),
+                "{symbol} must not reach Alpaca"
+            );
+        }
+        let (symbols, warnings) = parse_symbols_param(
+            "DISNEY,INT.SUR.,ZSCALER,COREWEAV,DIS,ISRG,ZS,CRWV,BRK.B",
+            20,
+        );
+        assert_eq!(symbols, vec!["DIS", "ISRG", "ZS", "CRWV", "BRK.B"]);
+        assert_eq!(warnings.len(), 4);
     }
 
     #[test]

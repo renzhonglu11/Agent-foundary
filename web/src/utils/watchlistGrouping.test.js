@@ -344,6 +344,32 @@ test('maps broker company names to valid Alpaca tickers for monitoring', () => {
   assert.deepEqual(collectTier1MonitoringAlpacaSymbols(groups), ['CRM', 'NFLX', 'NOW'])
 })
 
+test('resolves Disney, Int.Sur., Zscaler and CoreWeav in both enrichment and broker-only holdings', () => {
+  const cases = [
+    ['Disney', 'DIS'], ['DISNEY (WALT) CO.', 'DIS'], ['The Walt Disney Company', 'DIS'],
+    ['Int.Sur.', 'ISRG'], ['Intuitive Surgical Inc.', 'ISRG'], ['Intuitive Surgic.', 'ISRG'],
+    ['ZSCALER', 'ZS'], ['Zscaler Inc.', 'ZS'], ['CoreWeav', 'CRWV'], ['CoreWeave Inc.', 'CRWV'],
+  ]
+  for (const [underlying, expected] of cases) {
+    const data = { summary: { totalMarketValue: 100 }, positions: [{ symbol: 'DE000TEST123', instrument: `Call 17.06.27 ${underlying} 100`, assetClass: 'DERIVATIVE', quantity: 1, marketValue: 100 }] }
+    const enriched = [{ isin: 'DE000TEST123', underlying, product_type: 'optionsschein', enrichment_tier: 'tier1' }]
+    assert.deepEqual(collectTier1MonitoringAlpacaSymbols(buildWatchlistGroups(data, enriched)), [expected], underlying)
+    assert.equal(buildWatchlistGroups(data).tier2[0].alpacaSymbol, expected, underlying)
+    const stock = { summary: { totalMarketValue: 100 }, positions: [{ symbol: underlying.toUpperCase(), assetClass: 'STOCK', quantity: 1, marketValue: 100 }] }
+    assert.equal(buildWatchlistGroups(stock).tier3[0].stocks[0].alpacaSymbol, expected, underlying)
+  }
+  assert.equal(canonicalGroupKey('Int.Sur.'), canonicalGroupKey('Intuitive Surgical'))
+  assert.equal(canonicalGroupKey('CoreWeav'), canonicalGroupKey('CoreWeave'))
+})
+
+test('does not send unknown long names, malformed class tickers or numeric broker identifiers to Alpaca', () => {
+  const enrichment = ['LONGNAME', 'A.B.C', 'ABC.', 'ETF001', 'BRK.B', 'ISRG', 'CRWV'].map((underlying, i) => ({
+    isin: `DE000TEST00${i}`, underlying, product_type: 'optionsschein', asset_class: 'DERIVATIVE', enrichment_tier: 'tier1', market_value: 100,
+  }))
+  const groups = buildWatchlistGroups({ positions: [], summary: { totalMarketValue: 700 } }, enrichment)
+  assert.deepEqual(collectTier1MonitoringAlpacaSymbols(groups), ['BRK.B', 'ISRG', 'CRWV'])
+})
+
 test('falls back to market value exposure when option greeks and spot are unavailable', () => {
   const groups = buildWatchlistGroups(
     { summary: { totalMarketValue: 10000 }, positions: [] },

@@ -1,4 +1,5 @@
 {
+  "tickerPattern": "^[A-Z]{1,5}(?:\\.[A-Z])?$",
   "isin": {
     "US02079K1079": "GOOG",
     "US0231351067": "AMZN",
@@ -45,6 +46,7 @@
     "caterpillar": "CAT",
     "cloudflare": "NET",
     "coinbase": "COIN",
+    "coreweave": "CRWV",
     "datadog": "DDOG",
     "dell technologies": "DELL",
     "enphase": "ENPH",
@@ -53,6 +55,7 @@
     "globalfoundries": "GFS",
     "hubspot": "HUBS",
     "intel": "INTC",
+    "intuitive surgical": "ISRG",
     "marvell": "MRVL",
     "micron technology": "MU",
     "microsoft": "MSFT",
@@ -73,7 +76,9 @@
     "texas instruments": "TXN",
     "tesla": "TSLA",
     "carnival": "CCL",
-    "united parcel service": "UPS"
+    "united parcel service": "UPS",
+    "walt disney": "DIS",
+    "zscaler": "ZS"
   },
   "canonical": {
     "accent": "accenture",
@@ -96,6 +101,12 @@
     "servicen": "servicenow",
     "service now": "servicenow",
     "delltech": "dell technologies",
+    "coreweav": "coreweave",
+    "disney": "walt disney",
+    "disney walt": "walt disney",
+    "the walt disney": "walt disney",
+    "int sur": "intuitive surgical",
+    "intuitive surgic": "intuitive surgical",
     "globalf": "globalfoundries",
     "texasin": "texas instruments",
     "texas in": "texas instruments",

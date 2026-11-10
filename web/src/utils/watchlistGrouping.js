@@ -5,6 +5,7 @@ const tierRank = { tier1: 0, tier2: 1, tier3: 2 }
 const alpacaSymbolByIsin = new Map(Object.entries(marketSymbols.isin))
 const alpacaSymbolByAliasKey = new Map(Object.entries(marketSymbols.alias))
 const underlyingAliasKeys = new Map(Object.entries(marketSymbols.canonical))
+const alpacaTickerPattern = new RegExp(marketSymbols.tickerPattern)
 
 export function buildWatchlistGroups(data, structuredProducts = [], alpacaQuotes = []) {
   const totalMarketValue = Number(data?.summary?.totalMarketValue) || 0
@@ -527,6 +528,8 @@ function resolveAlpacaSymbol({ position, enriched, stockName, symbol, isDerivati
 
   const rawSymbol = String(symbol || '').trim().toUpperCase()
   if (alpacaSymbolByIsin.has(rawSymbol)) return alpacaSymbolByIsin.get(rawSymbol)
+  const symbolAlias = alpacaSymbolByAliasKey.get(canonicalGroupKey(rawSymbol))
+  if (symbolAlias) return symbolAlias
   if (isTickerCandidate(rawSymbol)) return rawSymbol
 
   const identityValues = [
@@ -555,7 +558,6 @@ function resolveAlpacaSymbolForGroup(group) {
   const values = [
     group.symbol,
     group.groupName,
-    group.key,
     ...group.derivatives.map((row) => row.underlying),
     ...group.derivatives.map((row) => inferDerivativeUnderlying(row.instrument || row.stockName || row.displayName)),
   ]
@@ -568,6 +570,8 @@ function resolveAlpacaSymbolForGroup(group) {
     const alpacaSymbol = alpacaSymbolByAliasKey.get(aliasKey)
     if (alpacaSymbol) return alpacaSymbol
 
+    // Only original identity fields may be ticker candidates. A normalized
+    // grouping key can turn malformed values such as "ABC." into "ABC".
     if (isTickerCandidate(rawValue)) return rawValue
   }
 
@@ -575,7 +579,7 @@ function resolveAlpacaSymbolForGroup(group) {
 }
 
 function isTickerCandidate(value) {
-  return /^[A-Z][A-Z0-9.]{0,9}$/.test(value) && !/^[A-Z]{2}[A-Z0-9]{10}$/.test(value)
+  return alpacaTickerPattern.test(value)
 }
 
 function isDerivativeAsset(assetClass) {
