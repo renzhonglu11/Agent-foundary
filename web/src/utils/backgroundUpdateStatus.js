@@ -4,6 +4,14 @@ export function validTimestamp(value) {
   return typeof value === 'string' && Number.isFinite(Date.parse(value))
 }
 
+// Time of the last completed background check, in milliseconds. A check that
+// finds every input unchanged keeps the stored snapshot, so the snapshot's own
+// time may be older than the check.
+export function lastMonitorCheck(data) {
+  const times = [data?.snapshot?.evaluatedAt, data?.runtime?.lastCheckedAt].filter(validTimestamp).map(Date.parse)
+  return times.length ? Math.max(...times) : null
+}
+
 export function monitorUpdateState(data, error, now = Date.now()) {
   if (error) return { label: '状态不可用', color: 'error', issue: '无法读取后台监控状态，不能确认是否仍在更新。' }
   if (!data) return { label: '读取中', color: 'default' }
@@ -14,8 +22,8 @@ export function monitorUpdateState(data, error, now = Date.now()) {
   if (data.snapshot && (!validTimestamp(at) || Date.parse(at) > now + 120_000)) {
     return { label: '时间异常', color: 'warning', issue: '后台快照的检查时间缺失或异常。' }
   }
-  if (validTimestamp(at) && now - Date.parse(at) > MONITOR_STALE_MS) {
-    return { label: '检查超时', color: 'warning', issue: '后台超过 3 分钟未生成新快照，当前展示的是旧数据。' }
+  if (validTimestamp(at) && now - lastMonitorCheck(data) > MONITOR_STALE_MS) {
+    return { label: '检查超时', color: 'warning', issue: '后台超过 3 分钟未完成检查，当前展示的是旧数据。' }
   }
   if (!data.snapshot && validTimestamp(data.runtime?.lastStartedAt) && now - Date.parse(data.runtime.lastStartedAt) > MONITOR_STALE_MS) {
     return { label: '首轮检查超时', color: 'warning', issue: '后台首轮检查已超过 3 分钟，尚未生成快照。' }

@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeSet, HashMap},
+    hash::{DefaultHasher, Hash, Hasher},
     sync::Arc,
     time::Duration,
 };
@@ -22,6 +23,10 @@ use crate::{
         structured_products_service::StructuredProductsService,
     },
 };
+
+/// Longest time an unchanged portfolio goes without a new stored snapshot.
+/// Until then only the clock has moved, which shifts expiries and decay slowly.
+const UNCHANGED_RECALC_MINUTES: i64 = 15;
 
 #[derive(Clone)]
 pub struct PortfolioMonitor {
@@ -104,6 +109,7 @@ impl PortfolioMonitor {
             "snapshot":snapshot,
             "structuredProducts":self.products.status_payload(),
             "historyRetentionDays":self.history_retention_days,
+            "unchangedRecalcMinutes":UNCHANGED_RECALC_MINUTES,
             "configuration":monitor_alerts::settings(&self.pool).await?,
             "alerts":monitor_alerts::list(&self.pool).await?}),
         )
@@ -165,9 +171,14 @@ impl PortfolioMonitor {
             let mut last_close_fetched: Option<DateTime<Utc>> = None;
             let mut last_provider: Value = json!({"status":"not_requested"});
             let mut next_history = Utc::now();
+            // Inputs and time of the last stored snapshot. Empty while an alert
+            // still waits for a confirming observation, so the next cycle runs in full.
+            let mut settled: Option<(u64, DateTime<Utc>)> = None;
+            let mut last_checked: Option<DateTime<Utc>> = None;
             loop {
                 let now = Utc::now();
-                *service.status.lock().await = json!({"running":true,"lastStartedAt":now});
+                *service.status.lock().await =
+                    json!({"running":true,"lastStartedAt":now,"lastCheckedAt":last_checked});
                 let result = async {
                     if calendar.as_ref().is_none_or(|(date, _)| *date != now.date_naive()) && now >= calendar_retry {
                         calendar_retry = now + TimeDelta::minutes(15);
@@ -235,18 +246,27 @@ impl PortfolioMonitor {
                     payload["structuredProducts"] = service.products.status_payload();
                     let _guard=service.write_gate.lock().await;
                     let configuration=monitor_alerts::settings(&service.pool).await?;
+                    let fingerprint=input_fingerprint(&payload,&configuration)?;
+                    if settled.is_some_and(|(stored,at)| stored==fingerprint && now-at<TimeDelta::minutes(UNCHANGED_RECALC_MINUTES)) {
+                        return Ok(false);
+                    }
                     let evaluated_at=monitor_risk::timestamp(&payload["evaluatedAt"]).unwrap_or_else(Utc::now);
                     payload["risk"]=monitor_risk::evaluate(&payload,&configuration.settings,evaluated_at);
                     payload["configuration"]=json!(configuration);
                     payload["historyRetentionDays"]=json!(service.history_retention_days);
-                    persist_snapshot(&service.pool, &payload, service.retention_days).await?;
-                    Ok::<_, anyhow::Error>(())
+                    let awaiting=persist_snapshot(&service.pool, &payload, service.retention_days).await?;
+                    settled=(!awaiting).then_some((fingerprint,now));
+                    Ok::<_, anyhow::Error>(true)
                 }.await;
                 *service.status.lock().await = match result {
-                    Ok(()) => json!({"running":false,"lastFinishedAt":Utc::now(),"lastError":null}),
+                    Ok(stored) => {
+                        last_checked = Some(Utc::now());
+                        json!({"running":false,"lastFinishedAt":last_checked,"lastCheckedAt":last_checked,
+                            "lastCycle":if stored { "stored" } else { "unchanged" },"lastError":null})
+                    }
                     Err(error) => {
                         tracing::warn!(%error, "portfolio monitor cycle failed");
-                        json!({"running":false,"lastFinishedAt":Utc::now(),"lastError":error.to_string()})
+                        json!({"running":false,"lastFinishedAt":Utc::now(),"lastCheckedAt":last_checked,"lastError":error.to_string()})
                     }
                 };
                 tokio::select! {
@@ -258,13 +278,38 @@ impl PortfolioMonitor {
     }
 }
 
+/// Everything a snapshot is calculated from except the clock. Position rows
+/// carry the data-quality verdicts, so a quote going stale counts as a change.
+fn input_fingerprint(payload: &Value, configuration: &SettingsRecord) -> anyhow::Result<u64> {
+    let mut hasher = DefaultHasher::new();
+    for part in [
+        &payload["positions"],
+        &payload["inputs"]["enrichment"]["items"],
+        &payload["inputs"]["dailyStats"],
+        &payload["holdingsMarketValue"],
+        &payload["usSession"],
+        &payload["productMarketOpen"],
+        &payload["provider"],
+        &payload["historyWarnings"],
+    ] {
+        serde_json::to_vec(part)?.hash(&mut hasher);
+    }
+    serde_json::to_vec(configuration)?.hash(&mut hasher);
+    // The daily snapshot becomes due by time alone, 15 minutes after the close.
+    monitor_history::daily_key(payload).hash(&mut hasher);
+    Ok(hasher.finish())
+}
+
+/// Stores the snapshot and returns whether an alert still waits for a
+/// confirming observation.
 async fn persist_snapshot(
     pool: &SqlitePool,
     payload: &Value,
     retention_days: i64,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<bool> {
     let mut payload = payload.clone();
     let mut tx = pool.begin().await?;
+    let mut awaiting = false;
     if payload["risk"].is_object() {
         let configuration: SettingsRecord =
             serde_json::from_value(payload["configuration"].clone())?;
@@ -284,6 +329,7 @@ async fn persist_snapshot(
             payload["historyRetentionDays"].as_i64().unwrap_or(730),
         )
         .await?;
+        awaiting = monitor_alerts::awaiting_confirmation(&mut tx, now).await?;
     }
     let time = payload["evaluatedAt"].as_str().unwrap_or("");
     let hour = format!("hour:{}", &time[..time.len().min(13)]);
@@ -301,7 +347,7 @@ async fn persist_snapshot(
             .await?;
     }
     tx.commit().await?;
-    Ok(())
+    Ok(awaiting)
 }
 
 fn enrichment_items(payload: &Value) -> HashMap<&str, &Value> {
@@ -478,6 +524,77 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn fingerprint_ignores_the_clock_but_not_inputs_or_due_work() -> anyhow::Result<()> {
+        let mut summary = calculate_portfolio(&[], CalculatorInput::default());
+        summary.positions = vec![Position {
+            symbol: "NVDA".into(),
+            quantity: 1.0,
+            last_price: 100.0,
+            market_value: 100.0,
+            ..Default::default()
+        }];
+        let session = UsSession {
+            state: "closed",
+            last_close: Some("2026-09-04T20:00:00Z".parse()?),
+            open: None,
+            next_open: Some("2026-09-08T13:30:00Z".parse()?),
+            source: "alpaca_calendar",
+        };
+        let config = SettingsRecord {
+            revision: 0,
+            settings: monitor_risk::RiskSettings::default(),
+        };
+        let observe =
+            |quote: &AlpacaQuote, session: &UsSession, time: &str| -> anyhow::Result<u64> {
+                let mut payload = evaluate(
+                    &summary,
+                    &Value::Null,
+                    std::slice::from_ref(quote),
+                    session,
+                    time.parse()?,
+                );
+                payload["productMarketOpen"] = json!(false);
+                input_fingerprint(&payload, &config)
+            };
+        let snapshot = |quote: &AlpacaQuote, time: &str| observe(quote, &session, time);
+        let mut quote = test_quote()?;
+        let base = snapshot(&quote, "2026-09-05T10:00:00Z")?;
+        // A minute later nothing but the clock has moved.
+        assert_eq!(snapshot(&quote, "2026-09-05T10:01:00Z")?, base);
+        // Inside the window for the daily snapshot, which is due by time alone.
+        assert_ne!(snapshot(&quote, "2026-09-04T20:20:00Z")?, base);
+        // During trading the same quote turns stale after ten minutes.
+        let open = UsSession {
+            state: "open",
+            open: Some("2026-09-08T13:30:00Z".parse()?),
+            ..session.clone()
+        };
+        quote.price_as_of = "2026-09-08T15:00:00Z".into();
+        let fresh = observe(&quote, &open, "2026-09-08T15:05:00Z")?;
+        assert_eq!(observe(&quote, &open, "2026-09-08T15:06:00Z")?, fresh);
+        assert_ne!(observe(&quote, &open, "2026-09-08T15:20:00Z")?, fresh);
+        quote.price = 101.0;
+        assert_ne!(observe(&quote, &open, "2026-09-08T15:05:00Z")?, fresh);
+        let mut payload = evaluate(
+            &summary,
+            &Value::Null,
+            &[],
+            &session,
+            "2026-09-05T10:00:00Z".parse()?,
+        );
+        payload["productMarketOpen"] = json!(false);
+        let changed = SettingsRecord {
+            revision: 1,
+            ..config.clone()
+        };
+        assert_ne!(
+            input_fingerprint(&payload, &changed)?,
+            input_fingerprint(&payload, &config)?
+        );
+        Ok(())
+    }
+
     #[tokio::test]
     async fn snapshots_survive_reopen_and_keep_last_observation_per_hour() -> anyhow::Result<()> {
         let dir = tempfile::tempdir()?;
@@ -575,13 +692,16 @@ mod tests {
                 ..Default::default()
             },
         };
+        let mut awaiting = Vec::new();
         for minute in [15, 16] {
             let time = format!("2026-11-10T21:{minute}:00Z");
             let mut payload = json!({"evaluatedAt":time,"usSession":{"state":"closed","lastClose":"2026-11-10T21:00:00Z"},"productMarketOpen":false,
                 "configuration":config,"positions":[cases[0]["row"]],"grossHoldingsValue":200,"inputs":{"enrichment":{"items":[cases[0]["item"]]}}});
             payload["risk"] = monitor_risk::evaluate(&payload, &config.settings, time.parse()?);
-            persist_snapshot(&pool, &payload, 30).await?;
+            awaiting.push(persist_snapshot(&pool, &payload, 30).await?);
         }
+        // The first breach is pending and needs the next cycle; the second confirms it.
+        assert_eq!(awaiting, [true, false]);
         assert!(monitor_alerts::acknowledge(&pool, "0:stress_loss:portfolio").await?);
         pool.close().await;
         let pool = SqlitePool::connect(&url).await?;

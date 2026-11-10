@@ -1,6 +1,7 @@
 import { Alert, Box, Chip, Stack, Typography, Table, TableHead, TableBody, TableRow, TableCell } from '@mui/material'
 import { usePortfolioMonitorStatus } from '../hooks/usePortfolioMonitor.js'
 import { compactCurrency } from '../utils/formatters.js'
+import { lastMonitorCheck, MONITOR_STALE_MS } from '../utils/backgroundUpdateStatus.js'
 import PortfolioRiskMonitor from './PortfolioRiskMonitor.jsx'
 
 const qualityLabels = {
@@ -23,7 +24,9 @@ export default function PortfolioDataMonitor() {
   const data = query.data
   const snapshot = data?.snapshot
   if (!snapshot) return <><Alert severity="info" sx={{ mb: 1.5 }}>{data?.enabled === false ? '后台数据监控已关闭。' : '后台数据监控正在准备首份快照…'}</Alert><PortfolioRiskMonitor data={data} /></>
-  const expired = Date.now() - Date.parse(snapshot.evaluatedAt) > 180_000
+  const checkedAt = lastMonitorCheck(data)
+  const expired = Date.now() - checkedAt > MONITOR_STALE_MS
+  const reused = data.runtime?.lastCycle === 'unchanged'
   const rows = snapshot.positions || []
   const issues = rows.filter(row => row.issues?.length)
   const error = data.runtime?.lastError
@@ -43,7 +46,7 @@ export default function PortfolioDataMonitor() {
         <Chip size="small" variant="outlined" label={`标的刷新间隔 ${Math.round(data.intervalSeconds / 60)} 分钟`} />
         <Chip size="small" variant="outlined" label={`${issues.length} 个持仓存在数据限制`} />
       </Stack>
-      <Typography variant="caption" component="div">检查时间：{time(snapshot.evaluatedAt)}；产品最近完成抓取：{time(data.structuredProducts?.lastFinishedAt)}。</Typography>
+      <Typography variant="caption" component="div">检查时间：{time(checkedAt)}{reused && `（输入无变化，沿用 ${time(snapshot.evaluatedAt)} 的计算结果）`}；产品最近完成抓取：{time(data.structuredProducts?.lastFinishedAt)}。</Typography>
       {(expired || error || !data.enabled) && <Typography variant="body2">{error || (!data.enabled ? '监控已关闭' : '后台检查超过 3 分钟未更新')}；展示的是上一次快照，不能据此确认当前风险。</Typography>}
       {snapshot.provider?.failed && <Typography variant="body2">标的刷新存在失败或缺失，正在使用原时间戳的缓存并等待重试。</Typography>}
       {data.structuredProducts?.lastError && <Typography variant="body2">产品抓取失败：{data.structuredProducts.lastError}</Typography>}

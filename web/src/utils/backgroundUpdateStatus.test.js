@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { backgroundUpdateState, monitorUpdateState, productUpdateState } from './backgroundUpdateStatus.js'
+import { backgroundUpdateState, lastMonitorCheck, monitorUpdateState, productUpdateState } from './backgroundUpdateStatus.js'
 import { fetchStructuredProductsRefreshStatus } from '../hooks/useStructuredProductsRefreshStatus.js'
 
 const now = Date.parse('2026-11-10T12:00:00Z')
@@ -18,6 +18,19 @@ test('market closure keeps the scheduler healthy while distinguishing it from an
   assert.equal(backgroundUpdateState(monitor, products).color, 'success')
   assert.equal(productUpdateState({ ...scheduled, running: true }, null, false).label, '正在抓取')
   assert.equal(productUpdateState({ ...scheduled, running: true, mode: 'fallback' }, null, false).label, '整理缓存中')
+})
+
+test('a check that keeps the stored snapshot still counts as a completed check', () => {
+  const later = now + 600_000
+  const reused = { ...healthy, runtime: { running: false, lastCycle: 'unchanged', lastCheckedAt: '2026-11-10T12:09:30Z' } }
+  assert.equal(monitorUpdateState(reused, null, later).label, '运行正常')
+  assert.equal(lastMonitorCheck(reused), Date.parse('2026-11-10T12:09:30Z'))
+  // The last check survives while the next cycle is running.
+  assert.equal(monitorUpdateState({ ...reused, runtime: { running: true, lastCheckedAt: '2026-11-10T12:09:30Z' } }, null, later).label, '正在检查')
+  // A stopped loop is still reported, and an older backend without the field falls back to the snapshot time.
+  assert.equal(monitorUpdateState(reused, null, later + 600_000).label, '检查超时')
+  assert.equal(lastMonitorCheck(healthy), Date.parse(healthy.snapshot.evaluatedAt))
+  assert.equal(lastMonitorCheck({}), null)
 })
 
 test('a running refresh cannot conceal a stalled monitor or a failed data source', () => {
