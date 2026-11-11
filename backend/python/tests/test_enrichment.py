@@ -22,6 +22,28 @@ class FakeProductProvider:
 
 
 @pytest.mark.asyncio
+async def test_quote_failover_reports_its_actual_source_and_keeps_existing_quote_when_all_fail():
+    class Quotes:
+        def __init__(self, source, quote): self.source, self.quote, self.calls = source, quote, []
+        async def get_quote(self, isin): self.calls.append(isin); return self.quote
+    from datetime import datetime, timezone
+    at = datetime(2026, 11, 11, 12, tzinfo=timezone.utc)
+    primary = Quotes("boerse_frankfurt", None)
+    fallback = Quotes("onvista", Quote(isin="DE000TEST001", price=3.5, timestamp=at))
+    row = {"isin": "DE000TEST001", "quote_price": 2.0, "quote_source": "rust_portfolio_summary"}
+    actual = (await enrich_structured_product_rows([row], quote_provider=primary, quote_fallback_providers=[fallback]))[0]
+    assert (actual["quote_price"], actual["quote_source"], actual["quote_timestamp"]) == (3.5, "onvista", at.isoformat())
+    assert actual["live_enrichment_enabled"] is True
+    primary.quote = fallback.quote
+    fallback.calls.clear()
+    await enrich_structured_product_rows([row], quote_provider=primary, quote_fallback_providers=[fallback])
+    assert fallback.calls == []
+    primary.quote = fallback.quote = None
+    actual = (await enrich_structured_product_rows([row], quote_provider=primary, quote_fallback_providers=[fallback]))[0]
+    assert (actual["quote_price"], actual["quote_source"]) == (2.0, "rust_portfolio_summary")
+
+
+@pytest.mark.asyncio
 async def test_enrich_rows_uses_finanzen_first_onvista_fallback_and_boerse_quote():
     rows = [
         {
@@ -234,7 +256,7 @@ async def test_enrich_rows_uses_valid_cached_metadata_and_greeks():
     
     # 5 minutes old greeks (valid) with all fields populated to prevent fallback
     cached_greek = Greek(isin="DE000CACHED", delta=0.9, omega=15.0, theta=-0.01, iv=0.4, timestamp=datetime.now(timezone.utc))
-    cached_metadata = InstrumentMetadata(isin="DE000CACHED", leverage=12.0, break_even=230.0, ratio=0.1, expiry="2026-12-18", underlying="NVIDIA")
+    cached_metadata = InstrumentMetadata(isin="DE000CACHED", strike_price=220.0, leverage=12.0, break_even=230.0, ratio=0.1, expiry="2026-12-18", underlying="NVIDIA")
     
     cache = FakeCacheStore(
         metadata={"DE000CACHED": cached_metadata},
@@ -735,7 +757,7 @@ async def test_daily_terms_follow_a_knock_out_keep_a_factor_and_remember_a_miss(
 @pytest.mark.asyncio
 async def test_a_second_source_never_overrides_the_first_one_that_answered():
     cached = InstrumentMetadata(
-        isin="DE000TURBO01", product_type="open_end_turbo", strike_price=265.8, knockout_price=265.8, ratio=0.01, leverage=1.51
+        isin="DE000TURBO01", product_type="open_end_turbo", strike_price=265.8, knockout_price=265.8, leverage=1.51
     )
     confirming = ProductData(metadata=cached.model_copy(), source="boerse_frankfurt")
     disagreeing = ProductData(
@@ -755,5 +777,34 @@ async def test_a_second_source_never_overrides_the_first_one_that_answered():
 
     # The first source only confirmed the cache; that does not let the second one rewrite it.
     assert (enriched[0]["product_type"], enriched[0]["leverage"]) == ("open_end_turbo", 1.51)
-    # It still supplies what nobody had.
+    # The missing ratio triggers fallback; it still supplies what nobody had.
+    assert enriched[0]["ratio"] == 0.01
     assert enriched[0]["reset_barrier"] == 250.0
+
+
+@pytest.mark.asyncio
+async def test_complete_open_end_products_refresh_moving_terms_without_searching_for_nonexistent_greeks():
+    isin = "DE000TURBO01"
+    cached = InstrumentMetadata(isin=isin, product_type="open_end_turbo", strike_price=100, knockout_price=100, ratio=0.01, leverage=2)
+    first = FakeProductProvider({isin: ProductData(metadata=cached.model_copy(update={"strike_price": 101, "knockout_price": 101}), source="boerse_frankfurt")})
+    fallback = FakeProductProvider({})
+    actual = (await enrich_structured_product_rows(
+        [{**_warrant_row(isin), "product_type": "open_end_turbo"}], product_providers=[first, fallback],
+        cache_store=FakeCacheStore(metadata={isin: cached}),
+    ))[0]
+    assert first.calls == [isin] and fallback.calls == []
+    assert actual["knockout_price"] == 101 and actual["delta"] is None
+
+
+@pytest.mark.asyncio
+async def test_factor_reset_is_renewed_even_when_the_first_source_confirms_other_cached_terms():
+    isin = "DE000FACTOR1"
+    cached = InstrumentMetadata(isin=isin, product_type="factor_certificate", leverage=2, reset_barrier=100)
+    first = FakeProductProvider({isin: ProductData(metadata=cached.model_copy(update={"reset_barrier": None}), source="boerse_frankfurt")})
+    fallback = FakeProductProvider({isin: ProductData(metadata=cached.model_copy(update={"leverage": 12, "reset_barrier": 101}), source="onvista")})
+    actual = (await enrich_structured_product_rows(
+        [{**_warrant_row(isin), "product_type": "factor_certificate"}], product_providers=[first, fallback],
+        cache_store=FakeCacheStore(metadata={isin: cached}),
+    ))[0]
+    assert fallback.calls == [isin]
+    assert (actual["leverage"], actual["reset_barrier"]) == (2, 101)

@@ -20,6 +20,7 @@ class BoerseFrankfurtQuoteProvider:
     """Quote provider using Börse Frankfurt's public price-information endpoint."""
 
     BASE_URL = "https://api.boerse-frankfurt.de/v1/data/price_information/single"
+    source = SOURCE
 
     def __init__(
         self,
@@ -30,15 +31,17 @@ class BoerseFrankfurtQuoteProvider:
         guard: SourceGuard | None = None,
     ) -> None:
         self.mic = mic
-        self.guard = guard or SourceGuard("boerse-frankfurt.de")
+        self._owns_guard = guard is None
+        self.guard = guard or SourceGuard("api.boerse-frankfurt.de")
         self._client = httpx.AsyncClient(timeout=timeout, transport=transport, headers=HEADERS)
 
     async def get_quote(self, isin: str) -> Quote | None:
         if self.guard.refused:
             return None
         try:
-            response = await self._client.get(self.BASE_URL, params={"isin": isin, "mic": self.mic})
-            self.guard.check(response)
+            response = await self.guard.get(self._client, self.BASE_URL, params={"isin": isin, "mic": self.mic})
+            if response is None:
+                return None
             response.raise_for_status()
             payload = response.json()
             return parse_quote_payload(isin, payload)
@@ -47,6 +50,8 @@ class BoerseFrankfurtQuoteProvider:
 
     async def aclose(self) -> None:
         await self._client.aclose()
+        if self._owns_guard:
+            self.guard.close()
 
     async def __aenter__(self) -> "BoerseFrankfurtQuoteProvider":
         return self
@@ -71,15 +76,17 @@ class BoerseFrankfurtProductProvider:
         transport: httpx.AsyncBaseTransport | None = None,
         guard: SourceGuard | None = None,
     ) -> None:
-        self.guard = guard or SourceGuard("boerse-frankfurt.de")
+        self._owns_guard = guard is None
+        self.guard = guard or SourceGuard("api.boerse-frankfurt.de")
         self._client = httpx.AsyncClient(timeout=timeout, transport=transport, headers=HEADERS)
 
     async def get_product_data(self, isin: str) -> ProductData | None:
         if self.guard.refused:
             return None
         try:
-            response = await self._client.get(self.BASE_URL, params={"isin": isin})
-            self.guard.check(response)
+            response = await self.guard.get(self._client, self.BASE_URL, params={"isin": isin})
+            if response is None:
+                return None
             response.raise_for_status()
             return parse_product_payload(isin, response.json())
         except (httpx.HTTPError, ValueError, TypeError):
@@ -87,6 +94,8 @@ class BoerseFrankfurtProductProvider:
 
     async def aclose(self) -> None:
         await self._client.aclose()
+        if self._owns_guard:
+            self.guard.close()
 
 
 # EUSIPA derivative map codes seen on the endpoint; other products are
@@ -201,14 +210,24 @@ def _timestamp(value: Any) -> datetime:
 
 
 def parse_quote_payload(isin: str, payload: dict[str, Any]) -> Quote:
+    if not isinstance(payload, dict) or str(payload.get("isin") or "").upper() != isin.upper():
+        raise ValueError("Quote does not match requested ISIN")
     price = payload.get("lastPrice")
-    if price is None:
+    if price is None or isinstance(price, bool) or not (0 <= float(price) < float("inf")):
         raise ValueError(f"Börse Frankfurt response for {isin} is missing lastPrice")
+    currency = _parse_currency(payload.get("currency"))
+    if not currency:
+        raise ValueError("Quote has no currency")
+    # Never turn the retrieval time into a market timestamp.
+    timestamp = datetime.fromisoformat(str(payload.get("timestampLastPrice")).replace("Z", "+00:00"))
+    if timestamp.tzinfo is None:
+        raise ValueError("Quote has no timezone")
 
     return Quote(
         isin=isin,
         price=float(price),
-        currency=_parse_currency(payload.get("currency")),
+        currency=currency,
+        timestamp=timestamp,
         day_high=_optional_float(payload.get("dayHigh")),
         day_low=_optional_float(payload.get("dayLow")),
     )
@@ -216,8 +235,8 @@ def parse_quote_payload(isin: str, payload: dict[str, Any]) -> Quote:
 
 def _parse_currency(value: Any) -> str:
     if isinstance(value, dict):
-        return str(value.get("originalValue") or value.get("value") or "EUR")
-    return str(value or "EUR")
+        return str(value.get("originalValue") or value.get("value") or "")
+    return str(value or "")
 
 
 def _optional_float(value: Any) -> float | None:

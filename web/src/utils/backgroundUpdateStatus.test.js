@@ -47,6 +47,16 @@ test('cached successes do not hide polling failures', () => {
   assert.equal(productUpdateState(scheduled, new Error('offline'), false).color, 'error')
 })
 
+test('persisted provider cooldown stays visible during refresh and after restart', () => {
+  const limited = { ...scheduled, providers: [{ source: 'api.onvista.de', coolingDown: true, lastStatus: 429 }] }
+  assert.equal(productUpdateState(limited, null, true).label, '渠道冷却中')
+  const running = productUpdateState({ ...limited, running: true }, null, true)
+  assert.equal(running.busy, true)
+  assert.equal(backgroundUpdateState(monitorUpdateState(healthy, null, now), running).label, '需关注')
+  assert.equal(productUpdateState({ ...scheduled, providerStatusError: '不可用' }, null, true).color, 'warning')
+  assert.equal(productUpdateState({ ...scheduled, providers: [{ coolingDown: false }] }, null, false).color, 'success')
+})
+
 test('partial quote and historical data failures remain visible', () => {
   for (const extra of [{ provider: { failed: true } }, { historyWarnings: ['daily bars unavailable'] }]) {
     assert.equal(monitorUpdateState({ ...healthy, snapshot: { ...healthy.snapshot, ...extra } }, null, now).label, '更新受限')

@@ -1,32 +1,126 @@
-"""Stop asking a source that has turned this client away.
-
-HTTP 403 and 429 answer the client, not the product that was asked for.
-Repeating the request for every remaining product is what turns a temporary
-limit into a lasting block, so the first refusal ends the source's part in
-the run.
-"""
+"""Persistent request spacing and cooldown shared with Rust candidate search."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import math
+import sqlite3
+import time
+from datetime import timezone
+from email.utils import parsedate_to_datetime
+from pathlib import Path
 
 import httpx
 
 logger = logging.getLogger(__name__)
 
-REFUSAL_STATUS_CODES = frozenset({403, 429})
+REFUSAL_STATUS_CODES = frozenset({401, 403, 429})
+SCHEMA = Path(__file__).parents[1] / "migrations/0002_provider_access.sql"
+
+
+def retry_after_seconds(value: str | None, now: float) -> float:
+    if not value:
+        return 0
+    if value.strip().isascii() and value.strip().isdigit():
+        seconds = float(value.strip())
+        return seconds if math.isfinite(seconds) else 0
+    try:
+        date = parsedate_to_datetime(value)
+        if date.tzinfo is None:
+            date = date.replace(tzinfo=timezone.utc)
+        return max(0, date.timestamp() - now)
+    except (ValueError, TypeError, OverflowError):
+        return 0
 
 
 class SourceGuard:
-    def __init__(self, source: str) -> None:
+    def __init__(self, source: str, *, db_path: Path | None = None, interval: float = 2.0) -> None:
         self.source = source
         self.refused = False
+        self.interval = max(0, interval)
+        self._lock = asyncio.Lock()
+        # Standalone callers use memory; the CLI always supplies its persistent DB.
+        self._db = sqlite3.connect(str(db_path) if db_path else ":memory:", timeout=5)
+        self._db.executescript(SCHEMA.read_text())
+
+    def _reserve(self, resource: str) -> float | None:
+        now = time.time()
+        with self._db:
+            self._db.execute("BEGIN IMMEDIATE")
+            self._db.execute("INSERT OR IGNORE INTO provider_access(source) VALUES (?)", (self.source,))
+            next_at, blocked = self._db.execute(
+                "SELECT next_request_at, blocked_until FROM provider_access WHERE source=?", (self.source,)
+            ).fetchone()
+            if blocked > now:
+                self.refused = True
+                return None
+            missing = self._db.execute(
+                "SELECT retry_at FROM provider_missing_products WHERE source=? AND resource=?",
+                (self.source, resource),
+            ).fetchone()
+            if missing and missing[0] > now:
+                return None
+            if next_at > now:
+                return next_at - now
+            self._db.execute(
+                "UPDATE provider_access SET next_request_at=? WHERE source=?", (now + self.interval, self.source)
+            )
+        return 0
 
     def check(self, response: httpx.Response) -> None:
-        if response.status_code in REFUSAL_STATUS_CODES and not self.refused:
-            self.refused = True
-            logger.warning(
-                "%s refused the request with HTTP %d; not asking it again in this run",
-                self.source,
-                response.status_code,
-            )
+        self._record(response.status_code, response.headers.get("Retry-After"), str(response.request.url))
+
+    def _record(self, status: int, retry_after: str | None = None, resource: str = "") -> None:
+        now = time.time()
+        with self._db:
+            self._db.execute("BEGIN IMMEDIATE")
+            self._db.execute("INSERT OR IGNORE INTO provider_access(source) VALUES (?)", (self.source,))
+            failures, blocked = self._db.execute(
+                "SELECT failures, blocked_until FROM provider_access WHERE source=?", (self.source,)
+            ).fetchone()
+            if status in REFUSAL_STATUS_CODES or status == 0 or status >= 500:
+                failures = min(failures + 1, 8)
+                base, cap = (86400, 604800) if status in (401, 403) else (3600, 86400) if status == 429 else (300, 3600)
+                delay = max(min(base * 2 ** (failures - 1), cap), retry_after_seconds(retry_after, now))
+                self._db.execute(
+                    "UPDATE provider_access SET failures=?, blocked_until=?, last_status=?, updated_at=? WHERE source=?",
+                    (failures, max(blocked, now + delay), status, now, self.source),
+                )
+                if not self.refused:
+                    logger.warning("%s refused/unavailable HTTP %s; pausing source for at least %.0f seconds (persisted)", self.source, status or "transport error", delay)
+                self.refused = True
+            else:
+                # An in-flight success must not clear another client's refusal.
+                self._db.execute(
+                    "UPDATE provider_access SET failures=0, last_status=?, updated_at=? WHERE source=? AND blocked_until<=?",
+                    (status, now, self.source, now),
+                )
+                if status == 404:
+                    self._db.execute(
+                        "INSERT OR REPLACE INTO provider_missing_products VALUES (?, ?, ?)",
+                        (self.source, resource, now + 86400),
+                    )
+            self._db.execute("DELETE FROM provider_missing_products WHERE retry_at<=?", (now,))
+
+    async def get(self, client: httpx.AsyncClient, url: str, **kwargs) -> httpx.Response | None:
+        resource = str(client.build_request("GET", url, **kwargs).url)
+        async with self._lock:
+            while not self.refused:
+                wait = self._reserve(resource)
+                if wait is None:
+                    return None
+                if wait > 0:
+                    await asyncio.sleep(wait)
+                    continue
+                try:
+                    response = await client.get(url, **kwargs)
+                except httpx.HTTPError:
+                    self._record(0)
+                    return None
+                self.check(response)
+                return response
+        return None
+
+    def close(self) -> None:
+        self._db.close()

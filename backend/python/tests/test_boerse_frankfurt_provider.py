@@ -14,6 +14,8 @@ async def test_boerse_frankfurt_quote_provider_requests_xstu_and_normalizes_quot
         return httpx.Response(
             200,
             json={
+                "isin": "DE000HM0T297",
+                "timestampLastPrice": "2026-11-11T14:01:21+01:00",
                 "lastPrice": 4.24,
                 "currency": {"originalValue": "EUR", "translations": {"others": "Euro"}},
                 "dayHigh": 4.33,
@@ -35,6 +37,7 @@ async def test_boerse_frankfurt_quote_provider_requests_xstu_and_normalizes_quot
     assert quote.currency == "EUR"
     assert quote.day_high == 4.33
     assert quote.day_low == 4.02
+    assert quote.timestamp.isoformat() == "2026-11-11T14:01:21+01:00"
 
 
 @pytest.mark.asyncio
@@ -48,6 +51,14 @@ async def test_boerse_frankfurt_quote_provider_treats_missing_price_as_unavailab
 
     assert quote is None
     await provider.aclose()
+
+
+@pytest.mark.parametrize("changes", [{"isin": "DE000WRONG00"}, {"timestampLastPrice": None}, {"currency": None}, {"lastPrice": True}])
+def test_quote_identity_currency_and_market_time_must_be_verifiable(changes):
+    from agent_foundry_python.structured_products.providers.boerse_frankfurt import parse_quote_payload
+    payload = {"isin": "DE000VY42C94", "timestampLastPrice": "2026-11-11T14:01:21+01:00", "lastPrice": 4.94, "currency": {"originalValue": "EUR"}, **changes}
+    with pytest.raises(ValueError):
+        parse_quote_payload("DE000VY42C94", payload)
 
 
 # Shapes copied from the live endpoint on 2026-11-10, reduced to the fields read.
@@ -226,5 +237,5 @@ async def test_a_refusal_ends_requests_to_the_exchange_for_the_rest_of_the_run(c
 
     assert len(requests) == 1
     assert [record.message for record in caplog.records].count(
-        "boerse-frankfurt.de refused the request with HTTP 403; not asking it again in this run"
+        "api.boerse-frankfurt.de refused/unavailable HTTP 403; pausing source for at least 86400 seconds (persisted)"
     ) == 1

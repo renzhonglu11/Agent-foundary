@@ -18,6 +18,7 @@ from agent_foundry_python.structured_products.providers.boerse_frankfurt import 
     BoerseFrankfurtQuoteProvider,
 )
 from agent_foundry_python.structured_products.providers.onvista import OnvistaProductProvider
+from agent_foundry_python.structured_products.providers.refusal import SourceGuard
 from agent_foundry_python.structured_products.risk import evaluate_portfolio_risk
 
 
@@ -43,12 +44,13 @@ async def generate_outputs(args: argparse.Namespace) -> list[dict]:
     if args.no_live_enrichment:
         rows = apply_cached_enrichment(rows, store)
     else:
-        quote_provider = BoerseFrankfurtQuoteProvider(timeout=args.provider_timeout)
+        guards = [SourceGuard(host, db_path=args.db) for host in ("api.boerse-frankfurt.de", "api.onvista.de")]
+        quote_provider = BoerseFrankfurtQuoteProvider(timeout=args.provider_timeout, guard=guards[0])
         # Same host as the quotes, so one refusal stops both.
         boerse_frankfurt_provider = BoerseFrankfurtProductProvider(
             timeout=args.provider_timeout, guard=quote_provider.guard
         )
-        onvista_provider = OnvistaProductProvider(timeout=args.provider_timeout)
+        onvista_provider = OnvistaProductProvider(timeout=args.provider_timeout, guard=guards[1])
         # Börse Frankfurt answers terms and Greeks in one request; Onvista is
         # asked only for what that leaves open.
         product_providers = [boerse_frankfurt_provider, onvista_provider]
@@ -56,6 +58,7 @@ async def generate_outputs(args: argparse.Namespace) -> list[dict]:
             rows = await enrich_structured_product_rows(
                 rows,
                 quote_provider=quote_provider,
+                quote_fallback_providers=[onvista_provider],
                 product_providers=product_providers,
                 cache_store=store,
                 request_delay_seconds=args.request_delay,
@@ -69,6 +72,8 @@ async def generate_outputs(args: argparse.Namespace) -> list[dict]:
                     await provider.aclose()
                 except Exception as e:
                     logging.warning(f"Error closing provider: {e}")
+            for guard in guards:
+                guard.close()
 
     write_structured_product_rows_outputs(rows, csv_path=args.csv, json_path=args.json, db_path=args.db)
 

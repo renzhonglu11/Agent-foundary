@@ -105,6 +105,16 @@ export default function BackgroundUpdateStatus() {
             {Number.isFinite(refresh?.marketOpenHourBerlin) && Number.isFinite(refresh?.marketCloseHourBerlin) && ` 交易日 ${refresh.marketOpenHourBerlin}:00–${refresh.marketCloseHourBerlin}:00（柏林时间）。`}
           </Typography>
           {!refresh?.lastFinishedAt && <Typography variant="caption" color="text.secondary">服务启动后尚无完成记录，页面可能仍使用已有缓存。</Typography>}
+          {Array.isArray(refresh?.providers) && refresh.providers.map(provider => <Box key={provider.source} sx={{ bgcolor: 'action.hover', borderRadius: 1, p: 1 }}>
+            <Typography variant="caption" component="div" fontWeight={700}>
+              {provider.source === 'api.onvista.de' ? 'Onvista' : provider.source === 'api.boerse-frankfurt.de' ? 'Börse Frankfurt' : provider.source}
+              {' · '}{provider.coolingDown ? '暂停请求' : provider.lastStatus >= 200 && provider.lastStatus < 300 ? '最近请求成功' : '等待下次尝试'}
+            </Typography>
+            {provider.coolingDown && <Typography variant="caption" color="text.secondary" component="div">
+              {provider.lastStatus ? `HTTP ${provider.lastStatus}` : '连接失败'} · 最早重试：{time(provider.retryAt)}
+            </Typography>}
+            <Typography variant="caption" color="text.secondary" component="div">最近响应：{time(provider.lastCheckedAt)}</Typography>
+          </Box>)}
         </JobStatus>
         <Divider />
         <Typography variant="caption" color="text.secondary">以上是任务检查与抓取时间，不等于行情成交时间；数据缺失、过期和风险预警可在完整监控中查看。</Typography>

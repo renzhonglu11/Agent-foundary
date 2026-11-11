@@ -40,6 +40,10 @@ export function productUpdateState(data, error, marketOpen) {
   if (error) return { label: '状态不可用', color: 'error', issue: '无法读取产品抓取状态，不能确认刷新进度。' }
   if (!data) return { label: '读取中', color: 'default' }
   if (data.lastError) return { label: '抓取失败', color: 'error', issue: data.lastError }
+  if (data.providerStatusError) return { label: '渠道状态未知', color: 'warning', issue: data.providerStatusError }
+  if (Array.isArray(data.providers) && data.providers.some(provider => provider.coolingDown)) {
+    return { label: '渠道冷却中', color: 'warning', busy: Boolean(data.running), issue: '部分数据源暂时暂停请求；可用渠道继续更新，缺失部分保留缓存。' }
+  }
   if (data.running) return { label: data.mode === 'fallback' ? '整理缓存中' : '正在抓取', color: 'info', busy: true }
   if (data.queued) return { label: '排队中', color: 'info', busy: true }
   if (data.liveEnabled === false) return { label: '实时抓取关闭', color: 'warning', issue: '产品实时抓取已关闭，已有缓存仍可显示。' }

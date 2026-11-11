@@ -409,7 +409,7 @@ function positionToInstrumentRow(position, enriched, index, totalMarketValue, al
 
 function hasRealtimeStructuredData(enriched) {
   if (!enriched) return false
-  return enriched.quote_source === 'boerse_frankfurt'
+  return ['boerse_frankfurt', 'onvista'].includes(enriched.quote_source)
     || Boolean(enriched.metadata_source)
     || Boolean(enriched.greeks_source)
 }

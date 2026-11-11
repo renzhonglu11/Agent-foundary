@@ -45,7 +45,7 @@ const SOFT_REASONS: [&str; 3] = [
     "greeks_time_unknown",
 ];
 
-/// Without a market time the capture time stands in, but only for a Frankfurt
+/// Without a market time the capture time stands in, but only for a provider
 /// quote captured around the US close the snapshot belongs to. A price from an
 /// uploaded statement has no such anchor.
 fn captured_near_close(snapshot: &Value, row: &Value) -> Option<DateTime<Utc>> {
@@ -53,8 +53,10 @@ fn captured_near_close(snapshot: &Value, row: &Value) -> Option<DateTime<Utc>> {
     let window = (close - TimeDelta::hours(2))..=(close + TimeDelta::minutes(90));
     let captured = timestamp(&row["fetchedAt"])?;
     let underlying = timestamp(&row["underlyingQuote"]["priceAsOf"])?;
-    (row["valuationSource"] == "boerse_frankfurt"
-        && window.contains(&captured)
+    (matches!(
+        row["valuationSource"].as_str(),
+        Some("boerse_frankfurt" | "onvista")
+    ) && window.contains(&captured)
         && window.contains(&underlying))
     .then_some(captured)
 }

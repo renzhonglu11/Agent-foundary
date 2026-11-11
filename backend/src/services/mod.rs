@@ -13,5 +13,6 @@ pub mod monitor_symbols;
 pub mod pnl_snapshots;
 pub mod portfolio_monitor;
 pub mod product_candidates;
+pub mod provider_access;
 pub mod structured_products_service;
 pub mod systemd_status;

@@ -83,6 +83,10 @@ impl App {
         let product_candidates = services::product_candidates::ProductCandidates::new(
             pool.clone(),
             fx_rate_service.clone(),
+            services::provider_access::ProviderAccess::open(
+                &settings.structured_products.output_db_path,
+            )
+            .await?,
         )?;
         product_candidates.start_watchlist_refresh();
         let alpaca_market_data_service = AlpacaMarketDataService::new(

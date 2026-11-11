@@ -235,7 +235,7 @@ impl PortfolioMonitor {
                             let fetched = row["fetchedAt"].as_str().and_then(|s| DateTime::parse_from_rfc3339(s).ok());
                             let issue = fetched.and_then(|time| {
                                 if time.with_timezone(&Utc) > now + TimeDelta::minutes(2) { Some("product_capture_future") }
-                                else if product_market_open && row["valuationSource"] == "boerse_frankfurt" && now - time.with_timezone(&Utc) > TimeDelta::minutes(120) { Some("product_capture_stale") }
+                                else if product_market_open && matches!(row["valuationSource"].as_str(), Some("boerse_frankfurt" | "onvista")) && now - time.with_timezone(&Utc) > TimeDelta::minutes(120) { Some("product_capture_stale") }
                                 else { None }
                             });
                             if let Some(issue) = issue { if let Some(issues) = row["issues"].as_array_mut() { issues.push(json!(issue)); } }
@@ -425,7 +425,10 @@ pub fn evaluate(
             issues.push("greeks_market_time_unknown".into());
         }
         if item["quote_price"].as_f64().is_some_and(|v| v > 0.0)
-            && item["quote_source"] == "boerse_frankfurt"
+            && matches!(
+                item["quote_source"].as_str(),
+                Some("boerse_frankfurt" | "onvista")
+            )
             && item["quote_currency"] != "EUR"
         {
             issues.push("product_currency_unsupported".into());

@@ -55,6 +55,7 @@ async def enrich_structured_product_rows(
     rows: list[dict],
     *,
     quote_provider: QuoteProvider | None = None,
+    quote_fallback_providers: list[QuoteProvider] | None = None,
     product_providers: list[ProductDataProvider] | None = None,
     cache_store: StructuredProductStore | None = None,
     request_delay_seconds: float = 0.0,
@@ -148,15 +149,17 @@ async def enrich_structured_product_rows(
                     "label": f"Fetching {isin}",
                 })
 
-            if quote_provider is not None:
-                quote = await quote_provider.get_quote(isin)
-                if quote is not None:
+            quote_providers = ([quote_provider] if quote_provider else []) + (quote_fallback_providers or [])
+            for provider in quote_providers:
+                quote = await provider.get_quote(isin)
+                if quote is not None and quote.isin == isin:
                     enriched["quote_price"] = quote.price
                     enriched["quote_currency"] = quote.currency
-                    enriched["quote_source"] = "boerse_frankfurt"
+                    enriched["quote_source"] = getattr(provider, "source", "boerse_frankfurt")
                     enriched["quote_day_high"] = quote.day_high
                     enriched["quote_day_low"] = quote.day_low
                     enriched["quote_timestamp"] = quote.timestamp.isoformat()
+                    break
 
             cached_metadata = None
             cached_greek = None
@@ -202,13 +205,17 @@ async def enrich_structured_product_rows(
                 _merge_greek(enriched, cached_greek, overwrite=True)
                 greek_sources.append("cache")
 
-            if _needs_product_fallback(enriched):
+            # Live knock-out barriers and factor reset levels can move even
+            # when every cached field is present. Refresh once, then stop as
+            # soon as the fields relevant to this product type are complete.
+            if _needs_product_fallback(enriched) or enriched.get("product_type") in ("open_end_turbo", "knock_out", "factor_certificate"):
                 # The first source that answers may replace cached values; the
                 # ones after it only fill what is still missing. Judging this by
                 # whether the first answer changed anything would hand the right
                 # to overwrite to the second source whenever the first one
                 # merely confirmed the cache.
                 first_answer = True
+                live_reset_received = False
                 for provider in product_providers or []:
                     product = await provider.get_product_data(isin)
                     if product is None:
@@ -226,7 +233,14 @@ async def enrich_structured_product_rows(
                     if metadata_to_merge is not None and cached_names:
                         metadata_to_merge = metadata_to_merge.model_copy(update=cached_names)
 
-                    metadata_changed = _merge_metadata(enriched, metadata_to_merge, overwrite=first_answer)
+                    # Frankfurt does not publish a factor reset level. A cached
+                    # one must not prevent its actual source from renewing it.
+                    reset_changed = False
+                    if enriched.get("product_type") == "factor_certificate" and not live_reset_received and metadata_to_merge.reset_barrier is not None:
+                        reset_changed = enriched.get("reset_barrier") != metadata_to_merge.reset_barrier
+                        enriched["reset_barrier"] = metadata_to_merge.reset_barrier
+                        live_reset_received = True
+                    metadata_changed = _merge_metadata(enriched, metadata_to_merge, overwrite=first_answer) or reset_changed
                     first_answer = False
                     if metadata_changed:
                         if "cache" in metadata_sources:
@@ -243,7 +257,7 @@ async def enrich_structured_product_rows(
                         
                     _clean_invalid_greeks(enriched)
                     
-                    if not _needs_product_fallback(enriched):
+                    if not _needs_product_fallback(enriched) and (enriched.get("product_type") != "factor_certificate" or live_reset_received):
                         break
 
             if stale_cached_greek is not None:
@@ -355,7 +369,7 @@ def _should_live_enrich(row: dict, live_enrichment_tier: str | None) -> bool:
 
 
 def _has_live_enrichment(row: dict) -> bool:
-    return row.get("quote_source") == "boerse_frankfurt" or row.get("metadata_source") not in (None, "")
+    return row.get("quote_source") in ("boerse_frankfurt", "onvista") or row.get("metadata_source") not in (None, "")
 
 
 
@@ -395,17 +409,18 @@ def _needs_product_fallback(row: dict) -> bool:
     # The break-even is left out: consumers derive it from strike, ratio and
     # the current quote, and asking a second source for it alone would double
     # the requests of every refresh.
+    product_type = row.get("product_type")
+    if product_type == "factor_certificate":
+        needed = ("leverage", "reset_barrier")
+    elif product_type in ("open_end_turbo", "knock_out"):
+        needed = ("strike_price", "knockout_price", "ratio", "leverage")
+        if product_type == "knock_out":
+            needed += ("expiry",)
+    else:
+        needed = ("strike_price", "leverage", "ratio", "expiry", "delta", "omega", "theta", "iv")
     return any(
         _is_missing(row.get(field))
-        for field in (
-            "leverage",
-            "ratio",
-            "expiry",
-            "delta",
-            "omega",
-            "theta",
-            "iv",
-        )
+        for field in needed
     )
 
 def _clean_invalid_greeks(row: dict) -> None:

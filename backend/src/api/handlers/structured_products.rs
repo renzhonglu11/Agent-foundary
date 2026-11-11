@@ -41,7 +41,15 @@ pub async fn structured_products_iv_history(
 pub async fn structured_products_enrichment_status(
     State(state): State<Arc<AppState>>,
 ) -> Json<Value> {
-    Json(state.structured_products_service.status_payload())
+    let mut status = state.structured_products_service.status_payload();
+    match state.product_candidates.provider_status().await {
+        Ok(providers) => status["providers"] = providers,
+        Err(error) => {
+            tracing::warn!(%error, "cannot read provider access status");
+            status["providerStatusError"] = Value::String("无法读取数据源状态".into());
+        }
+    }
+    Json(status)
 }
 
 pub async fn refresh_structured_products_enrichment(

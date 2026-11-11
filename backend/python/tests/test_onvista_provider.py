@@ -153,3 +153,32 @@ async def test_unknown_products_are_unavailable_and_a_refusal_ends_the_requests(
     assert await provider.get_product_data("DE000UG3NHT9") is None
     assert len(requests) == 3
     await provider.aclose()
+
+
+@pytest.mark.asyncio
+async def test_quote_and_product_reuse_one_snapshot_and_keep_market_time():
+    payload = {**WARRANT, "quote": {
+        "last": 10.09, "isoCurrency": "EUR", "datetimeLast": "2026-11-11T13:42:57.182+00:00",
+        "high": 10.33, "low": 9.96,
+    }}
+    requests = []
+    provider = provider_for({"DE000UG3NHT9": payload}, requests)
+    quote = await provider.get_quote("DE000UG3NHT9")
+    product = await provider.get_product_data("DE000UG3NHT9")
+    assert len(requests) == 1
+    assert quote.price == 10.09 and quote.currency == "EUR"
+    assert quote.timestamp.isoformat() == "2026-11-11T13:42:57.182000+00:00"
+    assert product.metadata.isin == quote.isin
+    await provider.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("changes", [{"datetimeLast": None}, {"last": float("nan")}, {"last": -1}, {"isoCurrency": None}])
+async def test_quote_with_unverifiable_price_or_time_is_unavailable(changes):
+    payload = {**WARRANT, "quote": {"last": 10.09, "isoCurrency": "EUR", "datetimeLast": "2026-11-11T13:42:57Z", **changes}}
+    provider = OnvistaProductProvider()
+    # Inject an already received response; JSON itself cannot encode NaN.
+    import time
+    provider._snapshots["DE000UG3NHT9"] = (time.monotonic(), payload)
+    assert await provider.get_quote("DE000UG3NHT9") is None
+    await provider.aclose()

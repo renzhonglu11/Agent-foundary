@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 use sqlx::SqlitePool;
 use tokio::sync::Mutex;
 
+use super::provider_access::{ProviderAccess, ProviderCoolingDown};
 use crate::{application::services::fx_rate_service::FxRateService, services::monitor_symbols};
 
 // The endpoints serve onvista.de itself; they are not a documented API.
@@ -28,6 +29,7 @@ pub struct ProductCandidates {
     // Home-market tickers by underlying ISIN; they do not change while the process runs.
     symbols: Arc<Mutex<HashMap<String, Option<String>>>>,
     write_lock: Arc<Mutex<()>>,
+    access: ProviderAccess,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -152,7 +154,11 @@ struct FinderPage {
 }
 
 impl ProductCandidates {
-    pub fn new(pool: SqlitePool, fx: FxRateService) -> anyhow::Result<Self> {
+    pub fn new(
+        pool: SqlitePool,
+        fx: FxRateService,
+        access: ProviderAccess,
+    ) -> anyhow::Result<Self> {
         Ok(Self {
             pool,
             fx,
@@ -164,6 +170,7 @@ impl ProductCandidates {
             cache: Arc::new(Mutex::new(HashMap::new())),
             symbols: Arc::new(Mutex::new(HashMap::new())),
             write_lock: Arc::new(Mutex::new(())),
+            access,
         })
     }
 
@@ -182,15 +189,32 @@ impl ProductCandidates {
                 return Ok((*at, value.clone()));
             }
         }
-        let data: Value = self
+        self.access.acquire("api.onvista.de", &key).await?;
+        let response = self
             .client
             .get(url)
             .header("Accept", "application/json")
             .send()
-            .await?
-            .error_for_status()?
-            .json()
+            .await;
+        let response = match response {
+            Ok(response) => response,
+            Err(error) => {
+                self.access.record("api.onvista.de", &key, 0, None).await?;
+                return Err(error.into());
+            }
+        };
+        self.access
+            .record(
+                "api.onvista.de",
+                &key,
+                response.status().as_u16(),
+                response
+                    .headers()
+                    .get("Retry-After")
+                    .and_then(|h| h.to_str().ok()),
+            )
             .await?;
+        let data: Value = response.error_for_status()?.json().await?;
         if !data.is_object() {
             bail!("onvista response is not a JSON object");
         }
@@ -201,6 +225,10 @@ impl ProductCandidates {
         }
         cache.insert(key, (at, data.clone()));
         Ok((at, data))
+    }
+
+    pub async fn provider_status(&self) -> anyhow::Result<Value> {
+        self.access.status().await
     }
 
     async fn lookup(&self, isin: &str) -> anyhow::Result<WarrantCandidate> {
@@ -492,11 +520,14 @@ impl WarrantCandidate {
 
 /// HTTP 403 and 429 answer the client, not the product that was asked for.
 fn refused(error: &anyhow::Error) -> bool {
+    if error.downcast_ref::<ProviderCoolingDown>().is_some() {
+        return true;
+    }
     error.chain().any(|cause| {
         cause
             .downcast_ref::<reqwest::Error>()
             .and_then(reqwest::Error::status)
-            .is_some_and(|status| matches!(status.as_u16(), 403 | 429))
+            .is_some_and(|status| matches!(status.as_u16(), 401 | 403 | 429))
     })
 }
 
@@ -933,7 +964,8 @@ mod tests {
                 fallback_usd_eur_rate: 0.9,
             },
         );
-        ProductCandidates::new(pool, fx)
+        let access = ProviderAccess::from_pool(pool.clone(), 0.0).await?;
+        ProductCandidates::new(pool, fx, access)
     }
 
     #[test]
@@ -1379,6 +1411,22 @@ mod tests {
             .context("a refusal is an error, not an empty result")?;
         assert!(refused(&error));
         assert!(!refused(&anyhow::anyhow!("unrelated")));
+        let count = requests().len();
+        // A second browser search must respect the same refusal as watchlist
+        // refresh, even when it asks for a different instrument.
+        assert!(
+            service
+                .search(&CandidateSearch {
+                    query: Some("another".into()),
+                    ..Default::default()
+                })
+                .await
+                .is_err()
+        );
+        assert_eq!(requests().len(), count);
+        // Previously cached searches are still usable without touching the source.
+        assert!(service.search(&request).await.is_ok());
+        assert_eq!(requests().len(), count);
         server.abort();
         Ok(())
     }
