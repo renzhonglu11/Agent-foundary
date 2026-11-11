@@ -470,6 +470,24 @@ pub async fn evaluate(
     Ok(())
 }
 
+/// Whether an alert evaluated at `now` still needs another observation soon:
+/// a second breach, a second recovery, or the end of a cooldown. The
+/// confirmation counters restart after three minutes without an evaluation.
+pub async fn awaiting_confirmation(
+    conn: &mut SqliteConnection,
+    now: DateTime<Utc>,
+) -> anyhow::Result<bool> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM portfolio_monitor_alerts WHERE updated_at = ? AND (
+            json_extract(state_json,'$.status') = 'pending'
+            OR (json_extract(state_json,'$.status') = 'resolved' AND json_extract(state_json,'$.hits') > 0)
+            OR (json_extract(state_json,'$.status') IN ('active','acknowledged','invalidated') AND json_extract(state_json,'$.clears') = 1)))",
+    )
+    .bind(now.to_rfc3339())
+    .fetch_one(conn)
+    .await?)
+}
+
 pub async fn list(pool: &SqlitePool) -> anyhow::Result<Value> {
     let rows: Vec<String> = sqlx::query_scalar(
         "SELECT state_json FROM portfolio_monitor_alerts ORDER BY updated_at DESC",
@@ -551,6 +569,38 @@ mod tests {
     async fn state(pool: &SqlitePool) -> anyhow::Result<AlertState> {
         let raw:String=sqlx::query_scalar("SELECT state_json FROM portfolio_monitor_alerts WHERE alert_key='0:stress_loss:portfolio'").fetch_one(pool).await?;
         Ok(serde_json::from_str(&raw)?)
+    }
+    #[tokio::test]
+    async fn unfinished_confirmations_ask_for_the_next_cycle() -> anyhow::Result<()> {
+        let pool = pool().await?;
+        let t: DateTime<Utc> = "2026-11-10T12:00:00Z".parse()?;
+        let config = SettingsRecord {
+            revision: 0,
+            settings: RiskSettings {
+                max_loss_eur: Some(100.0),
+                ..Default::default()
+            },
+        };
+        // Minute, loss, and whether the alert is left waiting for another observation.
+        for (minute, loss, expected) in [
+            (0, 120.0, true),   // first breach, pending
+            (1, 120.0, false),  // confirmed, active
+            (2, 80.0, true),    // first recovery
+            (3, 80.0, false),   // resolved
+            (4, 120.0, true),   // breached again inside the cooldown
+            (5, 120.0, true),   // still cooling
+            (20, 120.0, true),  // the long gap restarted the count
+            (21, 120.0, false), // active again
+        ] {
+            let at = t + TimeDelta::minutes(minute);
+            let mut tx = pool.begin().await?;
+            evaluate(&mut tx, &payload(at, Some(loss)), &config).await?;
+            let awaiting = awaiting_confirmation(&mut tx, at).await?;
+            tx.commit().await?;
+            assert_eq!(awaiting, expected, "minute {minute}");
+        }
+        assert_eq!(state(&pool).await?.status, "active");
+        Ok(())
     }
     #[tokio::test]
     async fn settings_survive_reopen_and_stale_updates_cannot_overwrite() -> anyhow::Result<()> {

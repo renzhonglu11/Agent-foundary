@@ -6,7 +6,7 @@ import SyncRoundedIcon from '@mui/icons-material/SyncRounded'
 import { usePortfolioMonitorStatus } from '../hooks/usePortfolioMonitor.js'
 import { useStructuredProductsRefreshStatus } from '../hooks/useStructuredProductsRefreshStatus.js'
 import { dateTime, number } from '../utils/formatters.js'
-import { backgroundUpdateState, monitorUpdateState, productUpdateState, validTimestamp } from '../utils/backgroundUpdateStatus.js'
+import { backgroundUpdateState, lastMonitorCheck, monitorUpdateState, productUpdateState, validTimestamp } from '../utils/backgroundUpdateStatus.js'
 import PortfolioDataMonitor from './PortfolioDataMonitor.jsx'
 
 const time = value => validTimestamp(value) ? dateTime(value) : '暂无记录'
@@ -45,6 +45,7 @@ export default function BackgroundUpdateStatus() {
   const nextQuote = snapshot?.nextQuoteAttemptAt
   const nextOpen = snapshot?.usSession?.nextOpen
   const coverage = snapshot?.usableUnderlyingCoveragePct
+  const checkedAt = lastMonitorCheck(monitor.data)
   const fetching = monitor.isFetching || products.isFetching
 
   return <>
@@ -78,7 +79,10 @@ export default function BackgroundUpdateStatus() {
           <IconButton size="small" aria-label="关闭后台更新状态" onClick={() => setAnchor(null)}><CloseRoundedIcon fontSize="small" /></IconButton>
         </Stack>
         <JobStatus title="标的报价与风险计算" state={monitorState}>
-          <Typography variant="body2">最近检查：{time(snapshot?.evaluatedAt)}</Typography>
+          <Typography variant="body2">最近检查：{checkedAt == null ? '暂无记录' : dateTime(checkedAt)}</Typography>
+          {monitor.data?.runtime?.lastCycle === 'unchanged' && <Typography variant="caption" color="text.secondary">
+            输入没有变化，沿用 {time(snapshot?.evaluatedAt)} 的计算结果{Number.isFinite(monitor.data.unchangedRecalcMinutes) && `；最长 ${number.format(monitor.data.unchangedRecalcMinutes)} 分钟重算一次`}。
+          </Typography>}
           <Typography variant="body2" color="text.secondary">最近请求报价：{time(snapshot?.provider?.checkedAt)}</Typography>
           <Typography variant="caption" color="text.secondary">
             {snapshot?.usSession?.state === 'closed' ? `美股休市，保留最近交易时段行情。${validTimestamp(nextOpen) ? ` 下次开盘：${time(nextOpen)}。` : ''}` : snapshot?.usSession?.state === 'open' ? '美股交易中。' : '美股交易日历待确认。'}
