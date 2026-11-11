@@ -13,8 +13,7 @@ release artifacts from mutable production state.
   `.env`, `.env.remote`, or `.env.example`.
 - SQLite data, uploads, and the Hermes cron snapshot are persistent state in
   `shared/data/`, not release contents.
-- uv and Playwright caches are disposable but shared between releases in
-  `shared/cache/`.
+- The uv cache is disposable but shared between releases in `shared/cache/`.
 - A release is activated only by atomically replacing the `current` symlink.
   On a failed service restart or health check, the remote installer restores
   the previous release when one exists.
@@ -36,7 +35,7 @@ The default remote root is `/home/rz/Agent-Foundry`:
     ├── data/                    # SQLite, uploads, Hermes cron snapshot
     ├── backups/                 # daily/ and pre-deploy/ SQLite backup sets
     ├── python-envs/             # immutable, content-addressed Python envs
-    └── cache/                   # uv and Playwright caches
+    └── cache/                   # uv cache
 ```
 
 ## Prerequisites
@@ -57,11 +56,6 @@ On the VPS:
   provided.
 - Python 3.12 is discoverable through `uv python find 3.12`; its exact version
   participates in the shared environment identity.
-- Chromium's Linux runtime libraries are installed. On Ubuntu 26.04,
-  Playwright is automatically mapped to its Ubuntu 24.04 browser build until
-  upstream publishes a native Ubuntu 26.04 build. Override the automatic
-  choice with `REMOTE_PLAYWRIGHT_HOST_PLATFORM_OVERRIDE` when deploying from
-  another machine.
 - Before the first deployment, create the real server-side `.env` at either
   `<remote-root>/.env` (it will be migrated once) or
   `<remote-root>/shared/.env`. It must contain the application configuration
@@ -84,8 +78,7 @@ The script performs these steps:
 3. On the VPS, creates a new `releases/<release-id>` directory and links it to
    an immutable Python environment keyed by effective requirements, wheel
    content, Python version, and CPU architecture. An existing matching
-   environment is reused; otherwise it is built before activation. Playwright
-   Chromium remains in the shared browser cache.
+   environment is reused; otherwise it is built before activation.
 4. On the first migration only, moves legacy `<remote-root>/data` to
    `shared/data` after the new release has been fully prepared. It refuses to
    choose if both locations already contain data.
@@ -139,8 +132,9 @@ analysis, structured-products enrichment, plus the shared cache paths.
 
 ### Restart loops and the product scraper
 
-The structured-products scraper runs as a child of the backend and starts a
-headless browser, so its memory counts against the backend unit. From
+The structured-products scraper runs as a child of the backend, so its memory
+counts against the backend unit; until 2026-11-11 it also started a headless
+browser. From
 2026-10-23 to 2026-11-10 every scheduled refresh exhausted the host's memory;
 systemd's default `OOMPolicy=stop` then stopped the whole unit, the restarted
 process began the same refresh, and the backend restarted about 770 times per
@@ -149,6 +143,10 @@ trading day without a single completed refresh. Three things now prevent that:
 - The unit sets `MemoryMax=3G` and `OOMPolicy=continue`: a scraper that outgrows
   the limit is killed alone and the refresh is reported as failed, while the API
   keeps running.
+- Since 2026-11-11 the scraper is plain HTTP: the headless browser, the
+  Playwright dependency and the gs.de provider that needed them are gone. A
+  `shared/cache/playwright` directory left by earlier releases is unused and
+  can be deleted.
 - The scheduler stores the time of each refresh attempt before it starts
   (`realtime_payloads`, key `structured_products_refresh_schedule`). A restarted
   process waits out the rest of the interval instead of scraping at once, and

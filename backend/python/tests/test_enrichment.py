@@ -124,18 +124,18 @@ async def test_enrich_rows_uses_later_product_provider_to_fill_missing_fields():
             )
         }
     )
-    gs_de = FakeProductProvider(
+    exchange = FakeProductProvider(
         {
             "DE000PARTIAL": ProductData(
                 metadata=InstrumentMetadata(isin="DE000PARTIAL", issuer="GS fallback issuer should not replace", underlying="AMD - Advanced Micro Devices", ratio=0.1, expiry="2026-12-18"),
                 greek=Greek(isin="DE000PARTIAL", iv=0.614),
-                source="gs.de",
-                url="https://www.gs.de/de/optionsschein-rechner?isin=DE000PARTIAL",
+                source="boerse_frankfurt",
+                url="https://example.test/product/DE000PARTIAL",
             )
         }
     )
 
-    enriched = await enrich_structured_product_rows(rows, product_providers=[onvista, gs_de])
+    enriched = await enrich_structured_product_rows(rows, product_providers=[onvista, exchange])
 
     assert enriched[0]["issuer"] == "HSBC"
     assert enriched[0]["underlying"] == "AMD"
@@ -143,9 +143,9 @@ async def test_enrich_rows_uses_later_product_provider_to_fill_missing_fields():
     assert enriched[0]["ratio"] == 0.1
     assert enriched[0]["expiry"] == "2026-12-18"
     assert enriched[0]["iv"] == 0.614
-    assert enriched[0]["metadata_source"] == "onvista+gs.de"
-    assert enriched[0]["greeks_source"] == "gs.de"
-    assert enriched[0]["metadata_url"] == "https://www.gs.de/de/optionsschein-rechner?isin=DE000PARTIAL"
+    assert enriched[0]["metadata_source"] == "onvista+boerse_frankfurt"
+    assert enriched[0]["greeks_source"] == "boerse_frankfurt"
+    assert enriched[0]["metadata_url"] == "https://example.test/product/DE000PARTIAL"
 
 
 @pytest.mark.asyncio
@@ -174,20 +174,20 @@ async def test_enrich_rows_discards_invalid_greeks_and_falls_back_to_next_provid
             )
         }
     )
-    gs_de = FakeProductProvider(
+    exchange = FakeProductProvider(
         {
             "DE000INVALID": ProductData(
                 metadata=InstrumentMetadata(isin="DE000INVALID", leverage=15.0, underlying="NVIDIA"),
                 greek=Greek(isin="DE000INVALID", delta=0.95, omega=18.0),
-                source="gs.de",
+                source="boerse_frankfurt",
             )
         }
     )
 
-    enriched = await enrich_structured_product_rows(rows, product_providers=[onvista, gs_de])
+    enriched = await enrich_structured_product_rows(rows, product_providers=[onvista, exchange])
 
-    assert enriched[0]["metadata_source"] == "onvista+gs.de"
-    assert enriched[0]["greeks_source"] == "gs.de"
+    assert enriched[0]["metadata_source"] == "onvista+boerse_frankfurt"
+    assert enriched[0]["greeks_source"] == "boerse_frankfurt"
     assert enriched[0]["leverage"] == 15.0  # fell back because leverage was negative
     assert enriched[0]["delta"] == 0.95     # fell back because omega was negative
     assert enriched[0]["omega"] == 18.0
@@ -288,7 +288,7 @@ async def test_enrich_rows_refreshes_cached_metadata_from_live_provider():
         option_type="call",
     )
     cache = FakeCacheStore(metadata={"DE000HM0T297": cached_metadata})
-    gs_de = FakeProductProvider(
+    exchange = FakeProductProvider(
         {
             "DE000HM0T297": ProductData(
                 metadata=InstrumentMetadata(
@@ -301,18 +301,18 @@ async def test_enrich_rows_refreshes_cached_metadata_from_live_provider():
                     option_type="call",
                 ),
                 greek=None,
-                source="gs.de",
-                url="https://www.gs.de/de/optionsschein-rechner?isin=DE000HM0T297",
+                source="boerse_frankfurt",
+                url="https://example.test/product/DE000HM0T297",
             )
         }
     )
 
-    enriched = await enrich_structured_product_rows(rows, product_providers=[gs_de], cache_store=cache)
+    enriched = await enrich_structured_product_rows(rows, product_providers=[exchange], cache_store=cache)
 
-    assert gs_de.calls == ["DE000HM0T297"]
+    assert exchange.calls == ["DE000HM0T297"]
     assert enriched[0]["leverage"] == 1.33
-    assert enriched[0]["metadata_source"] == "gs.de"
-    assert enriched[0]["metadata_url"] == "https://www.gs.de/de/optionsschein-rechner?isin=DE000HM0T297"
+    assert enriched[0]["metadata_source"] == "boerse_frankfurt"
+    assert enriched[0]["metadata_url"] == "https://example.test/product/DE000HM0T297"
     assert len(cache.upserted_metadata) == 1
     assert cache.upserted_metadata[0].leverage == 1.33
 

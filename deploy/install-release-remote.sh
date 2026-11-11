@@ -10,26 +10,6 @@ sync_service_name="$6"
 remote_uv_bin="$7"
 tmp_dir="$8"
 release_id="$9"
-playwright_host_platform_override="${10:-}"
-
-if [[ -z "${playwright_host_platform_override}" && -r /etc/os-release ]]; then
-  # Playwright 1.60 does not yet publish Ubuntu 26.04 browser builds. Its
-  # Ubuntu 24.04 Chromium build is compatible with Ubuntu 26.04 once the
-  # browser's system libraries are installed.
-  source /etc/os-release
-  case "${ID:-}:${VERSION_ID:-}:$(uname -m)" in
-    ubuntu:26.04:x86_64)
-      playwright_host_platform_override="ubuntu24.04-x64"
-      ;;
-    ubuntu:26.04:aarch64)
-      playwright_host_platform_override="ubuntu24.04-arm64"
-      ;;
-  esac
-fi
-if [[ -n "${playwright_host_platform_override}" && ! "${playwright_host_platform_override}" =~ ^[A-Za-z0-9._-]+$ ]]; then
-  echo "Invalid Playwright host platform override: ${playwright_host_platform_override}" >&2
-  exit 1
-fi
 
 releases_dir="${remote_root}/releases"
 shared_dir="${remote_root}/shared"
@@ -79,11 +59,9 @@ sudo chmod 0600 "${shared_dir}/.env"
 # the final data move and systemd restart rather than the whole Python install.
 legacy_data_present=0
 uv_cache_dir="${shared_dir}/cache/uv"
-playwright_cache_dir="${shared_dir}/cache/playwright"
 if [[ -d "${remote_root}/data" && ! -e "${shared_dir}/data" ]]; then
   legacy_data_present=1
   uv_cache_dir="${remote_root}/data/uv-cache"
-  playwright_cache_dir="${remote_root}/data/playwright-browsers"
 elif [[ -d "${remote_root}/data" && -e "${shared_dir}/data" ]]; then
   echo "Both ${remote_root}/data and ${shared_dir}/data exist; refusing to choose between them." >&2
   exit 1
@@ -91,7 +69,7 @@ fi
 if [[ "${legacy_data_present}" -eq 0 ]]; then
   sudo install -d -o "${remote_user}" -g "${remote_group}" -m 0750 \
     "${shared_dir}/data" "${shared_dir}/data/uploads" "${shared_dir}/data/hermes-cron" \
-    "${uv_cache_dir}" "${playwright_cache_dir}"
+    "${uv_cache_dir}"
 fi
 
 if [[ -e "${release_dir}" ]]; then
@@ -105,10 +83,6 @@ sudo mv "${tmp_dir}/sync-hermes-cron-jobs.sh" "${release_dir}/bin/sync-hermes-cr
 sudo mv "${tmp_dir}/backup-sqlite-databases.sh" "${release_dir}/bin/backup-sqlite-databases.sh"
 sudo mv "${tmp_dir}/REVISION" "${release_dir}/REVISION"
 sudo mv "${tmp_dir}/agent-foundry-runtime.env" "${release_dir}/runtime.env"
-if [[ -n "${playwright_host_platform_override}" ]]; then
-  printf 'PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=%s\n' "${playwright_host_platform_override}" | \
-    sudo tee -a "${release_dir}/runtime.env" >/dev/null
-fi
 sudo mv "${tmp_dir}/python-requirements.txt" "${release_dir}/python/requirements.txt"
 sudo mv "${tmp_dir}"/*.whl "${release_dir}/python/"
 sudo tar -xzf "${tmp_dir}/web-dist.tar.gz" -C "${release_dir}/web/dist"
@@ -152,18 +126,6 @@ else
   sudo chown "${remote_user}:${remote_group}" "${python_env_marker}"
   sudo chmod 0444 "${python_env_marker}"
 fi
-sudo -u "${remote_user}" env \
-  UV_CACHE_DIR="${uv_cache_dir}" \
-  PLAYWRIGHT_BROWSERS_PATH="${playwright_cache_dir}" \
-  PLAYWRIGHT_HOST_PLATFORM_OVERRIDE="${playwright_host_platform_override}" \
-  "${python_venv}/bin/playwright" install chromium
-sudo -u "${remote_user}" env \
-  PLAYWRIGHT_BROWSERS_PATH="${playwright_cache_dir}" \
-  PLAYWRIGHT_HOST_PLATFORM_OVERRIDE="${playwright_host_platform_override}" \
-  "${python_venv}/bin/python" -c 'from playwright.sync_api import sync_playwright
-with sync_playwright() as playwright:
-    browser = playwright.chromium.launch(headless=True)
-    browser.close()'
 sudo -u "${remote_user}" ln -s "${python_venv}" "${release_dir}/python/.venv"
 
 # The initial data move is deliberately delayed until the release is fully built.
@@ -173,11 +135,10 @@ if [[ "${legacy_data_present}" -eq 1 ]]; then
   fi
   sudo mv "${remote_root}/data" "${shared_dir}/data"
   sudo mv "${shared_dir}/data/uv-cache" "${shared_dir}/cache/uv"
-  sudo mv "${shared_dir}/data/playwright-browsers" "${shared_dir}/cache/playwright"
 fi
 sudo install -d -o "${remote_user}" -g "${remote_group}" -m 0750 \
   "${shared_dir}/data" "${shared_dir}/data/uploads" "${shared_dir}/data/hermes-cron" \
-  "${shared_dir}/cache/uv" "${shared_dir}/cache/playwright"
+  "${shared_dir}/cache/uv"
 sudo chown -R "${remote_user}:${remote_group}" "${shared_dir}/data" "${shared_dir}/cache"
 
 # The restart below applies new migrations; a failed snapshot aborts before units or current change.

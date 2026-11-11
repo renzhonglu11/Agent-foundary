@@ -61,15 +61,7 @@ cargo build -p agent-foundry-backend
 
 提前构建后端，可以避免首次编译超过联合启动脚本的 120 秒健康检查等待时间。
 
-如果需要 GS Markets 的浏览器回退查询，还需安装 Playwright Chromium：
-
-```bash
-cd backend/python
-uv run playwright install chromium
-cd ../..
-```
-
-Linux 上如果缺少浏览器系统依赖，可在 Python 项目目录执行 `uv run playwright install --with-deps chromium`。
+产品数据刷新不需要浏览器：条款和 Greeks 通过普通 HTTP 请求从法兰克福交易所和 Onvista 获取。
 
 ### 3. 启动应用
 

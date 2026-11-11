@@ -10,9 +10,9 @@ This reference documents current structured-products enrichment behavior in the 
   2. `BoerseFrankfurtProductProvider` for terms and Greeks, one JSON request per product.
   3. `OnvistaProductProvider` only for what Börse Frankfurt leaves open.
 - Product providers are configured as `[boerse_frankfurt_provider, onvista_provider]`.
-- `GsDeProductProvider` is no longer called (since 2026-11-11). gs.de answers the
-  production server with HTTP 403, and its calculator fallback was the only user
-  of the headless browser. The module and its tests remain in the repo.
+- There is no gs.de provider and no headless browser any more (removed
+  2026-11-11): gs.de answers the production server with HTTP 403, and its
+  calculator fallback was the only user of Playwright.
 - A source that answers HTTP 403 or 429 is not asked again in the same run
   (`providers/refusal.py`). The two Börse Frankfurt providers share one guard.
 - Only rows matching `live_enrichment_tier` are live-enriched; default is `tier1`.
@@ -117,69 +117,6 @@ Greek fields:
 - Numeric values use German decimal parsing.
 - `iv` is divided by 100 when source includes `%` or numeric value is greater than 1.
 - Expiry accepts `DD.MM.YYYY` and `YYYY-MM-DD`; open-ended text becomes `None`.
-
-## gs.de Provider (not in the pipeline)
-
-The rules below describe `gs_de.py`, which the CLI no longer configures.
-
-Source file: `backend/python/src/agent_foundry_python/structured_products/providers/gs_de.py`.
-
-### Fetch Rule
-
-1. First try GraphQL:
-   - URL: `https://www.gs.de/graphql`
-   - Operation: `getSecuritizedProduct`
-   - Variable: `{"id": "<ISIN>"}`
-   - Referer: `https://www.gs.de/de/optionsschein-rechner?isin=<ISIN>`
-2. If GraphQL fails or mismatches ISIN, fall back to calculator HTML:
-   - URL: `https://www.gs.de/de/optionsschein-rechner?isin=<ISIN>`
-   - Use Playwright when not using a mock transport.
-   - Wait for client-side JS before parsing HTML.
-3. Provider returns `None` on expected network/parse failures so enrichment can continue.
-
-GraphQL is the preferred metadata path. It avoids unnecessary Playwright use and exposes structured fields for products whose page visibly works but HTML parsing fails. If GraphQL returns an optionsschein with missing Greeks, still try calculator HTML/Playwright and merge calculator `Delta %`, `Omega`, `Theta`, and `IV` back into the GraphQL metadata.
-
-### gs.de GraphQL Fields Used
-
-Metadata:
-
-- `synonyms.isn` or `id` -> `isin`
-- `synonyms.wpk` -> `wkn`
-- `issuanceInfo.issuer.name` or `.symbol` -> `issuer`
-- first `assets[].fullName` or `.name` -> `underlying`
-- `classificationInfo.flavour.code/description` -> `product_type`
-- `economics.realTimeData.leverage` or `productTerms.factor` -> `leverage`
-- `productTerms.strike` -> `strike_price`
-- `productTerms.knockOut` -> `knockout_price`
-- `economics.realTimeData.breakEven` -> `break_even`
-- `productTerms.ratio` or inverse of first `productTerms.underlyers[].ratio` -> `ratio`
-- `productTerms.expirationDate` -> `expiry`
-- `productTerms.levels[].claimType` or `levels[].direction` -> `option_type`
-
-Greeks:
-
-- `economics.realTimeData.delta` -> `delta`
-- `economics.realTimeData.omega` -> `omega`
-- `economics.realTimeData.impliedVolatility` -> `iv`
-- `theta` is generally not available from current GraphQL parser.
-
-### gs.de Type and Direction Rules
-
-- Product type:
-  - flavour text containing `faktor` or `factor` -> `factor_certificate`
-  - flavour text containing `turbo` or `knock` -> `open_end_turbo`
-  - flavour text containing `optionsschein`, `warrant`, or `covplain` -> `optionsschein`
-- Direction:
-  - `claimType.key/description` containing `CALL` -> `call`
-  - `claimType.key/description` containing `PUT` -> `put`
-  - factor `direction.description` containing `Long` -> `call`
-  - factor `direction.description` containing `Short` -> `put`
-
-Important examples:
-
-- `DE000HT0Q0Z8` returns optionsschein metadata plus `delta`, `omega`, `iv`.
-- `DE000SJ7BGU6` returns GraphQL metadata (`strike`, `ratio`, `expiry`, `break_even`) with `realTimeData.delta = null`, but the calculator page can still expose `Delta %`; do not return early from GraphQL when optionsschein Greeks are incomplete.
-- `DE000SX1Y9R4` returns `factor_certificate`, `factor=3`, `ratio=1`, direction `Long`; real-time Greeks can be absent.
 
 ## Enrichment Merge Rules
 
@@ -327,7 +264,7 @@ When an ISIN still shows missing data:
 5. Check `_needs_product_fallback`; missing `theta`/`iv` can keep fallback active.
 6. Check direction detection from instrument/display name and provider fields.
 7. For factor certificates, verify `leverage` comes from Börse Frankfurt `participation` or Onvista `faktor`.
-8. For gs.de products, inspect raw GraphQL before adding HTML parsing, but remember calculator Greeks may exist even when GraphQL `realTimeData` Greeks are `null`.
+8. For a missing field, inspect the raw Börse Frankfurt master data before adding Onvista HTML parsing.
 9. Check exposure fallback order before editing risk status.
 10. Add tests with the failing ISIN's real response shape.
 
@@ -336,9 +273,9 @@ Provider direct-check pattern:
 ```bash
 UV_CACHE_DIR=/tmp/uv-cache uv run --directory backend/python python -c "exec('''
 import asyncio, json
-from agent_foundry_python.structured_products.providers.gs_de import GsDeProductProvider
+from agent_foundry_python.structured_products.providers.boerse_frankfurt import BoerseFrankfurtProductProvider
 async def main():
-    p = GsDeProductProvider(timeout=10)
+    p = BoerseFrankfurtProductProvider(timeout=10)
     r = await p.get_product_data(\"DE000EXAMPLE\")
     print(json.dumps({
         \"metadata\": r.metadata.model_dump() if r else None,
@@ -351,7 +288,7 @@ asyncio.run(main())
 ''')"
 ```
 
-Onvista parser tests should use representative HTML snippets. gs.de parser tests should prefer GraphQL fixtures for the real response shape.
+Onvista parser tests should use representative HTML snippets. Börse Frankfurt tests should use fixtures in the shape of the real master-data response.
 
 ## Test Targets
 
