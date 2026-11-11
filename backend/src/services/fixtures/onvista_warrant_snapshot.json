@@ -1,0 +1,78 @@
+{
+ "instrument": {
+  "entityType": "DERIVATIVE",
+  "entitySubType": "WARRANT",
+  "entityValue": "293020236",
+  "name": "UNICREDIT BANK/CALL/TESLA/300/0.1/16.06.27",
+  "isin": "DE000UG3NHT9",
+  "wkn": "UG3NHT",
+  "urls": {
+   "WEBSITE": "https://www.onvista.de/derivate/Optionsscheine/293020236-UG3NHT-DE000UG3NHT9"
+  }
+ },
+ "quote": {
+  "isoCurrency": "EUR",
+  "bid": 9.6199,
+  "ask": 9.63,
+  "datetimeBid": "2026-11-10T20:59:52.166+00:00",
+  "datetimeAsk": "2026-11-10T20:59:52.166+00:00",
+  "volumeBid": 50000.0,
+  "volumeAsk": 50000.0,
+  "codeQualityPriceBidAsk": "RLT"
+ },
+ "derivativesIssuer": {
+  "id": 53143,
+  "name": "UniCredit"
+ },
+ "derivativesDetails": {
+  "codeExerciseRight": "C",
+  "nameSubcategory": "Plain-Vanilla-Warrants",
+  "datetimeMaturity": "2027-06-16T12:00:00.000+00:00",
+  "hasBarrierBeenHit": false,
+  "hasOnlyBidPrices": false,
+  "numberUnderlyings": 1,
+  "isoCurrency": "EUR",
+  "quanto": false,
+  "openEnded": false
+ },
+ "derivativesFigure": {
+  "priceUnderlying": 379.78,
+  "datetimePriceUnderlying": "2026-11-10T21:00:00.390+00:00",
+  "isoCurrencyUnderlying": "USD",
+  "delta": 0.774692605048,
+  "leverage": 2.73789537637,
+  "impliedVolatility": 57.2199020386,
+  "impliedVolatilityAsk": 57.2837753296,
+  "impliedVolatilityBid": 57.1560287476,
+  "datetimePrice": "2026-11-10T20:59:52.170+00:00"
+ },
+ "derivativesUnderlyingList": {
+  "list": [
+   {
+    "isoCurrency": "USD",
+    "coverRatio": 0.1,
+    "instrument": {
+     "entityType": "STOCK",
+     "entityValue": "33837581",
+     "name": "Tesla",
+     "isin": "US88160R1014",
+     "wkn": "A1CX3T",
+     "symbol": "TL0",
+     "urls": {
+      "NEWS": "https://www.onvista.de/news/aktien/Tesla-News-US88160R1014",
+      "WEBSITE": "https://www.onvista.de/aktien/Tesla-Aktie-US88160R1014"
+     }
+    },
+    "derivativesBarrierList": {
+     "list": [
+      {
+       "typeBarrier": "STRIKE",
+       "barrier": 300.0,
+       "isoCurrencyUnderlying": "USD"
+      }
+     ]
+    }
+   }
+  ]
+ }
+}

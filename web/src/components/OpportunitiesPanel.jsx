@@ -191,7 +191,7 @@ export default function OpportunitiesPanel({ screen = [], rolls = [], loading, s
           <Typography variant="caption" color="text.secondary" component="div" sx={{ mt: 0.75 }}>
             换仓测算中的三种合约都在原到期日上延长 {ROLL_EXTENSION_DAYS} 天，行权价分别为原行权价、标的现价、价内 10%，比率与当前合约相同。理论价格按 Black-Scholes 计算，波动率取同标的权证 IV 的中位数；当前合约用自己报价反推的波动率。
             真实产品的报价含发行人点差，不同行权价和期限的波动率也不同，所以理论价格只用于比较合约类型。保本概率是持有到期的口径。杠杆是标的变动 1% 时合约价格的变动百分比。
-            真实产品来自 GS Markets 可检索范围，观察列表独立保存；日线筛选仅支持能精确映射到美股代码的标的，其余产品仍保留在观察列表中。
+            真实产品来自 onvista 可检索范围，观察列表独立保存；日线筛选仅支持能精确映射到美股代码的标的，其余产品仍保留在观察列表中。
           </Typography>
         </Box>
       </Stack>
