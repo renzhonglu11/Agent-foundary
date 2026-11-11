@@ -19,6 +19,9 @@ class ProductData:
     url: str | None = None
 
 
+NAME_FIELDS = ("issuer", "underlying")
+
+
 class QuoteProvider(Protocol):
     async def get_quote(self, isin: str) -> Quote | None: ...
 
@@ -126,9 +129,15 @@ async def enrich_structured_product_rows(
             greek_sources: list[str] = []
             metadata_urls: list[str] = []
 
+            cached_names: dict[str, None] = {}
             if cached_metadata is not None:
+                # The break-even moves with the quote, so a stored one is not served.
+                cached_metadata = cached_metadata.model_copy(update={"break_even": None})
                 _merge_metadata(enriched, cached_metadata, overwrite=True)
                 metadata_sources.append("cache")
+                # Sources spell issuers and underlyings differently; a product
+                # keeps the names it was first stored with.
+                cached_names = {field: None for field in NAME_FIELDS if getattr(cached_metadata, field)}
                 
             if cached_greek is not None:
                 _merge_greek(enriched, cached_greek, overwrite=True)
@@ -149,6 +158,8 @@ async def enrich_structured_product_rows(
                     metadata_to_merge = product.metadata
                     if metadata_to_merge is not None and _is_metadata_invalid(metadata_to_merge, name):
                         metadata_to_merge = metadata_to_merge.model_copy(update={"leverage": None})
+                    if metadata_to_merge is not None and cached_names:
+                        metadata_to_merge = metadata_to_merge.model_copy(update=cached_names)
 
                     metadata_changed = _merge_metadata(
                         enriched,
@@ -287,11 +298,13 @@ def _has_live_enrichment(row: dict) -> bool:
 
 
 def _needs_product_fallback(row: dict) -> bool:
+    # The break-even is left out: consumers derive it from strike, ratio and
+    # the current quote, and asking a second source for it alone would double
+    # the requests of every refresh.
     return any(
         _is_missing(row.get(field))
         for field in (
             "leverage",
-            "break_even",
             "ratio",
             "expiry",
             "delta",

@@ -499,3 +499,104 @@ def test_apply_cached_enrichment_restores_metadata_and_greeks_without_network():
     assert missing["delta"] is None and "metadata_source" not in missing
     assert all(row["quote_source"] == "rust_portfolio_summary" for row in (fresh, old, bad_put, missing))
     assert not cache.upserted_metadata and not cache.inserted_greeks
+
+
+def _warrant_row(isin="DE000VY42C94"):
+    return {
+        "isin": isin,
+        "display_name": "Call 17.06.27 Zscaler 180",
+        "instrument": "Call 17.06.27 Zscaler 180",
+        "asset_class": "DERIVATIVE",
+        "product_type": "optionsschein",
+        "quantity": 100,
+        "quote_price": 4.6,
+        "quote_currency": "EUR",
+        "quote_source": "rust_portfolio_summary",
+        "market_value": 460.0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_complete_first_source_spares_the_second_one_the_request():
+    exchange = FakeProductProvider(
+        {
+            "DE000VY42C94": ProductData(
+                metadata=InstrumentMetadata(
+                    isin="DE000VY42C94", leverage=3.84, strike_price=180.0, ratio=0.1, expiry="2027-06-17", option_type="call"
+                ),
+                greek=Greek(isin="DE000VY42C94", delta=0.65, omega=2.5, theta=-0.0087, iv=0.835),
+                source="boerse_frankfurt",
+            )
+        }
+    )
+    onvista = FakeProductProvider({})
+
+    enriched = await enrich_structured_product_rows([_warrant_row()], product_providers=[exchange, onvista])
+
+    # No source stated a break-even, and that alone is no reason to ask another.
+    assert enriched[0].get("break_even") is None
+    assert enriched[0]["greeks_source"] == "boerse_frankfurt"
+    assert exchange.calls == ["DE000VY42C94"]
+    assert onvista.calls == []
+
+
+@pytest.mark.asyncio
+async def test_a_stored_break_even_is_not_served_and_stored_names_are_kept():
+    cache = FakeCacheStore(
+        metadata={
+            "DE000VY42C94": InstrumentMetadata(
+                isin="DE000VY42C94",
+                issuer="Vontobel",
+                underlying="Zscaler",
+                leverage=3.2,
+                break_even=231.36,
+                strike_price=180.0,
+                ratio=0.1,
+                expiry="2027-06-17",
+            )
+        }
+    )
+    exchange = FakeProductProvider(
+        {
+            "DE000VY42C94": ProductData(
+                metadata=InstrumentMetadata(
+                    isin="DE000VY42C94",
+                    issuer="Bank Vontobel Europe AG",
+                    underlying="Zscaler Inc",
+                    leverage=3.84,
+                    strike_price=180.0,
+                    ratio=0.1,
+                    expiry="2027-06-17",
+                ),
+                greek=Greek(isin="DE000VY42C94", delta=0.65, omega=2.5, theta=-0.0087, iv=0.835),
+                source="boerse_frankfurt",
+            )
+        }
+    )
+
+    enriched = await enrich_structured_product_rows([_warrant_row()], product_providers=[exchange], cache_store=cache)
+
+    row = enriched[0]
+    # Yesterday's break-even would be wrong at today's quote.
+    assert row.get("break_even") is None
+    # The quote-dependent leverage is refreshed, the names are not rewritten.
+    assert row["leverage"] == 3.84
+    assert (row["issuer"], row["underlying"]) == ("Vontobel", "Zscaler")
+    assert cache.upserted_metadata[0].underlying == "Zscaler"
+
+
+@pytest.mark.asyncio
+async def test_a_product_without_stored_names_takes_them_from_the_source():
+    exchange = FakeProductProvider(
+        {
+            "DE000VY42C94": ProductData(
+                metadata=InstrumentMetadata(isin="DE000VY42C94", issuer="Vontobel", underlying="Zscaler", leverage=3.84, ratio=0.1, expiry="2027-06-17"),
+                greek=Greek(isin="DE000VY42C94", delta=0.65, omega=2.5, theta=-0.0087, iv=0.835),
+                source="boerse_frankfurt",
+            )
+        }
+    )
+
+    enriched = await enrich_structured_product_rows([_warrant_row()], product_providers=[exchange], cache_store=FakeCacheStore())
+
+    assert (enriched[0]["issuer"], enriched[0]["underlying"]) == ("Vontobel", "Zscaler")

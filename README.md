@@ -100,7 +100,9 @@ cargo build -p agent-foundry-backend
 
 Building the backend first prevents the initial compilation from exceeding the launcher's 120-second health-check wait.
 
-For browser-based GS Markets fallback queries, also install Playwright Chromium:
+The scheduled product refresh no longer starts a browser: terms and Greeks come
+from Börse Frankfurt and Onvista over plain HTTP. Playwright Chromium is only
+needed to run the unused gs.de provider by hand:
 
 ```bash
 cd backend/python

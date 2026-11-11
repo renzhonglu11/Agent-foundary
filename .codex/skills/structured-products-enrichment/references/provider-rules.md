@@ -7,11 +7,55 @@ This reference documents current structured-products enrichment behavior in the 
 - CLI: `backend/python/src/agent_foundry_python/structured_products/cli.py`
 - Live provider order:
   1. `BoerseFrankfurtQuoteProvider` for quote price/currency/timestamp.
-  2. `OnvistaProductProvider` for product metadata and Greeks.
-  3. `GsDeProductProvider` as product fallback after Onvista/cache cannot satisfy required fields.
-- Product providers are configured as `[onvista_provider, gs_de_provider]`.
+  2. `BoerseFrankfurtProductProvider` for terms and Greeks, one JSON request per product.
+  3. `OnvistaProductProvider` only for what Börse Frankfurt leaves open.
+- Product providers are configured as `[boerse_frankfurt_provider, onvista_provider]`.
+- `GsDeProductProvider` is no longer called (since 2026-11-11). gs.de answers the
+  production server with HTTP 403, and its calculator fallback was the only user
+  of the headless browser. The module and its tests remain in the repo.
+- A source that answers HTTP 403 or 429 is not asked again in the same run
+  (`providers/refusal.py`). The two Börse Frankfurt providers share one guard.
 - Only rows matching `live_enrichment_tier` are live-enriched; default is `tier1`.
 - `assign_enrichment_tiers(..., tier1_limit=20)` promotes top underlying groups into Tier 1.
+
+## Börse Frankfurt Product Provider
+
+Source file: `backend/python/src/agent_foundry_python/structured_products/providers/boerse_frankfurt.py`.
+
+### Fetch Rule
+
+- `GET https://api.boerse-frankfurt.de/v1/data/derivatives_master_data?isin=<ISIN>`.
+- The endpoint serves the exchange's own website; it is not a documented API.
+- HTTP 400 means an invalid ISIN and 404 a non-derivative; both return `None`.
+- A payload whose `isin` differs from the request returns `None`.
+
+### Fields Used
+
+Metadata:
+
+- `wkn` -> `wkn`
+- `issuer.originalValue` -> `issuer`
+- `underlyings[0].underlyingName` -> `underlying`
+- `eusipaCode` (2100 warrant, 2205 open-end knock-out, 2300 factor), else the
+  German `productType` text -> `product_type`
+- `participationTypeName` / `productType` text -> `option_type`
+- `figureOptionLeverage`; for factor certificates `participation / 100` -> `leverage`
+- `underlyings[0].strikeValue.value` -> `strike_price`
+- `underlyings[0].knockOutBarrierValue.value` -> `knockout_price`
+- `ratio` -> `ratio`
+- `finalValuationDate`, else `lastListingDate` -> `expiry`
+
+Greeks:
+
+- `figureOptionDelta`, `figureOptionOmega`, `figureOptionTheta` -> `delta`, `omega`, `theta`
+- `figureImplVolaMid / 100` -> `iv`
+- `figureQuoteTime` -> `Greek.timestamp`. It can be hours older than the fetch.
+
+Not provided: `break_even`, `reset_barrier`.
+
+Measured on 2026-11-11 over 62 live products: every warrant (55) had strike,
+ratio, expiry and all four Greeks; knock-outs and factor certificates have no
+Greeks by design.
 
 ## Onvista Provider
 
@@ -23,7 +67,7 @@ Source file: `backend/python/src/agent_foundry_python/structured_products/provid
 - Use the redirected URL as the product page URL.
 - Fetch server-rendered HTML from that URL.
 - Parse metadata/Greeks from HTML; no documented stable ISIN API is used.
-- On HTTP or parse failure, return `None` so gs.de can run.
+- On HTTP or parse failure, return `None` so enrichment can continue.
 
 ### Parsed HTML Sources
 
@@ -74,7 +118,9 @@ Greek fields:
 - `iv` is divided by 100 when source includes `%` or numeric value is greater than 1.
 - Expiry accepts `DD.MM.YYYY` and `YYYY-MM-DD`; open-ended text becomes `None`.
 
-## gs.de Provider
+## gs.de Provider (not in the pipeline)
+
+The rules below describe `gs_de.py`, which the CLI no longer configures.
 
 Source file: `backend/python/src/agent_foundry_python/structured_products/providers/gs_de.py`.
 
@@ -155,14 +201,13 @@ For each live-enriched row:
 4. Greek cache is fresh for 1 hour.
 5. Merge cached metadata and fresh cached Greek first with overwrite.
 6. Keep expired cached Greek as a stale fallback. Do not use it before live providers, but if providers cannot fill Greek fields, merge it into missing fields and mark `greeks_source = cache_stale`.
-7. If `_needs_product_fallback(row)` is true, try product providers in order: Onvista, then gs.de.
+7. If `_needs_product_fallback(row)` is true, try product providers in order: Börse Frankfurt, then Onvista.
 
 ### Fallback Trigger
 
 `_needs_product_fallback` currently checks missing:
 
 - `leverage`
-- `break_even`
 - `ratio`
 - `expiry`
 - `delta`
@@ -170,7 +215,10 @@ For each live-enriched row:
 - `theta`
 - `iv`
 
-Because `theta` often remains missing, providers may continue through the list even after useful metadata was fetched. Do not assume provider call means complete data exists.
+`break_even` is deliberately not a trigger: consumers derive it from strike,
+ratio and the current quote, and asking a second source for it alone would
+double the requests of every refresh. Knock-outs and factor certificates never
+have Greeks, so every provider is asked for them on each run.
 
 ### Merge Behavior
 
@@ -188,6 +236,9 @@ Overwrite rule:
 - Provider data uses `overwrite=not metadata_sources` and `overwrite=not greek_sources`.
 - If cache supplied a field, later provider data may not overwrite it unless merge logic changes.
 - Expired cached Greek is merged only after provider attempts and only into missing fields; it is not reinserted as a fresh cache record.
+- A cached `break_even` is never served: it moves with the quote.
+- `issuer` and `underlying` are sticky. Sources spell them differently, so once
+  the cache holds a name, providers do not rewrite it.
 
 Validity rules:
 
@@ -275,7 +326,7 @@ When an ISIN still shows missing data:
 4. Check cache: stale or incomplete cached metadata can prevent provider overwrite.
 5. Check `_needs_product_fallback`; missing `theta`/`iv` can keep fallback active.
 6. Check direction detection from instrument/display name and provider fields.
-7. For factor certificates, verify `leverage` comes from Onvista `faktor` or gs.de `productTerms.factor`.
+7. For factor certificates, verify `leverage` comes from Börse Frankfurt `participation` or Onvista `faktor`.
 8. For gs.de products, inspect raw GraphQL before adding HTML parsing, but remember calculator Greeks may exist even when GraphQL `realTimeData` Greeks are `null`.
 9. Check exposure fallback order before editing risk status.
 10. Add tests with the failing ISIN's real response shape.
@@ -304,8 +355,9 @@ Onvista parser tests should use representative HTML snippets. gs.de parser tests
 
 ## Test Targets
 
-- `backend/python/tests/test_gs_de_provider.py`
+- `backend/python/tests/test_boerse_frankfurt_provider.py`
 - `backend/python/tests/test_onvista_parser.py`
+- `backend/python/tests/test_onvista_resolver.py`
 - `backend/python/tests/test_enrichment.py`
 - `backend/python/tests/test_exposure.py`
 - `backend/python/tests/test_risk.py`
