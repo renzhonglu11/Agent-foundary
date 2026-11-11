@@ -137,6 +137,40 @@ release's `runtime.env`, and is permitted to write only under `shared/`.
 `runtime.env` provides release-specific commands for PDF extraction, macro
 analysis, structured-products enrichment, plus the shared cache paths.
 
+### Restart loops and the product scraper
+
+The structured-products scraper runs as a child of the backend and starts a
+headless browser, so its memory counts against the backend unit. From
+2026-10-23 to 2026-11-10 every scheduled refresh exhausted the host's memory;
+systemd's default `OOMPolicy=stop` then stopped the whole unit, the restarted
+process began the same refresh, and the backend restarted about 770 times per
+trading day without a single completed refresh. Three things now prevent that:
+
+- The unit sets `MemoryMax=3G` and `OOMPolicy=continue`: a scraper that outgrows
+  the limit is killed alone and the refresh is reported as failed, while the API
+  keeps running.
+- The scheduler stores the time of each refresh attempt before it starts
+  (`realtime_payloads`, key `structured_products_refresh_schedule`). A restarted
+  process waits out the rest of the interval instead of scraping at once, and
+  takes at most one post-close snapshot per day.
+- At startup the backend deletes the temporary files of refreshes that never
+  finished (`.portfolio-summary-*`, `.structured-products-enrichment-*`,
+  `.structured-products-risk-*` in the data directory).
+
+A healthy service restarts only on deployment. Check for a loop, and for a
+refresh that has stopped completing, with:
+
+```bash
+systemctl show agent-foundry-backend -p NRestarts -p ActiveEnterTimestamp -p MemoryPeak
+grep oom_kill /sys/fs/cgroup/system.slice/agent-foundry-backend.service/memory.events
+curl -fsS http://127.0.0.1:8080/api/portfolio-monitor/status | python3 -c 'import json,sys; s=json.load(sys.stdin)["structuredProducts"]; print({k: s.get(k) for k in ("lastFinishedAt", "lastError", "lastScheduledRefreshAt")})'
+```
+
+`lastFinishedAt` is empty until the first refresh after a start completes. To
+stop scheduled scraping without a deployment, set
+`STRUCTURED_PRODUCTS_AUTO_REFRESH_ENABLED=false` in `shared/.env` and restart
+the unit; cached product data stays available.
+
 ## Manual rollback
 
 Automatic rollback covers failed restart/health checks during a deployment.
