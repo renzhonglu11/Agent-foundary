@@ -10,7 +10,18 @@ import httpx
 from bs4 import BeautifulSoup
 
 from agent_foundry_python.structured_products.models import Greek, InstrumentMetadata
-from agent_foundry_python.structured_products.providers.onvista import PRODUCT_TYPES
+
+PRODUCT_TYPES = {
+    "optionsschein": "optionsschein",
+    "knock-out": "knock_out",
+    "knock out": "knock_out",
+    "open-end turbo": "open_end_turbo",
+    "open end turbo": "open_end_turbo",
+    "turbo": "open_end_turbo",
+    "faktor zertifikat": "factor_certificate",
+    "faktor-zertifikat": "factor_certificate",
+    "factor certificate": "factor_certificate",
+}
 
 
 LABEL_ALIASES = {

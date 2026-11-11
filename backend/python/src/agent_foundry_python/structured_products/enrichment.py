@@ -20,6 +20,15 @@ class ProductData:
 
 
 NAME_FIELDS = ("issuer", "underlying")
+# Shorter than any sensible refresh interval. With a lifetime equal to the
+# hourly interval, the Greeks stored by one run were still a few seconds
+# short of expiry when the next run began, so most products were refreshed
+# only every second hour.
+GREEK_CACHE_SECONDS = 30 * 60
+# Products outside the live tier get their contract terms from the cache and
+# have them renewed from the sources once a day: a warrant's terms are fixed,
+# an open-end knock-out's strike and barrier are adjusted daily.
+TERMS_REFRESH_SECONDS = 24 * 60 * 60
 
 
 class QuoteProvider(Protocol):
@@ -63,6 +72,54 @@ async def enrich_structured_product_rows(
     completed_counter = [0]
     semaphore = asyncio.Semaphore(max_concurrency)
 
+    async def refresh_terms(enriched: dict, isin: str) -> None:
+        """Contract terms for a product that is not live-enriched."""
+        name = enriched.get("instrument") or enriched.get("display_name") or ""
+        cached = cache_store.get_metadata(isin)
+        sources: list[str] = []
+        cached_names: dict[str, None] = {}
+        if cached is not None:
+            if _merge_metadata(enriched, _terms_only(cached, enriched, name), overwrite=True):
+                sources.append("cache")
+            cached_names = {field: None for field in NAME_FIELDS if getattr(cached, field)}
+            if _age_seconds(cached.last_updated) < TERMS_REFRESH_SECONDS:
+                if sources:
+                    enriched["metadata_source"] = "cache"
+                return
+
+        async with semaphore:
+            for provider in product_providers or []:
+                product = await provider.get_product_data(isin)
+                if product is None:
+                    continue
+                terms = _terms_only(product.metadata, enriched, name).model_copy(update=cached_names)
+                if _merge_metadata(enriched, terms, overwrite=True):
+                    sources = [source for source in sources if source != "cache"] + [product.source]
+                if not _terms_missing(enriched):
+                    break
+            if request_delay_seconds > 0:
+                await asyncio.sleep(request_delay_seconds)
+
+        # Stored even when no source knew the product, so it is asked about
+        # once a day and not on every run.
+        cache_store.upsert_metadata(
+            InstrumentMetadata(
+                isin=isin,
+                wkn=enriched.get("wkn"),
+                issuer=enriched.get("issuer"),
+                underlying=enriched.get("underlying"),
+                product_type=enriched.get("product_type"),
+                leverage=enriched.get("leverage"),
+                strike_price=enriched.get("strike_price"),
+                knockout_price=enriched.get("knockout_price"),
+                ratio=enriched.get("ratio"),
+                expiry=enriched.get("expiry"),
+                option_type=enriched.get("option_type"),
+            )
+        )
+        if sources:
+            enriched["metadata_source"] = "+".join(dict.fromkeys(sources))
+
     async def process_row(row: dict) -> dict:
         enriched = dict(row)
         isin = str(enriched.get("isin") or "")
@@ -76,6 +133,8 @@ async def enrich_structured_product_rows(
 
         if not should_live_enrich:
             enriched["live_enrichment_enabled"] = False
+            if cache_store is not None:
+                await refresh_terms(enriched, isin)
             return enriched
 
         async with semaphore:
@@ -114,7 +173,7 @@ async def enrich_structured_product_rows(
                     if g_time.tzinfo is None:
                         g_time = g_time.replace(tzinfo=timezone.utc)
                     age = datetime.now(timezone.utc) - g_time
-                    expired = age.total_seconds() > 3600  # 1 hour
+                    expired = age.total_seconds() > GREEK_CACHE_SECONDS
                     incomplete = any(
                         getattr(cached_greek, field) is None
                         for field in ("delta", "omega", "theta", "iv")
@@ -144,6 +203,12 @@ async def enrich_structured_product_rows(
                 greek_sources.append("cache")
 
             if _needs_product_fallback(enriched):
+                # The first source that answers may replace cached values; the
+                # ones after it only fill what is still missing. Judging this by
+                # whether the first answer changed anything would hand the right
+                # to overwrite to the second source whenever the first one
+                # merely confirmed the cache.
+                first_answer = True
                 for provider in product_providers or []:
                     product = await provider.get_product_data(isin)
                     if product is None:
@@ -161,11 +226,8 @@ async def enrich_structured_product_rows(
                     if metadata_to_merge is not None and cached_names:
                         metadata_to_merge = metadata_to_merge.model_copy(update=cached_names)
 
-                    metadata_changed = _merge_metadata(
-                        enriched,
-                        metadata_to_merge,
-                        overwrite=not metadata_sources or metadata_sources == ["cache"],
-                    )
+                    metadata_changed = _merge_metadata(enriched, metadata_to_merge, overwrite=first_answer)
+                    first_answer = False
                     if metadata_changed:
                         if "cache" in metadata_sources:
                             metadata_sources.remove("cache")
@@ -258,7 +320,7 @@ def apply_cached_enrichment(rows: list[dict], cache_store: StructuredProductStor
 
     Refreshes that skip live providers would otherwise publish rows without
     strike, ratio, expiry or greeks and overwrite the last enriched payload.
-    Greeks older than one hour are labelled ``cache_stale``.
+    Greeks past the cache lifetime are labelled ``cache_stale``.
     """
     from datetime import datetime, timezone
 
@@ -280,7 +342,7 @@ def apply_cached_enrichment(rows: list[dict], cache_store: StructuredProductStor
         greek = cache_store.get_latest_greek(isin)
         if greek is not None and not _is_greek_invalid(greek, name) and _merge_greek(enriched, greek):
             timestamp = greek.timestamp if greek.timestamp.tzinfo else greek.timestamp.replace(tzinfo=timezone.utc)
-            fresh = (datetime.now(timezone.utc) - timestamp).total_seconds() <= 3600
+            fresh = (datetime.now(timezone.utc) - timestamp).total_seconds() <= GREEK_CACHE_SECONDS
             enriched["greeks_source"] = "cache" if fresh else "cache_stale"
 
         _clean_invalid_greeks(enriched)
@@ -295,6 +357,38 @@ def _should_live_enrich(row: dict, live_enrichment_tier: str | None) -> bool:
 def _has_live_enrichment(row: dict) -> bool:
     return row.get("quote_source") == "boerse_frankfurt" or row.get("metadata_source") not in (None, "")
 
+
+
+def _age_seconds(moment) -> float:
+    from datetime import datetime, timezone
+
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - moment).total_seconds()
+
+
+def _terms_only(metadata: InstrumentMetadata, row: dict, name: str) -> InstrumentMetadata:
+    """The contract terms, without the figures that move with the quote.
+
+    A factor certificate's leverage is its fixed factor and counts as a term.
+    """
+    product_type = metadata.product_type or row.get("product_type")
+    keep_leverage = product_type == "factor_certificate" and not _is_metadata_invalid(metadata, name)
+    moving = {"break_even": None, "reset_barrier": None}
+    if not keep_leverage:
+        moving["leverage"] = None
+    return metadata.model_copy(update=moving)
+
+
+def _terms_missing(row: dict) -> bool:
+    product_type = row.get("product_type")
+    if product_type == "factor_certificate":
+        needed = ("leverage",)
+    elif product_type in ("open_end_turbo", "knock_out"):
+        needed = ("strike_price", "knockout_price", "ratio")
+    else:
+        needed = ("strike_price", "ratio", "expiry")
+    return any(_is_missing(row.get(field)) for field in needed)
 
 
 def _needs_product_fallback(row: dict) -> bool:
