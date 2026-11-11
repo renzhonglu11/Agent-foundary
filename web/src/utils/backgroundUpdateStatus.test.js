@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { backgroundUpdateState, lastMonitorCheck, monitorUpdateState, productUpdateState } from './backgroundUpdateStatus.js'
+import { backgroundUpdateState, lastMonitorCheck, monitorUpdateState, productUpdateState, providerUpdateState } from './backgroundUpdateStatus.js'
 import { fetchStructuredProductsRefreshStatus } from '../hooks/useStructuredProductsRefreshStatus.js'
 
 const now = Date.parse('2026-11-10T12:00:00Z')
@@ -95,4 +95,15 @@ test('HTTP errors from the product status endpoint are not converted to idle suc
   } finally {
     globalThis.fetch = originalFetch
   }
+})
+
+
+test('non-product cooldowns warn globally without mislabelling a product refresh', () => {
+  const refresh = { ...scheduled, running: true, providers: [{ source: 'api.stlouisfed.org', scope: 'macro', coolingDown: true }] }
+  const products = productUpdateState(refresh, null, true)
+  assert.equal(products.label, '正在抓取')
+  const providers = providerUpdateState(refresh, null)
+  assert.equal(providers.label, '部分来源暂停')
+  assert.equal(backgroundUpdateState(monitorUpdateState(healthy, null, now), products, providers).label, '需关注')
+  assert.equal(providerUpdateState(refresh, new Error('offline')).color, 'warning')
 })

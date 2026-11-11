@@ -1,8 +1,10 @@
-//! Access budgets shared with the Python worker in its enrichment database.
-use std::{path::Path, time::Duration};
+//! Shared outbound HTTP protection. Success caches stay in their domain services.
+//! All services and Python workers use the same SQLite budgets and JSON policy.
+use std::{collections::HashMap, path::Path, sync::Arc, time::Duration};
 
-use anyhow::{Context, bail};
+use anyhow::Context;
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use sqlx::{SqlitePool, sqlite::SqliteConnectOptions};
 
@@ -10,10 +12,46 @@ const SCHEMA: &str = include_str!(
     "../../python/src/agent_foundry_python/structured_products/migrations/0002_provider_access.sql"
 );
 
+const POLICY: &str =
+    include_str!("../../python/src/agent_foundry_python/structured_products/provider_policy.json");
+
+#[derive(Deserialize)]
+struct Backoff {
+    initial_seconds: f64,
+    max_seconds: f64,
+}
+#[derive(Deserialize)]
+struct SourcePolicy {
+    label: String,
+    scope: String,
+    interval_seconds: f64,
+}
+#[derive(Deserialize)]
+struct Policy {
+    interval_seconds: f64,
+    timeout_seconds: u64,
+    missing_seconds: f64,
+    refused: Backoff,
+    limited: Backoff,
+    unavailable: Backoff,
+    sources: HashMap<String, SourcePolicy>,
+}
+
 #[derive(Clone)]
 pub struct ProviderAccess {
     pool: SqlitePool,
-    interval: f64,
+    interval_override: Option<f64>,
+    policy: Arc<Policy>,
+    client: reqwest::Client,
+}
+
+/// Deliberately carries no URL, response body or credentials.
+#[derive(Debug, thiserror::Error)]
+#[error("{source_name}: {reason} (HTTP {status})")]
+pub struct ProviderRequestError {
+    pub source_name: String,
+    pub status: u16,
+    reason: &'static str,
 }
 
 #[derive(Debug)]
@@ -39,12 +77,99 @@ impl ProviderAccess {
                     .busy_timeout(Duration::from_secs(5)),
             )
             .await?;
-        Self::from_pool(pool, 2.0).await
+        Self::build(pool, None).await
     }
 
     pub async fn from_pool(pool: SqlitePool, interval: f64) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            interval.is_finite() && interval >= 0.0,
+            "invalid request interval"
+        );
+        Self::build(pool, Some(interval)).await
+    }
+
+    async fn build(pool: SqlitePool, interval_override: Option<f64>) -> anyhow::Result<Self> {
+        let policy: Policy = serde_json::from_str(POLICY)?;
         sqlx::raw_sql(SCHEMA).execute(&pool).await?;
-        Ok(Self { pool, interval })
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(policy.timeout_seconds))
+            .connect_timeout(Duration::from_secs(10))
+            .redirect(reqwest::redirect::Policy::none())
+            .retry(reqwest::retry::never())
+            .user_agent("Agent-Foundry/market-data")
+            .build()?;
+        Ok(Self {
+            pool,
+            interval_override,
+            policy: Arc::new(policy),
+            client,
+        })
+    }
+
+    /// All network I/O goes through this boundary. Resource is a stable, public
+    /// cache key (e.g. a series ID), never an authenticated URL or API key.
+    /// No immediate retry or redirect: both would bypass the shared budget.
+    pub async fn json<T: DeserializeOwned>(
+        &self,
+        source: &str,
+        resource: &str,
+        request: impl FnOnce(&reqwest::Client) -> reqwest::RequestBuilder,
+    ) -> anyhow::Result<T> {
+        self.acquire(source, resource).await?;
+        let response = match request(&self.client).send().await {
+            Ok(response) => response,
+            Err(_) => {
+                self.record(source, resource, 0, None).await?;
+                return Err(ProviderRequestError {
+                    source_name: source.into(),
+                    status: 0,
+                    reason: "connection or timeout failure",
+                }
+                .into());
+            }
+        };
+        let status = response.status();
+        let retry = response
+            .headers()
+            .get("Retry-After")
+            .and_then(|h| h.to_str().ok())
+            .map(str::to_owned);
+        if !status.is_success() {
+            // Redirects are an unavailable endpoint, not permission to visit a
+            // second host outside this budget (or forward credentials there).
+            self.record(
+                source,
+                resource,
+                if status.is_redirection() {
+                    0
+                } else {
+                    status.as_u16()
+                },
+                retry.as_deref(),
+            )
+            .await?;
+            return Err(ProviderRequestError {
+                source_name: source.into(),
+                status: status.as_u16(),
+                reason: "request rejected",
+            }
+            .into());
+        }
+        let payload = match response.json().await {
+            Ok(payload) => payload,
+            Err(_) => {
+                self.record(source, resource, 0, retry.as_deref()).await?;
+                return Err(ProviderRequestError {
+                    source_name: source.into(),
+                    status: 0,
+                    reason: "invalid or incomplete JSON response",
+                }
+                .into());
+            }
+        };
+        self.record(source, resource, status.as_u16(), retry.as_deref())
+            .await?;
+        Ok(payload)
     }
 
     pub async fn acquire(&self, source: &str, resource: &str) -> anyhow::Result<()> {
@@ -57,7 +182,7 @@ impl ProviderAccess {
             // Atomic reservation: Python and Rust cannot reserve the same slot.
             let reserved: Option<String> = sqlx::query_scalar(
                 "UPDATE provider_access SET next_request_at=? WHERE source=? AND next_request_at<=? AND blocked_until<=? AND NOT EXISTS (SELECT 1 FROM provider_missing_products WHERE source=? AND resource=? AND retry_at>?) RETURNING source",
-            ).bind(now + self.interval).bind(source).bind(now).bind(now)
+            ).bind(now + self.interval_override.unwrap_or_else(|| self.policy.sources.get(source).map_or(self.policy.interval_seconds, |p| p.interval_seconds))).bind(source).bind(now).bind(now)
                 .bind(source).bind(resource).bind(now).fetch_optional(&self.pool).await?;
             if reserved.is_some() {
                 return Ok(());
@@ -75,7 +200,12 @@ impl ProviderAccess {
                 "SELECT EXISTS(SELECT 1 FROM provider_missing_products WHERE source=? AND resource=? AND retry_at>?)",
             ).bind(source).bind(resource).bind(now).fetch_one(&self.pool).await?;
             if missing {
-                bail!("数据源暂未收录此产品，24 小时内复用缺失结果");
+                return Err(ProviderRequestError {
+                    source_name: source.into(),
+                    status: 404,
+                    reason: "cached missing resource",
+                }
+                .into());
             }
             tokio::time::sleep(Duration::from_secs_f64((next - now).max(0.01))).await;
         }
@@ -90,11 +220,12 @@ impl ProviderAccess {
     ) -> anyhow::Result<()> {
         let now = now_seconds();
         if matches!(status, 0 | 401 | 403 | 429 | 500..=599) {
-            let (base, cap) = match status {
-                401 | 403 => (86400.0, 604800.0),
-                429 => (3600.0, 86400.0),
-                _ => (300.0, 3600.0),
+            let backoff = match status {
+                401 | 403 => &self.policy.refused,
+                429 => &self.policy.limited,
+                _ => &self.policy.unavailable,
             };
+            let (base, cap) = (backoff.initial_seconds, backoff.max_seconds);
             sqlx::query("UPDATE provider_access SET blocked_until=MAX(blocked_until, ? + MAX(MIN(? * (1 << MIN(failures, 7)), ?), ?)), failures=MIN(failures+1, 8), last_status=?, updated_at=? WHERE source=?")
                 .bind(now).bind(base).bind(cap).bind(retry_after_seconds(retry_after, now))
                 .bind(i64::from(status)).bind(now).bind(source).execute(&self.pool).await?;
@@ -108,7 +239,7 @@ impl ProviderAccess {
                 .bind(i64::from(status)).bind(now).bind(source).bind(now).execute(&self.pool).await?;
             if status == 404 {
                 sqlx::query("INSERT OR REPLACE INTO provider_missing_products(source,resource,retry_at) VALUES (?,?,?)")
-                    .bind(source).bind(resource).bind(now + 86400.0).execute(&self.pool).await?;
+                    .bind(source).bind(resource).bind(now + self.policy.missing_seconds).execute(&self.pool).await?;
             }
         }
         sqlx::query("DELETE FROM provider_missing_products WHERE retry_at<=?")
@@ -126,6 +257,8 @@ impl ProviderAccess {
         Ok(json!(
             rows.into_iter()
                 .map(|(source, until, status, checked)| json!({
+                    "label": self.policy.sources.get(&source).map(|p| p.label.as_str()).unwrap_or(&source),
+                    "scope": self.policy.sources.get(&source).map(|p| p.scope.as_str()).unwrap_or("other"),
                     "source": source, "coolingDown": until > now, "retryAt": iso_time(until),
                     "lastStatus": status, "lastCheckedAt": iso_time(checked),
                 }))
@@ -158,6 +291,101 @@ fn retry_after_seconds(value: Option<&str>, now: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::provider_test_support::MockHttp;
+
+    #[tokio::test]
+    async fn http_refusals_stop_other_clients_without_exposing_credentials() -> anyhow::Result<()> {
+        for status in [401, 403, 429, 503] {
+            let server = MockHttp::start(status, "{\"error\":\"no\"}", Some("172800")).await?;
+            let access = access().await?;
+            let result: anyhow::Result<Value> = access
+                .json("vendor", "series:public", |c| {
+                    c.get(&server.url)
+                        .query(&[("api_key", "private-test-token")])
+                })
+                .await;
+            let error = result.err().context("must fail")?;
+            assert!(!format!("{error:#}").contains("private-test-token"));
+            let restarted = ProviderAccess::from_pool(access.pool.clone(), 0.0).await?;
+            let other: anyhow::Result<Value> = restarted
+                .json("vendor", "another-endpoint", |c| c.get(&server.url))
+                .await;
+            assert!(other.is_err());
+            assert_eq!(server.hits(), 1);
+            let state = restarted.status().await?;
+            let until =
+                DateTime::parse_from_rfc3339(state[0]["retryAt"].as_str().context("retry")?)?;
+            assert!(until.timestamp() as f64 >= now_seconds() + 172790.0);
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn invalid_json_timeouts_and_redirects_pause_network_access() -> anyhow::Result<()> {
+        for (status, body, path) in [(200, "not JSON", ""), (200, "{}", "/slow"), (302, "{}", "")] {
+            let server = MockHttp::start(status, body, None).await?;
+            let access = access().await?;
+            let url = format!("{}{path}", server.url);
+            let first: anyhow::Result<Value> = access
+                .json("vendor", "one", |c| {
+                    c.get(&url).timeout(Duration::from_millis(30))
+                })
+                .await;
+            assert!(first.is_err());
+            let second: anyhow::Result<Value> = access.json("vendor", "two", |c| c.get(&url)).await;
+            assert!(second.is_err());
+            assert_eq!(server.hits(), 1);
+            assert_eq!(access.status().await?[0]["coolingDown"], true);
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn missing_resource_and_other_sources_are_isolated() -> anyhow::Result<()> {
+        let server = MockHttp::start(404, "{}", None).await?;
+        let access = access().await?;
+        let first: anyhow::Result<Value> = access
+            .json("vendor", "missing", |c| c.get(&server.url))
+            .await;
+        assert!(first.is_err());
+        server
+            .status
+            .store(200, std::sync::atomic::Ordering::SeqCst);
+        let missing: anyhow::Result<Value> = access
+            .json("vendor", "missing", |c| c.get(&server.url))
+            .await;
+        assert_eq!(
+            missing
+                .err()
+                .context("cached missing")?
+                .downcast_ref::<ProviderRequestError>()
+                .map(|e| e.status),
+            Some(404)
+        );
+        let _: Value = access
+            .json("vendor", "exists", |c| c.get(&server.url))
+            .await?;
+        access.record("vendor", "exists", 403, None).await?;
+        let _: Value = access
+            .json("other-vendor", "exists", |c| c.get(&server.url))
+            .await?;
+        assert_eq!(server.hits(), 3);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cooldown_survives_reopening_the_database_file() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let db = temp.path().join("access.sqlite3");
+        let first = ProviderAccess::open(&db).await?;
+        first.acquire("api.onvista.de", "product").await?;
+        first.record("api.onvista.de", "product", 429, None).await?;
+        first.pool.close().await;
+        let second = ProviderAccess::open(&db).await?;
+        assert!(second.acquire("api.onvista.de", "search").await.is_err());
+        assert_eq!(second.status().await?[0]["scope"], "products");
+        Ok(())
+    }
 
     async fn access() -> anyhow::Result<ProviderAccess> {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
@@ -225,7 +453,7 @@ mod tests {
     async fn separate_clients_cannot_take_the_same_request_slot() -> anyhow::Result<()> {
         let first = access().await?;
         let first = ProviderAccess {
-            interval: 0.03,
+            interval_override: Some(0.03),
             ..first
         };
         let second = ProviderAccess::from_pool(first.pool.clone(), 0.03).await?;

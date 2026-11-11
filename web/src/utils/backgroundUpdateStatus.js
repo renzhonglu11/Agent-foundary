@@ -41,7 +41,7 @@ export function productUpdateState(data, error, marketOpen) {
   if (!data) return { label: '读取中', color: 'default' }
   if (data.lastError) return { label: '抓取失败', color: 'error', issue: data.lastError }
   if (data.providerStatusError) return { label: '渠道状态未知', color: 'warning', issue: data.providerStatusError }
-  if (Array.isArray(data.providers) && data.providers.some(provider => provider.coolingDown)) {
+  if (Array.isArray(data.providers) && data.providers.some(provider => provider.coolingDown && (provider.scope === 'products' || ['api.onvista.de', 'api.boerse-frankfurt.de'].includes(provider.source)))) {
     return { label: '渠道冷却中', color: 'warning', busy: Boolean(data.running), issue: '部分数据源暂时暂停请求；可用渠道继续更新，缺失部分保留缓存。' }
   }
   if (data.running) return { label: data.mode === 'fallback' ? '整理缓存中' : '正在抓取', color: 'info', busy: true }
@@ -54,14 +54,22 @@ export function productUpdateState(data, error, marketOpen) {
   return { label: '调度已启用', color: 'success' }
 }
 
-export function backgroundUpdateState(monitor, products) {
-  if ([monitor, products].some(row => row.color === 'error')) {
+export function providerUpdateState(data, error) {
+  if (error || data?.providerStatusError) return { label: '状态不可用', color: 'warning', issue: data?.providerStatusError || '无法读取数据源访问保护状态。' }
+  if (!Array.isArray(data?.providers) || !data.providers.length) return { label: '暂无请求记录', color: 'default' }
+  if (data.providers.some(provider => provider.coolingDown)) return { label: '部分来源暂停', color: 'warning', issue: '部分数据源处于冷却期；等待结束后由后续任务重试，已有缓存继续保留。' }
+  return { label: '未在冷却', color: 'success' }
+}
+
+export function backgroundUpdateState(monitor, products, providers) {
+  const states = [monitor, products, providers].filter(Boolean)
+  if (states.some(row => row.color === 'error')) {
     return { label: '更新异常', color: 'error' }
   }
-  if ([monitor, products].some(row => row.color === 'warning')) {
+  if (states.some(row => row.color === 'warning')) {
     return { label: '需关注', color: 'warning' }
   }
-  if ([monitor, products].some(row => row.busy)) return { label: '更新中', color: 'info', busy: true }
-  if ([monitor, products].some(row => row.color === 'default')) return { label: '准备中', color: 'default' }
+  if (states.some(row => row.busy)) return { label: '更新中', color: 'info', busy: true }
+  if (states.some(row => row.color === 'default')) return { label: '准备中', color: 'default' }
   return { label: '运行正常', color: 'success' }
 }

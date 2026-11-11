@@ -7,6 +7,7 @@ use tracing::{info, warn};
 use crate::{
     application::ports::fx_rate_cache::{FxRateCache, FxRateCacheEntry},
     config::FxRateSettings,
+    services::provider_access::{ProviderAccess, ProviderRequestError},
 };
 
 const FRANKFURTER_V1_USD_LATEST_URL: &str = "https://api.frankfurter.dev/v1/latest?base=USD";
@@ -15,7 +16,8 @@ const FRANKFURTER_V1_USD_LATEST_URL: &str = "https://api.frankfurter.dev/v1/late
 pub struct FxRateService {
     cache: Arc<dyn FxRateCache>,
     settings: FxRateSettings,
-    client: reqwest::Client,
+    access: ProviderAccess,
+    refresh_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 #[derive(Debug, Clone)]
@@ -34,11 +36,16 @@ struct FrankfurterLatestResponse {
 }
 
 impl FxRateService {
-    pub fn new(cache: Arc<dyn FxRateCache>, settings: FxRateSettings) -> Self {
+    pub fn new(
+        cache: Arc<dyn FxRateCache>,
+        settings: FxRateSettings,
+        access: ProviderAccess,
+    ) -> Self {
         Self {
             cache,
             settings,
-            client: reqwest::Client::new(),
+            access,
+            refresh_lock: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
 
@@ -51,6 +58,11 @@ impl FxRateService {
             return self.fallback_rate("fx_rates_disabled");
         }
 
+        // Coalesce a cache miss across quote batches, candidate lookups and UI.
+        let _refresh = self.refresh_lock.lock().await;
+        if let Some(rate) = self.cached_usd_eur_rate().await {
+            return rate;
+        }
         match self.fetch_frankfurter_usd_eur_rate().await {
             Ok(rate) => {
                 if let Err(error) = self.store_rate(&rate).await {
@@ -60,6 +72,18 @@ impl FxRateService {
             }
             Err(error) => {
                 warn!(%error, "failed to fetch USD/EUR FX rate from Frankfurter; using fallback");
+                if let Ok(Some(old)) = self.cache.get_rate("USD", "EUR").await {
+                    if old.rate.is_finite() && old.rate > 0.0 {
+                        return FxRate {
+                            base_currency: old.base_currency,
+                            quote_currency: old.quote_currency,
+                            rate: old.rate,
+                            source: "frankfurter_stale".into(),
+                            fetched_at: old.fetched_at,
+                            cached: true,
+                        };
+                    }
+                }
                 self.fallback_rate("fallback_env")
             }
         }
@@ -109,7 +133,10 @@ impl FxRateService {
         {
             Ok(rate) => Ok(rate),
             Err(primary_error)
-                if self.settings.endpoint.as_str() != FRANKFURTER_V1_USD_LATEST_URL =>
+                if self.settings.endpoint.as_str() != FRANKFURTER_V1_USD_LATEST_URL
+                    && primary_error
+                        .downcast_ref::<ProviderRequestError>()
+                        .is_some_and(|e| matches!(e.status, 404 | 410)) =>
             {
                 warn!(
                     %primary_error,
@@ -125,19 +152,31 @@ impl FxRateService {
     }
 
     async fn fetch_frankfurter_endpoint(&self, endpoint: &str) -> anyhow::Result<FxRate> {
-        let payload = self
-            .client
-            .get(endpoint)
-            .send()
-            .await?
-            .error_for_status()?
-            .json::<FrankfurterLatestResponse>()
+        let resource = if endpoint == FRANKFURTER_V1_USD_LATEST_URL {
+            "USD/EUR:v1"
+        } else {
+            "USD/EUR:configured"
+        };
+        let payload: FrankfurterLatestResponse = self
+            .access
+            .json("api.frankfurter.dev", resource, |client| {
+                client.get(endpoint)
+            })
             .await?;
         let Some(rate) = payload.rates.get("EUR").copied() else {
+            self.access
+                .record("api.frankfurter.dev", resource, 0, None)
+                .await?;
             anyhow::bail!("Frankfurter response did not include EUR rate");
         };
 
-        info!(rate, endpoint, "fetched USD/EUR FX rate from Frankfurter");
+        if !rate.is_finite() || rate <= 0.0 {
+            self.access
+                .record("api.frankfurter.dev", resource, 0, None)
+                .await?;
+            anyhow::bail!("Frankfurter returned an invalid exchange rate");
+        }
+        info!(rate, "fetched USD/EUR FX rate from Frankfurter");
 
         Ok(FxRate {
             base_currency: "USD".to_owned(),
@@ -170,5 +209,80 @@ impl FxRateService {
             fetched_at: Utc::now(),
             cached: false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        infrastructure::db::sqlite_fx_rate_cache::SqliteFxRateCache,
+        services::provider_test_support::{MockHttp, database},
+    };
+
+    async fn service(server: &MockHttp) -> anyhow::Result<(FxRateService, sqlx::SqlitePool)> {
+        let pool = database().await?;
+        let cache = Arc::new(SqliteFxRateCache::new(pool.clone()));
+        let access = ProviderAccess::from_pool(pool.clone(), 0.0).await?;
+        Ok((
+            FxRateService::new(
+                cache,
+                FxRateSettings {
+                    enabled: true,
+                    endpoint: server.url.clone(),
+                    cache_ttl_seconds: 3600,
+                    fallback_usd_eur_rate: 0.9,
+                },
+                access,
+            ),
+            pool,
+        ))
+    }
+
+    #[tokio::test]
+    async fn concurrent_cache_misses_make_one_http_request() -> anyhow::Result<()> {
+        let server = MockHttp::start(200, "{\"rates\":{\"EUR\":0.85}}", None).await?;
+        let (service, _) = service(&server).await?;
+        let mut calls = tokio::task::JoinSet::new();
+        for _ in 0..8 {
+            let service = service.clone();
+            calls.spawn(async move { service.usd_eur_rate().await });
+        }
+        while let Some(result) = calls.join_next().await {
+            assert_eq!(result?.rate, 0.85);
+        }
+        assert_eq!(server.hits(), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn refusal_keeps_old_rate_timestamp_and_survives_service_restart() -> anyhow::Result<()> {
+        let server = MockHttp::start(429, "{}", Some("7200")).await?;
+        let (service, pool) = service(&server).await?;
+        let old = Utc::now() - chrono::Duration::hours(2);
+        service
+            .cache
+            .store_rate(&FxRateCacheEntry {
+                base_currency: "USD".into(),
+                quote_currency: "EUR".into(),
+                rate: 0.87,
+                source: "frankfurter".into(),
+                fetched_at: old,
+            })
+            .await?;
+        for _ in 0..3 {
+            let result = service.usd_eur_rate().await;
+            assert_eq!(result.rate, 0.87);
+            assert_eq!(result.fetched_at, old);
+            assert_eq!(result.source, "frankfurter_stale");
+        }
+        let restarted = FxRateService::new(
+            service.cache.clone(),
+            service.settings.clone(),
+            ProviderAccess::from_pool(pool, 0.0).await?,
+        );
+        assert_eq!(restarted.usd_eur_rate().await.fetched_at, old);
+        assert_eq!(server.hits(), 1);
+        Ok(())
     }
 }

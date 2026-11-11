@@ -62,6 +62,7 @@ pub enum RefreshMode {
 #[derive(Clone)]
 pub struct StructuredProductsService {
     settings: StructuredProductsSettings,
+    calendar: market_calendar::MarketCalendar,
     market_data_repository: Arc<dyn MarketDataRepository>,
     output_json_path: PathBuf,
     risk_json_path: PathBuf,
@@ -106,6 +107,7 @@ impl StructuredProductsService {
     pub fn new(
         settings: StructuredProductsSettings,
         market_data_repository: Arc<dyn MarketDataRepository>,
+        calendar: market_calendar::MarketCalendar,
     ) -> anyhow::Result<Self> {
         let uv_cache_path = std::env::var("AGENT_FOUNDRY_UV_CACHE_DIR")
             .map(PathBuf::from)
@@ -119,6 +121,7 @@ impl StructuredProductsService {
             output_db_path: absolute_path(&settings.output_db_path)?,
             uv_cache_path: absolute_path(&uv_cache_path)?,
             settings,
+            calendar,
             market_data_repository,
             refresh_sender,
             queued_requests: Arc::new(AtomicUsize::new(0)),
@@ -263,7 +266,7 @@ impl StructuredProductsService {
                 let today = market_calendar::berlin_now().date_naive();
                 let cet_hour = market_calendar::current_cet_hour();
 
-                if !market_calendar::is_xetra_trading_day(today).await {
+                if !service.calendar.is_xetra_trading_day(today).await {
                     // Weekend or public holiday — check back periodically.
                     tokio::time::sleep(sleep_off_hours).await;
                     continue;
@@ -440,7 +443,9 @@ impl StructuredProductsService {
     }
 
     pub async fn market_open(&self) -> bool {
-        market_calendar::is_xetra_trading_day(market_calendar::berlin_now().date_naive()).await
+        self.calendar
+            .is_xetra_trading_day(market_calendar::berlin_now().date_naive())
+            .await
             && market_calendar::current_cet_hour() >= self.settings.market_open_hour_cet
             && market_calendar::current_cet_hour() < self.settings.market_close_hour_cet
     }

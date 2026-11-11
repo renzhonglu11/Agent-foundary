@@ -55,8 +55,6 @@ pub struct FredSettings {
     pub cache_ttl_seconds: u64,
     pub fallback_cache_ttl_seconds: u64,
     pub request_delay_ms: u64,
-    pub max_retries: u32,
-    pub retry_base_delay_ms: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -206,10 +204,6 @@ impl FredSettings {
             request_delay_ms: env_or("FRED_REQUEST_DELAY_MS", "350")
                 .parse()
                 .unwrap_or(350),
-            max_retries: env_or("FRED_MAX_RETRIES", "2").parse().unwrap_or(2),
-            retry_base_delay_ms: env_or("FRED_RETRY_BASE_DELAY_MS", "1000")
-                .parse()
-                .unwrap_or(1000),
         }
     }
 }

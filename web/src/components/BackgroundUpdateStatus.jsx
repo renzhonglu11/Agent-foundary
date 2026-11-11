@@ -6,7 +6,7 @@ import SyncRoundedIcon from '@mui/icons-material/SyncRounded'
 import { usePortfolioMonitorStatus } from '../hooks/usePortfolioMonitor.js'
 import { useStructuredProductsRefreshStatus } from '../hooks/useStructuredProductsRefreshStatus.js'
 import { dateTime, number } from '../utils/formatters.js'
-import { backgroundUpdateState, lastMonitorCheck, monitorUpdateState, productUpdateState, validTimestamp } from '../utils/backgroundUpdateStatus.js'
+import { backgroundUpdateState, lastMonitorCheck, monitorUpdateState, productUpdateState, providerUpdateState, validTimestamp } from '../utils/backgroundUpdateStatus.js'
 import PortfolioDataMonitor from './PortfolioDataMonitor.jsx'
 
 const time = value => validTimestamp(value) ? dateTime(value) : '暂无记录'
@@ -38,7 +38,8 @@ export default function BackgroundUpdateStatus() {
   const refresh = products.data
   const monitorState = monitorUpdateState(monitor.data, monitor.error, now)
   const productState = productUpdateState(refresh, products.error, snapshot?.productMarketOpen)
-  const state = backgroundUpdateState(monitorState, productState)
+  const providerState = providerUpdateState(refresh, products.error)
+  const state = backgroundUpdateState(monitorState, productState, providerState)
   const progress = Number.isFinite(refresh?.progressPercent) ? Math.max(0, Math.min(100, refresh.progressPercent)) : null
   const quoteInterval = monitor.data?.intervalSeconds
   const productInterval = refresh?.intervalMinutes
@@ -105,15 +106,18 @@ export default function BackgroundUpdateStatus() {
             {Number.isFinite(refresh?.marketOpenHourBerlin) && Number.isFinite(refresh?.marketCloseHourBerlin) && ` 交易日 ${refresh.marketOpenHourBerlin}:00–${refresh.marketCloseHourBerlin}:00（柏林时间）。`}
           </Typography>
           {!refresh?.lastFinishedAt && <Typography variant="caption" color="text.secondary">服务启动后尚无完成记录，页面可能仍使用已有缓存。</Typography>}
+        </JobStatus>
+        <Divider />
+        <JobStatus title="数据源访问保护" state={providerState}>
           {Array.isArray(refresh?.providers) && refresh.providers.map(provider => <Box key={provider.source} sx={{ bgcolor: 'action.hover', borderRadius: 1, p: 1 }}>
             <Typography variant="caption" component="div" fontWeight={700}>
-              {provider.source === 'api.onvista.de' ? 'Onvista' : provider.source === 'api.boerse-frankfurt.de' ? 'Börse Frankfurt' : provider.source}
+              {provider.label || (provider.source === 'api.onvista.de' ? 'Onvista' : provider.source === 'api.boerse-frankfurt.de' ? 'Börse Frankfurt' : provider.source)}
               {' · '}{provider.coolingDown ? '暂停请求' : provider.lastStatus >= 200 && provider.lastStatus < 300 ? '最近请求成功' : '等待下次尝试'}
             </Typography>
             {provider.coolingDown && <Typography variant="caption" color="text.secondary" component="div">
-              {provider.lastStatus ? `HTTP ${provider.lastStatus}` : '连接失败'} · 最早重试：{time(provider.retryAt)}
+              {provider.lastStatus ? `HTTP ${provider.lastStatus}` : '连接或响应异常'} · 最早重试：{time(provider.retryAt)}
             </Typography>}
-            <Typography variant="caption" color="text.secondary" component="div">最近响应：{time(provider.lastCheckedAt)}</Typography>
+            <Typography variant="caption" color="text.secondary" component="div">最近请求：{time(provider.lastCheckedAt)}</Typography>
           </Box>)}
         </JobStatus>
         <Divider />

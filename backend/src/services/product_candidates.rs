@@ -8,13 +8,12 @@ use serde_json::{Value, json};
 use sqlx::SqlitePool;
 use tokio::sync::Mutex;
 
-use super::provider_access::{ProviderAccess, ProviderCoolingDown};
+use super::provider_access::{ProviderAccess, ProviderCoolingDown, ProviderRequestError};
 use crate::{application::services::fx_rate_service::FxRateService, services::monitor_symbols};
 
 // The endpoints serve onvista.de itself; they are not a documented API.
 const ENDPOINT: &str = "https://api.onvista.de/api/v1";
 const SOURCE: &str = "onvista";
-const USER_AGENT: &str = "Mozilla/5.0 (compatible; Agent-Foundry/structured-products)";
 const PAGE_SIZE: usize = 30;
 const WATCHLIST_LIMIT: i64 = 100;
 type ProviderCache = HashMap<String, (DateTime<Utc>, Value)>;
@@ -23,7 +22,6 @@ type ProviderCache = HashMap<String, (DateTime<Utc>, Value)>;
 pub struct ProductCandidates {
     pool: SqlitePool,
     fx: FxRateService,
-    client: reqwest::Client,
     endpoint: String,
     cache: Arc<Mutex<ProviderCache>>,
     // Home-market tickers by underlying ISIN; they do not change while the process runs.
@@ -162,10 +160,6 @@ impl ProductCandidates {
         Ok(Self {
             pool,
             fx,
-            client: reqwest::Client::builder()
-                .timeout(Duration::from_secs(15))
-                .user_agent(USER_AGENT)
-                .build()?,
             endpoint: ENDPOINT.into(),
             cache: Arc::new(Mutex::new(HashMap::new())),
             symbols: Arc::new(Mutex::new(HashMap::new())),
@@ -189,32 +183,12 @@ impl ProductCandidates {
                 return Ok((*at, value.clone()));
             }
         }
-        self.access.acquire("api.onvista.de", &key).await?;
-        let response = self
-            .client
-            .get(url)
-            .header("Accept", "application/json")
-            .send()
-            .await;
-        let response = match response {
-            Ok(response) => response,
-            Err(error) => {
-                self.access.record("api.onvista.de", &key, 0, None).await?;
-                return Err(error.into());
-            }
-        };
-        self.access
-            .record(
-                "api.onvista.de",
-                &key,
-                response.status().as_u16(),
-                response
-                    .headers()
-                    .get("Retry-After")
-                    .and_then(|h| h.to_str().ok()),
-            )
+        let data: Value = self
+            .access
+            .json("api.onvista.de", &key, |client| {
+                client.get(url).header("Accept", "application/json")
+            })
             .await?;
-        let data: Value = response.error_for_status()?.json().await?;
         if !data.is_object() {
             bail!("onvista response is not a JSON object");
         }
@@ -523,12 +497,9 @@ fn refused(error: &anyhow::Error) -> bool {
     if error.downcast_ref::<ProviderCoolingDown>().is_some() {
         return true;
     }
-    error.chain().any(|cause| {
-        cause
-            .downcast_ref::<reqwest::Error>()
-            .and_then(reqwest::Error::status)
-            .is_some_and(|status| matches!(status.as_u16(), 401 | 403 | 429))
-    })
+    error
+        .downcast_ref::<ProviderRequestError>()
+        .is_some_and(|e| matches!(e.status, 0 | 401 | 403 | 429 | 500..=599))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -955,6 +926,7 @@ mod tests {
             .connect("sqlite::memory:")
             .await?;
         run_migrations(&pool).await?;
+        let access = ProviderAccess::from_pool(pool.clone(), 0.0).await?;
         let fx = FxRateService::new(
             Arc::new(SqliteFxRateCache::new(pool.clone())),
             FxRateSettings {
@@ -963,8 +935,8 @@ mod tests {
                 cache_ttl_seconds: 3600,
                 fallback_usd_eur_rate: 0.9,
             },
+            access.clone(),
         );
-        let access = ProviderAccess::from_pool(pool.clone(), 0.0).await?;
         ProductCandidates::new(pool, fx, access)
     }
 

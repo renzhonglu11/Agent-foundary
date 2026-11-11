@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import json
 import math
 import sqlite3
 import time
@@ -17,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 REFUSAL_STATUS_CODES = frozenset({401, 403, 429})
 SCHEMA = Path(__file__).parents[1] / "migrations/0002_provider_access.sql"
+POLICY = json.loads((Path(__file__).parents[1] / "provider_policy.json").read_text())
 
 
 def retry_after_seconds(value: str | None, now: float) -> float:
@@ -35,10 +37,10 @@ def retry_after_seconds(value: str | None, now: float) -> float:
 
 
 class SourceGuard:
-    def __init__(self, source: str, *, db_path: Path | None = None, interval: float = 2.0) -> None:
+    def __init__(self, source: str, *, db_path: Path | None = None, interval: float | None = None) -> None:
         self.source = source
         self.refused = False
-        self.interval = max(0, interval)
+        self.interval = max(0, interval if interval is not None else POLICY["sources"].get(source, {}).get("interval_seconds", POLICY["interval_seconds"]))
         self._lock = asyncio.Lock()
         # Standalone callers use memory; the CLI always supplies its persistent DB.
         self._db = sqlite3.connect(str(db_path) if db_path else ":memory:", timeout=5)
@@ -81,7 +83,8 @@ class SourceGuard:
             ).fetchone()
             if status in REFUSAL_STATUS_CODES or status == 0 or status >= 500:
                 failures = min(failures + 1, 8)
-                base, cap = (86400, 604800) if status in (401, 403) else (3600, 86400) if status == 429 else (300, 3600)
+                policy = POLICY["refused" if status in (401, 403) else "limited" if status == 429 else "unavailable"]
+                base, cap = policy["initial_seconds"], policy["max_seconds"]
                 delay = max(min(base * 2 ** (failures - 1), cap), retry_after_seconds(retry_after, now))
                 self._db.execute(
                     "UPDATE provider_access SET failures=?, blocked_until=?, last_status=?, updated_at=? WHERE source=?",
@@ -99,7 +102,7 @@ class SourceGuard:
                 if status == 404:
                     self._db.execute(
                         "INSERT OR REPLACE INTO provider_missing_products VALUES (?, ?, ?)",
-                        (self.source, resource, now + 86400),
+                        (self.source, resource, now + POLICY["missing_seconds"]),
                     )
             self._db.execute("DELETE FROM provider_missing_products WHERE retry_at<=?", (now,))
 

@@ -3,8 +3,10 @@
 //! Hybrid approach: queries the free [FinCal API](https://fincalapi.com) first,
 //! falls back to a hardcoded holiday table (2025–2030) when the API is unreachable.
 
+use super::provider_access::ProviderAccess;
 use std::collections::HashSet;
-use std::sync::Mutex;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 use chrono::{Datelike, NaiveDate, TimeDelta, Timelike, Utc, Weekday};
 use tracing::warn;
@@ -12,61 +14,68 @@ use tracing::warn;
 // ---------------------------------------------------------------------------
 // Cache – avoid hitting the API more than once per calendar day
 // ---------------------------------------------------------------------------
-static TRADING_DAY_CACHE: Mutex<Option<(NaiveDate, bool)>> = Mutex::new(None);
+#[derive(Clone)]
+pub struct MarketCalendar {
+    access: ProviderAccess,
+    cache: Arc<Mutex<Option<(NaiveDate, bool)>>>,
+    endpoint: String,
+}
 
-/// Returns `true` when `date` is a regular XETRA trading day (not a weekend,
-/// not a public holiday).  Queries FinCal first; hardcoded table on failure.
-pub async fn is_xetra_trading_day(date: NaiveDate) -> bool {
-    if let Ok(cache) = TRADING_DAY_CACHE.lock() {
+impl MarketCalendar {
+    pub fn new(access: ProviderAccess) -> Self {
+        Self {
+            access,
+            cache: Arc::new(Mutex::new(None)),
+            endpoint: "https://fincalapi.com/v1/day_status".into(),
+        }
+    }
+
+    pub async fn is_xetra_trading_day(&self, date: NaiveDate) -> bool {
+        // Hold across the request so simultaneous scheduler/status callers coalesce.
+        let mut cache = self.cache.lock().await;
         if let Some((cached, result)) = *cache {
             if cached == date {
                 return result;
             }
         }
-    }
-
-    let result = if let Some(api) = fincal_check(date, "XETRA").await {
-        api
-    } else {
-        hardcoded_is_xetra_trading_day(date)
-    };
-
-    if let Ok(mut cache) = TRADING_DAY_CACHE.lock() {
+        let resource = format!("XETRA:{date}");
+        let key = std::env::var("FINCAL_API_KEY")
+            .ok()
+            .filter(|k| !k.is_empty());
+        let response: anyhow::Result<serde_json::Value> = self
+            .access
+            .json("fincalapi.com", &resource, |client| {
+                let request = client
+                    .get(&self.endpoint)
+                    .query(&[("calendar", "XETRA"), ("date", &date.to_string())]);
+                match key {
+                    Some(key) => request.bearer_auth(key),
+                    None => request,
+                }
+            })
+            .await;
+        let result = match response {
+            Ok(json) => match (json["is_holiday"].as_bool(), json["is_weekend"].as_bool()) {
+                (Some(holiday), Some(weekend)) => !holiday && !weekend,
+                _ => {
+                    if let Err(error) = self
+                        .access
+                        .record("fincalapi.com", &resource, 0, None)
+                        .await
+                    {
+                        warn!(%error, "cannot record calendar failure");
+                    }
+                    hardcoded_is_xetra_trading_day(date)
+                }
+            },
+            Err(error) => {
+                warn!(%error, "FinCal unavailable; using local calendar");
+                hardcoded_is_xetra_trading_day(date)
+            }
+        };
         *cache = Some((date, result));
+        result
     }
-    result
-}
-
-// ---------------------------------------------------------------------------
-// FinCal API
-// ---------------------------------------------------------------------------
-
-fn fincal_api_key() -> Option<String> {
-    std::env::var("FINCAL_API_KEY")
-        .ok()
-        .filter(|k| !k.is_empty())
-}
-
-async fn fincal_check(date: NaiveDate, calendar: &str) -> Option<bool> {
-    let url = format!(
-        "https://fincalapi.com/v1/day_status?calendar={calendar}&date={}",
-        date.format("%Y-%m-%d")
-    );
-    let mut req = reqwest::Client::new()
-        .get(&url)
-        .timeout(std::time::Duration::from_secs(10));
-    if let Some(key) = fincal_api_key() {
-        req = req.bearer_auth(key);
-    }
-    let resp = req.send().await.ok()?;
-    if !resp.status().is_success() {
-        warn!(status = %resp.status(), calendar, "FinCal API returned non-200");
-        return None;
-    }
-    let json: serde_json::Value = resp.json().await.ok()?;
-    let is_holiday = json.get("is_holiday")?.as_bool()?;
-    let is_weekend = json.get("is_weekend")?.as_bool()?;
-    Some(!is_holiday && !is_weekend)
 }
 
 // ---------------------------------------------------------------------------
@@ -173,6 +182,26 @@ pub fn berlin_now() -> chrono::DateTime<Utc> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn refused_calendar_keeps_local_fallback_across_client_restart() -> anyhow::Result<()> {
+        use crate::services::provider_test_support::{MockHttp, database};
+        let server = MockHttp::start(403, "{}", None).await?;
+        let access = ProviderAccess::from_pool(database().await?, 0.0).await?;
+        let mut first = MarketCalendar::new(access.clone());
+        first.endpoint = server.url.clone();
+        let day = ymd(2026, 11, 11);
+        let (one, two) = tokio::join!(
+            first.is_xetra_trading_day(day),
+            first.is_xetra_trading_day(day)
+        );
+        assert_eq!((one, two), (true, true));
+        let mut restarted = MarketCalendar::new(access);
+        restarted.endpoint = server.url.clone();
+        assert!(restarted.is_xetra_trading_day(day).await);
+        assert_eq!(server.hits(), 1);
+        Ok(())
+    }
 
     #[test]
     fn test_weekend_detection() {
