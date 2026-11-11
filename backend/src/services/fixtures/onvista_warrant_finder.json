@@ -1,0 +1,164 @@
+{
+ "total": 4540,
+ "list": [
+  {
+   "codeExerciseRight": "C",
+   "strikeAbs": 300.0,
+   "dateMaturity": "2027-06-16T12:00:00.000+00:00",
+   "quanto": false,
+   "openEnded": false,
+   "isoCurrencyUnderlying": "USD",
+   "coverRatio": 0.1,
+   "impliedVolatilityAsk": 57.2837753296,
+   "leverage": 2.73789537637,
+   "dateCalculation": "2026-11-10T21:19:14.000+00:00",
+   "instrument": {
+    "entityType": "DERIVATIVE",
+    "entitySubType": "WARRANT",
+    "entityValue": "293020236",
+    "name": "UNICREDIT BANK/CALL/TESLA INC./300/0.1/16.06.27",
+    "isin": "DE000UG3NHT9",
+    "wkn": "UG3NHT",
+    "symbol": "",
+    "urls": {
+     "WEBSITE": "https://www.onvista.de/derivate/Optionsscheine/293020236-UG3NHT-DE000UG3NHT9"
+    }
+   },
+   "issuer": {
+    "id": 53143,
+    "name": "UniCredit"
+   },
+   "derivativesSubCategory": {
+    "entitySubType": "WARRANT"
+   },
+   "instrumentUnderlying": {
+    "entityType": "STOCK",
+    "entityValue": "33837581",
+    "name": "Tesla",
+    "isin": "US88160R1014",
+    "wkn": "A1CX3T",
+    "symbol": "TL0",
+    "urls": {
+     "NEWS": "https://www.onvista.de/news/aktien/Tesla-News-US88160R1014",
+     "WEBSITE": "https://www.onvista.de/aktien/Tesla-Aktie-US88160R1014"
+    }
+   },
+   "quote": {
+    "isoCurrency": "EUR",
+    "bid": 9.6199,
+    "ask": 9.63,
+    "datetimeBid": "2026-11-10T20:59:52.166+00:00",
+    "datetimeAsk": "2026-11-10T20:59:52.166+00:00",
+    "volumeBid": 50000.0,
+    "volumeAsk": 50000.0,
+    "codeQualityPriceBidAsk": "RLT"
+   }
+  },
+  {
+   "codeExerciseRight": "C",
+   "strikeAbs": 305.0,
+   "dateMaturity": "2027-06-16T12:00:00.000+00:00",
+   "quanto": false,
+   "openEnded": false,
+   "isoCurrencyUnderlying": "USD",
+   "coverRatio": 0.1,
+   "impliedVolatilityAsk": 56.7203216553,
+   "leverage": 2.7939471866,
+   "dateCalculation": "2026-11-10T21:23:45.000+00:00",
+   "instrument": {
+    "entityType": "DERIVATIVE",
+    "entitySubType": "WARRANT",
+    "entityValue": "302854670",
+    "name": "UNICREDIT BANK/CALL/TESLA INC./305/0.1/16.06.27",
+    "isin": "DE000UG83QC8",
+    "wkn": "UG83QC",
+    "symbol": "",
+    "urls": {
+     "WEBSITE": "https://www.onvista.de/derivate/Optionsscheine/302854670-UG83QC-DE000UG83QC8"
+    }
+   },
+   "issuer": {
+    "id": 53143,
+    "name": "UniCredit"
+   },
+   "derivativesSubCategory": {
+    "entitySubType": "WARRANT"
+   },
+   "instrumentUnderlying": {
+    "entityType": "STOCK",
+    "entityValue": "33837581",
+    "name": "Tesla",
+    "isin": "US88160R1014",
+    "wkn": "A1CX3T",
+    "symbol": "TL0",
+    "urls": {
+     "NEWS": "https://www.onvista.de/news/aktien/Tesla-News-US88160R1014",
+     "WEBSITE": "https://www.onvista.de/aktien/Tesla-Aktie-US88160R1014"
+    }
+   },
+   "quote": {
+    "isoCurrency": "EUR",
+    "bid": 9.3,
+    "ask": 9.31,
+    "datetimeBid": "2026-11-10T20:59:52.172+00:00",
+    "datetimeAsk": "2026-11-10T20:59:52.172+00:00",
+    "volumeBid": 50000.0,
+    "volumeAsk": 50000.0,
+    "codeQualityPriceBidAsk": "RLT"
+   }
+  },
+  {
+   "codeExerciseRight": "C",
+   "strikeAbs": 310.0,
+   "dateMaturity": "2027-06-16T12:00:00.000+00:00",
+   "quanto": false,
+   "openEnded": false,
+   "isoCurrencyUnderlying": "USD",
+   "coverRatio": 0.1,
+   "impliedVolatilityAsk": 56.1340560913,
+   "leverage": 2.85225321905,
+   "dateCalculation": "2026-11-10T21:19:15.000+00:00",
+   "instrument": {
+    "entityType": "DERIVATIVE",
+    "entitySubType": "WARRANT",
+    "entityValue": "302409728",
+    "name": "UNICREDIT BANK/CALL/TESLA INC./310/0.1/16.06.27",
+    "isin": "DE000UG7WWC6",
+    "wkn": "UG7WWC",
+    "symbol": "",
+    "urls": {
+     "WEBSITE": "https://www.onvista.de/derivate/Optionsscheine/302409728-UG7WWC-DE000UG7WWC6"
+    }
+   },
+   "issuer": {
+    "id": 53143,
+    "name": "UniCredit"
+   },
+   "derivativesSubCategory": {
+    "entitySubType": "WARRANT"
+   },
+   "instrumentUnderlying": {
+    "entityType": "STOCK",
+    "entityValue": "33837581",
+    "name": "Tesla",
+    "isin": "US88160R1014",
+    "wkn": "A1CX3T",
+    "symbol": "TL0",
+    "urls": {
+     "NEWS": "https://www.onvista.de/news/aktien/Tesla-News-US88160R1014",
+     "WEBSITE": "https://www.onvista.de/aktien/Tesla-Aktie-US88160R1014"
+    }
+   },
+   "quote": {
+    "isoCurrency": "EUR",
+    "bid": 8.98,
+    "ask": 8.99,
+    "datetimeBid": "2026-11-10T20:59:49.602+00:00",
+    "datetimeAsk": "2026-11-10T20:59:49.602+00:00",
+    "volumeBid": 50000.0,
+    "volumeAsk": 50000.0,
+    "codeQualityPriceBidAsk": "RLT"
+   }
+  }
+ ]
+}
