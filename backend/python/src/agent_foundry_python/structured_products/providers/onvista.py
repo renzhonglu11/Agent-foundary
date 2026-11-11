@@ -11,6 +11,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 from agent_foundry_python.structured_products.models import Greek, InstrumentMetadata
+from agent_foundry_python.structured_products.providers.refusal import SourceGuard
 
 LABEL_ALIASES = {
     "emittent": "issuer",
@@ -84,7 +85,14 @@ class OnvistaUrlResolver:
 
     SEARCH_URL = "https://www.onvista.de/suche"
 
-    def __init__(self, *, timeout: float = 20.0, transport: httpx.AsyncBaseTransport | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        timeout: float = 20.0,
+        transport: httpx.AsyncBaseTransport | None = None,
+        guard: SourceGuard | None = None,
+    ) -> None:
+        self.guard = guard or SourceGuard("onvista.de")
         self._client = httpx.AsyncClient(
             timeout=timeout,
             transport=transport,
@@ -96,8 +104,11 @@ class OnvistaUrlResolver:
         )
 
     async def resolve(self, isin: str) -> str | None:
+        if self.guard.refused:
+            return None
         try:
             response = await self._client.get(self.SEARCH_URL, params={"searchValue": isin})
+            self.guard.check(response)
             response.raise_for_status()
             return str(response.url)
         except httpx.HTTPError:
@@ -117,7 +128,8 @@ class OnvistaProductData:
 
 class OnvistaProductProvider:
     def __init__(self, *, timeout: float = 20.0, transport: httpx.AsyncBaseTransport | None = None) -> None:
-        self._resolver = OnvistaUrlResolver(timeout=timeout, transport=transport)
+        self.guard = SourceGuard("onvista.de")
+        self._resolver = OnvistaUrlResolver(timeout=timeout, transport=transport, guard=self.guard)
         self._metadata_provider = OnvistaMetadataProvider(
             timeout=timeout,
             transport=transport,
@@ -127,10 +139,11 @@ class OnvistaProductProvider:
     async def get_product_data(self, isin: str) -> OnvistaProductData | None:
         result = self._metadata_provider._url_resolver(isin) if self._metadata_provider._url_resolver is not None else None
         url = await result if isawaitable(result) else result
-        if not url:
+        if not url or self.guard.refused:
             return None
         try:
             response = await self._metadata_provider._client.get(url)
+            self.guard.check(response)
             response.raise_for_status()
             return parse_onvista_product_data(response.text)
         except (httpx.HTTPError, ValueError):

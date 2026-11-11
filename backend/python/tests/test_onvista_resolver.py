@@ -65,3 +65,21 @@ def test_parse_onvista_modern_product_page_extracts_data_value_cards_and_next_da
     assert product.greek.delta == 0.582
     assert product.greek.omega == 4.21
     assert product.greek.iv == 0.6308
+
+
+@pytest.mark.asyncio
+async def test_onvista_is_not_asked_again_after_it_limits_the_client():
+    from agent_foundry_python.structured_products.providers.onvista import OnvistaProductProvider
+
+    requests = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(str(request.url))
+        return httpx.Response(429, text="Too Many Requests", request=request)
+
+    provider = OnvistaProductProvider(transport=httpx.MockTransport(handler))
+
+    assert await provider.get_product_data("DE000HM0T297") is None
+    assert await provider.get_product_data("DE000VY42C94") is None
+    assert len(requests) == 1
+    await provider.aclose()

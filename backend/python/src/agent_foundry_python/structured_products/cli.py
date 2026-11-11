@@ -13,8 +13,10 @@ from agent_foundry_python.structured_products.agent_foundry import (
     write_structured_product_rows_outputs,
 )
 from agent_foundry_python.structured_products.enrichment import apply_cached_enrichment, enrich_structured_product_rows
-from agent_foundry_python.structured_products.providers.boerse_frankfurt import BoerseFrankfurtQuoteProvider
-from agent_foundry_python.structured_products.providers.gs_de import GsDeProductProvider
+from agent_foundry_python.structured_products.providers.boerse_frankfurt import (
+    BoerseFrankfurtProductProvider,
+    BoerseFrankfurtQuoteProvider,
+)
 from agent_foundry_python.structured_products.providers.onvista import OnvistaProductProvider
 from agent_foundry_python.structured_products.risk import evaluate_portfolio_risk
 
@@ -42,9 +44,14 @@ async def generate_outputs(args: argparse.Namespace) -> list[dict]:
         rows = apply_cached_enrichment(rows, store)
     else:
         quote_provider = BoerseFrankfurtQuoteProvider(timeout=args.provider_timeout)
+        # Same host as the quotes, so one refusal stops both.
+        boerse_frankfurt_provider = BoerseFrankfurtProductProvider(
+            timeout=args.provider_timeout, guard=quote_provider.guard
+        )
         onvista_provider = OnvistaProductProvider(timeout=args.provider_timeout)
-        gs_de_provider = GsDeProductProvider(timeout=args.provider_timeout)
-        product_providers = [onvista_provider, gs_de_provider]
+        # Börse Frankfurt answers terms and Greeks in one request; Onvista is
+        # asked only for what that leaves open.
+        product_providers = [boerse_frankfurt_provider, onvista_provider]
         try:
             rows = await enrich_structured_product_rows(
                 rows,
@@ -57,7 +64,7 @@ async def generate_outputs(args: argparse.Namespace) -> list[dict]:
             )
         finally:
             import logging
-            for provider in [quote_provider, onvista_provider, gs_de_provider]:
+            for provider in [quote_provider, boerse_frankfurt_provider, onvista_provider]:
                 try:
                     await provider.aclose()
                 except Exception as e:
