@@ -65,6 +65,18 @@ pub struct AlertState {
     pub threshold: f64,
     pub reason: String,
     pub evidence_key: Option<String>,
+    /// The value covers only the modeled holdings; some positions are left out.
+    #[serde(default)]
+    pub partial: bool,
+    /// Holdings that were in the model when the alert fired.
+    #[serde(default)]
+    pub modeled_at_trigger: Option<Vec<String>>,
+}
+
+/// Which holdings a portfolio-wide value was computed from.
+struct ModelScope {
+    modeled: Vec<String>,
+    excluded: Vec<String>,
 }
 
 struct Candidate {
@@ -75,6 +87,27 @@ struct Candidate {
     threshold: f64,
     low: bool,
     data: bool,
+    scope: Option<ModelScope>,
+}
+
+/// Standing limits of the data sources, present on most positions every cycle:
+/// the valuation and Greeks carry no market time, an underlying has no mapped
+/// quote, or the product is not quoted in EUR. They lower confidence and model
+/// coverage, which have their own displays and rule, but they are not faults
+/// that appear and clear, so they do not raise the data-quality alert.
+const KNOWN_DATA_LIMITATIONS: [&str; 4] = [
+    "valuation_market_time_unknown",
+    "greeks_market_time_unknown",
+    "underlying_unmapped",
+    "product_currency_unsupported",
+];
+
+fn ids(rows: &Value) -> Vec<String> {
+    rows.as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|row| row["id"].as_str().map(str::to_owned))
+        .collect()
 }
 
 fn candidates(payload: &Value, config: &RiskSettings) -> Vec<Candidate> {
@@ -86,16 +119,25 @@ fn candidates(payload: &Value, config: &RiskSettings) -> Vec<Candidate> {
         .collect();
     let issues = rows
         .iter()
-        .filter(|row| row["issues"].as_array().is_some_and(|v| !v.is_empty()))
+        .filter(|row| {
+            row["issues"].as_array().is_some_and(|issues| {
+                issues.iter().any(|issue| {
+                    issue
+                        .as_str()
+                        .is_none_or(|code| !KNOWN_DATA_LIMITATIONS.contains(&code))
+                })
+            })
+        })
         .count();
     let mut cs = vec![Candidate {
         rule: "data_quality",
         subject: "portfolio".into(),
-        title: "持仓数据存在缺失、过期或时间未知".into(),
+        title: "持仓数据出现缺失、过期或时间错位".into(),
         value: Some(issues as f64),
         threshold: 1.0,
         low: false,
         data: true,
+        scope: None,
     }];
     if let Some(threshold) = config.min_model_coverage_pct {
         cs.push(Candidate {
@@ -106,23 +148,32 @@ fn candidates(payload: &Value, config: &RiskSettings) -> Vec<Candidate> {
             threshold,
             low: true,
             data: true,
+            scope: None,
         });
     }
     if let Some(threshold) = config.max_loss_eur {
-        // An incomplete model cannot establish a portfolio-wide pass or recovery.
-        let complete = risk["excluded"].as_array().is_some_and(Vec::is_empty);
+        // Funds, bonds and products without terms are never modeled, so waiting
+        // for a complete model would mean this limit never fires. The modeled
+        // holdings alone can exceed it; the alert says that it covers only them,
+        // and `advance` refuses a recovery caused by a holding leaving the model.
+        let scope = ModelScope {
+            modeled: ids(&risk["models"]),
+            excluded: ids(&risk["excluded"]),
+        };
         cs.push(Candidate {
             rule: "stress_loss",
             subject: "portfolio".into(),
-            title: "最差情景损失超限（EUR）".into(),
-            value: if complete {
-                number(&risk["worstPnl"]).map(|v| (-v).max(0.0))
+            title: if scope.excluded.is_empty() {
+                "最差情景损失超限（EUR）"
             } else {
-                None
-            },
+                "已建模持仓的最差情景损失超限（EUR）"
+            }
+            .into(),
+            value: number(&risk["worstPnl"]).map(|v| (-v).max(0.0)),
             threshold,
             low: false,
             data: false,
+            scope: Some(scope),
         });
     }
     if let Some(threshold) = config.max_concentration_pct {
@@ -135,6 +186,7 @@ fn candidates(payload: &Value, config: &RiskSettings) -> Vec<Candidate> {
                 threshold,
                 low: false,
                 data: false,
+                scope: None,
             });
         }
     }
@@ -188,6 +240,7 @@ fn candidates(payload: &Value, config: &RiskSettings) -> Vec<Candidate> {
                     threshold,
                     low,
                     data: false,
+                    scope: None,
                 });
             }
         }
@@ -211,6 +264,20 @@ fn advance(state: &mut AlertState, c: &Candidate, now: DateTime<Utc>) -> Option<
     }
     state.last_evaluated_at = Some(now);
     state.value = c.value;
+    state.title.clone_from(&c.title);
+    state.partial = c
+        .scope
+        .as_ref()
+        .is_some_and(|scope| !scope.excluded.is_empty());
+    // A holding that was modeled when the alert fired and is now left out makes
+    // the loss look smaller without any risk having gone away.
+    let model_shrank = c.scope.as_ref().is_some_and(|scope| {
+        state
+            .modeled_at_trigger
+            .iter()
+            .flatten()
+            .any(|id| scope.excluded.contains(id))
+    });
     let active = matches!(state.status.as_str(), "active" | "acknowledged");
     let Some(value) = c.value else {
         state.hits = 0;
@@ -250,6 +317,7 @@ fn advance(state: &mut AlertState, c: &Candidate, now: DateTime<Utc>) -> Option<
         }
         if active {
             state.last_triggered_at = Some(now);
+            state.reason = "threshold_breached".into();
             return None;
         }
         let immediate = c.data || (c.rule == "knockout_7d" && value >= 100.0);
@@ -265,6 +333,7 @@ fn advance(state: &mut AlertState, c: &Candidate, now: DateTime<Utc>) -> Option<
             state.resolved_at = None;
             state.invalidated_at = None;
             state.reason = "threshold_breached".into();
+            state.modeled_at_trigger = c.scope.as_ref().map(|scope| scope.modeled.clone());
             return Some("triggered");
         }
         if state.status != "resolved" {
@@ -272,7 +341,12 @@ fn advance(state: &mut AlertState, c: &Candidate, now: DateTime<Utc>) -> Option<
         }
     } else {
         state.hits = 0;
-        if clear && counted {
+        if model_shrank {
+            state.clears = 0;
+            if active {
+                state.reason = "recovery_blocked_model_shrank".into();
+            }
+        } else if clear && counted {
             state.clears = state.clears.saturating_add(1);
         } else if !clear {
             state.clears = 0;
@@ -352,6 +426,8 @@ pub async fn evaluate(
             threshold: c.threshold,
             reason: String::new(),
             evidence_key: None,
+            partial: false,
+            modeled_at_trigger: None,
         });
         if let Some(kind) = advance(&mut state, &c, now) {
             state.evidence_key = Some(evidence.clone());
@@ -580,28 +656,137 @@ mod tests {
         );
         Ok(())
     }
+    fn partial_payload(at: DateTime<Utc>, loss: f64, modeled: &[&str], excluded: &[&str]) -> Value {
+        let rows = |ids: &[&str]| ids.iter().map(|id| json!({"id":id})).collect::<Vec<_>>();
+        let mut p = payload(at, Some(loss));
+        p["risk"]["models"] = json!(rows(modeled));
+        p["risk"]["excluded"] = json!(rows(excluded));
+        p
+    }
+    async fn run(pool: &SqlitePool, p: &Value, config: &SettingsRecord) -> anyhow::Result<()> {
+        let mut tx = pool.begin().await?;
+        evaluate(&mut tx, p, config).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+    fn loss_limit(limit: f64) -> SettingsRecord {
+        SettingsRecord {
+            revision: 0,
+            settings: RiskSettings {
+                max_loss_eur: Some(limit),
+                ..Default::default()
+            },
+        }
+    }
+
     #[tokio::test]
-    async fn partial_model_never_resolves_a_portfolio_loss_alert() -> anyhow::Result<()> {
+    async fn modeled_holdings_alone_trigger_and_recover_the_loss_limit() -> anyhow::Result<()> {
+        let pool = pool().await?;
+        let t: DateTime<Utc> = "2026-11-10T12:00:00Z".parse()?;
+        let config = loss_limit(100.0);
+        // A fund is never modeled; the warrant alone loses more than the limit.
+        for minute in [0, 1] {
+            let p = partial_payload(
+                t + TimeDelta::minutes(minute),
+                120.0,
+                &["WARRANT"],
+                &["FUND"],
+            );
+            run(&pool, &p, &config).await?;
+        }
+        let fired = state(&pool).await?;
+        assert_eq!(fired.status, "active");
+        assert!(fired.partial);
+        assert_eq!(fired.title, "已建模持仓的最差情景损失超限（EUR）");
+        assert_eq!(fired.modeled_at_trigger, Some(vec!["WARRANT".to_owned()]));
+
+        // The warrant is trimmed and a second fund is bought: still partial, the
+        // same holdings are modeled, and the loss is back inside the buffer.
+        for minute in [2, 3] {
+            let p = partial_payload(
+                t + TimeDelta::minutes(minute),
+                50.0,
+                &["WARRANT"],
+                &["FUND", "FUND2"],
+            );
+            run(&pool, &p, &config).await?;
+        }
+        let recovered = state(&pool).await?;
+        assert_eq!(recovered.status, "resolved");
+        assert!(recovered.partial);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_holding_leaving_the_model_cannot_resolve_a_loss_alert() -> anyhow::Result<()> {
+        let pool = pool().await?;
+        let t: DateTime<Utc> = "2026-11-10T12:00:00Z".parse()?;
+        let config = loss_limit(100.0);
+        for minute in [0, 1] {
+            let p = partial_payload(t + TimeDelta::minutes(minute), 120.0, &["A", "B"], &[]);
+            run(&pool, &p, &config).await?;
+        }
+        assert_eq!(state(&pool).await?.status, "active");
+
+        // B loses its quote and drops out, so the modeled loss falls to zero.
+        for minute in [2, 3, 4] {
+            let p = partial_payload(t + TimeDelta::minutes(minute), 0.0, &["A"], &["B"]);
+            run(&pool, &p, &config).await?;
+        }
+        let blocked = state(&pool).await?;
+        assert_eq!(blocked.status, "active");
+        assert_eq!(blocked.reason, "recovery_blocked_model_shrank");
+        assert_eq!(blocked.clears, 0);
+
+        // Selling B is a real change: it is neither modeled nor left out.
+        for minute in [5, 6] {
+            let p = partial_payload(t + TimeDelta::minutes(minute), 0.0, &["A"], &[]);
+            run(&pool, &p, &config).await?;
+        }
+        assert_eq!(state(&pool).await?.status, "resolved");
+
+        // With nothing modeled at all the value is unknown, not zero.
+        cycle(&pool, t + TimeDelta::minutes(30), Some(120.0), &config).await?;
+        cycle(&pool, t + TimeDelta::minutes(31), Some(120.0), &config).await?;
+        assert_eq!(state(&pool).await?.status, "active");
+        cycle(&pool, t + TimeDelta::minutes(32), None, &config).await?;
+        assert_eq!(state(&pool).await?.status, "invalidated");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn standing_data_limitations_do_not_raise_the_data_quality_alert() -> anyhow::Result<()> {
         let pool = pool().await?;
         let t: DateTime<Utc> = "2026-11-10T12:00:00Z".parse()?;
         let config = SettingsRecord {
             revision: 0,
-            settings: RiskSettings {
-                max_loss_eur: Some(100.0),
-                ..Default::default()
-            },
+            settings: RiskSettings::default(),
         };
-        cycle(&pool, t, Some(120.0), &config).await?;
-        cycle(&pool, t + TimeDelta::minutes(1), Some(120.0), &config).await?;
-        let mut p = payload(t + TimeDelta::minutes(2), Some(0.0));
-        p["risk"]["excluded"] = json!([{"id":"unknown"}]);
-        let mut tx = pool.begin().await?;
-        evaluate(&mut tx, &p, &config).await?;
-        tx.commit().await?;
-        assert_eq!(state(&pool).await?.status, "invalidated");
-        cycle(&pool, t + TimeDelta::minutes(3), Some(0.0), &config).await?;
-        cycle(&pool, t + TimeDelta::minutes(4), Some(0.0), &config).await?;
-        assert_eq!(state(&pool).await?.status, "resolved");
+        let snapshot = |minute: i64, extra: &[&str]| {
+            let mut issues = vec![
+                "valuation_market_time_unknown",
+                "greeks_market_time_unknown",
+            ];
+            issues.extend_from_slice(extra);
+            json!({"evaluatedAt":t+TimeDelta::minutes(minute),"positions":[
+                {"symbol":"X","issues":issues},
+                {"symbol":"Y","issues":["underlying_unmapped","product_currency_unsupported"]},
+                {"symbol":"Z","issues":[]},
+            ]})
+        };
+        run(&pool, &snapshot(0, &[]), &config).await?;
+        assert_eq!(list(&pool).await?.as_array().map(Vec::len), Some(0));
+
+        // A stale capture on top of the standing limits is a fault.
+        run(&pool, &snapshot(1, &["product_capture_stale"]), &config).await?;
+        let alerts = list(&pool).await?;
+        assert_eq!(alerts[0]["status"], "active");
+        assert_eq!(alerts[0]["value"], 1.0);
+
+        // It clears again once the fault is gone, although the limits remain.
+        run(&pool, &snapshot(2, &[]), &config).await?;
+        run(&pool, &snapshot(3, &[]), &config).await?;
+        assert_eq!(list(&pool).await?[0]["status"], "resolved");
         Ok(())
     }
 
