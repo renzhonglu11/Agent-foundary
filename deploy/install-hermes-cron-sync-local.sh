@@ -16,23 +16,6 @@ BACKUP_UNIT="agent-foundry-backup"
 REMOTE_UV_BIN="${REMOTE_UV_BIN:-/home/rz/.local/bin/uv}"
 REMOTE_UV_DIR="$(dirname -- "${REMOTE_UV_BIN}")"
 HERMES_CRON_SOURCE_PATH="${HERMES_CRON_SOURCE_PATH:-/home/${SYNC_USER}/.hermes/cron/jobs.json}"
-PLAYWRIGHT_HOST_PLATFORM_OVERRIDE="${PLAYWRIGHT_HOST_PLATFORM_OVERRIDE:-}"
-
-if [[ -z "${PLAYWRIGHT_HOST_PLATFORM_OVERRIDE}" && -r /etc/os-release ]]; then
-  source /etc/os-release
-  case "${ID:-}:${VERSION_ID:-}:$(uname -m)" in
-    ubuntu:26.04:x86_64)
-      PLAYWRIGHT_HOST_PLATFORM_OVERRIDE="ubuntu24.04-x64"
-      ;;
-    ubuntu:26.04:aarch64)
-      PLAYWRIGHT_HOST_PLATFORM_OVERRIDE="ubuntu24.04-arm64"
-      ;;
-  esac
-fi
-if [[ -n "${PLAYWRIGHT_HOST_PLATFORM_OVERRIDE}" && ! "${PLAYWRIGHT_HOST_PLATFORM_OVERRIDE}" =~ ^[A-Za-z0-9._-]+$ ]]; then
-  echo "Invalid Playwright host platform override: ${PLAYWRIGHT_HOST_PLATFORM_OVERRIDE}" >&2
-  exit 1
-fi
 
 PYTHON_PROJECT_DIR="${REPO_ROOT}/backend/python"
 WEB_DIR="${REPO_ROOT}/web"
@@ -106,9 +89,6 @@ SYNC_PATH_UNIT="${LOCAL_TMP_DIR}/agent-foundry-hermes-cron-sync.path"
 BACKUP_SERVICE_UNIT="${LOCAL_TMP_DIR}/agent-foundry-backup.service"
 render_systemd_unit "${REPO_ROOT}/deploy/agent-foundry-backend.service" "${BACKEND_UNIT}" "${REMOTE_USER}"
 render_systemd_unit "${REPO_ROOT}/deploy/agent-foundry-runtime.env" "${RUNTIME_ENV_FILE}" "${REMOTE_USER}"
-if [[ -n "${PLAYWRIGHT_HOST_PLATFORM_OVERRIDE}" ]]; then
-  printf 'PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=%s\n' "${PLAYWRIGHT_HOST_PLATFORM_OVERRIDE}" >> "${RUNTIME_ENV_FILE}"
-fi
 render_systemd_unit "${REPO_ROOT}/deploy/agent-foundry-hermes-cron-sync.service" "${SYNC_UNIT}" "${SYNC_USER}"
 render_systemd_unit "${REPO_ROOT}/deploy/agent-foundry-hermes-cron-sync.path" "${SYNC_PATH_UNIT}" "${SYNC_USER}"
 render_systemd_unit "${REPO_ROOT}/deploy/agent-foundry-backup.service" "${BACKUP_SERVICE_UNIT}" "${REMOTE_USER}"
@@ -138,18 +118,16 @@ sudo chmod 0600 "${SHARED_DIR}/.env"
 
 legacy_data_present=0
 UV_CACHE_DIR="${SHARED_DIR}/cache/uv"
-PLAYWRIGHT_BROWSERS_PATH="${SHARED_DIR}/cache/playwright"
 if [[ -d "${REMOTE_ROOT}/data" && ! -e "${SHARED_DIR}/data" ]]; then
   legacy_data_present=1
   UV_CACHE_DIR="${REMOTE_ROOT}/data/uv-cache"
-  PLAYWRIGHT_BROWSERS_PATH="${REMOTE_ROOT}/data/playwright-browsers"
 elif [[ -d "${REMOTE_ROOT}/data" && -e "${SHARED_DIR}/data" ]]; then
   echo "Both ${REMOTE_ROOT}/data and ${SHARED_DIR}/data exist; refusing to choose between them." >&2
   exit 1
 else
   sudo install -d -o "${REMOTE_USER}" -g "${REMOTE_GROUP}" -m 0750 \
     "${SHARED_DIR}/data" "${SHARED_DIR}/data/uploads" "${SHARED_DIR}/data/hermes-cron" \
-    "${UV_CACHE_DIR}" "${PLAYWRIGHT_BROWSERS_PATH}"
+    "${UV_CACHE_DIR}"
 fi
 
 if [[ -e "${RELEASE_DIR}" ]]; then
@@ -209,29 +187,16 @@ else
   sudo chown "${REMOTE_USER}:${REMOTE_GROUP}" "${PYTHON_ENV_MARKER}"
   sudo chmod 0444 "${PYTHON_ENV_MARKER}"
 fi
-sudo -u "${REMOTE_USER}" env \
-  UV_CACHE_DIR="${UV_CACHE_DIR}" \
-  PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH}" \
-  PLAYWRIGHT_HOST_PLATFORM_OVERRIDE="${PLAYWRIGHT_HOST_PLATFORM_OVERRIDE}" \
-  "${PYTHON_VENV}/bin/playwright" install chromium
-sudo -u "${REMOTE_USER}" env \
-  PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH}" \
-  PLAYWRIGHT_HOST_PLATFORM_OVERRIDE="${PLAYWRIGHT_HOST_PLATFORM_OVERRIDE}" \
-  "${PYTHON_VENV}/bin/python" -c 'from playwright.sync_api import sync_playwright
-with sync_playwright() as playwright:
-    browser = playwright.chromium.launch(headless=True)
-    browser.close()'
 sudo -u "${REMOTE_USER}" ln -s "${PYTHON_VENV}" "${RELEASE_DIR}/python/.venv"
 
 if [[ "${legacy_data_present}" -eq 1 ]]; then
   sudo systemctl stop "${BACKEND_SERVICE}" || true
   sudo mv "${REMOTE_ROOT}/data" "${SHARED_DIR}/data"
   sudo mv "${SHARED_DIR}/data/uv-cache" "${SHARED_DIR}/cache/uv"
-  sudo mv "${SHARED_DIR}/data/playwright-browsers" "${SHARED_DIR}/cache/playwright"
 fi
 sudo install -d -o "${REMOTE_USER}" -g "${REMOTE_GROUP}" -m 0750 \
   "${SHARED_DIR}/data" "${SHARED_DIR}/data/uploads" "${SHARED_DIR}/data/hermes-cron" \
-  "${SHARED_DIR}/cache/uv" "${SHARED_DIR}/cache/playwright"
+  "${SHARED_DIR}/cache/uv"
 sudo chown -R "${REMOTE_USER}:${REMOTE_GROUP}" "${SHARED_DIR}/data" "${SHARED_DIR}/cache"
 
 # The restart below applies new migrations; a failed snapshot aborts before units or current change.

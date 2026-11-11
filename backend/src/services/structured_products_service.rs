@@ -68,7 +68,6 @@ pub struct StructuredProductsService {
     output_csv_path: PathBuf,
     output_db_path: PathBuf,
     uv_cache_path: PathBuf,
-    playwright_browsers_path: PathBuf,
     refresh_sender: UnboundedSender<RefreshRequest>,
     queued_requests: Arc<AtomicUsize>,
     status: Arc<RwLock<RefreshStatus>>,
@@ -111,9 +110,6 @@ impl StructuredProductsService {
         let uv_cache_path = std::env::var("AGENT_FOUNDRY_UV_CACHE_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("data/uv-cache"));
-        let playwright_browsers_path = std::env::var("AGENT_FOUNDRY_PLAYWRIGHT_BROWSERS_PATH")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("data/playwright-browsers"));
 
         let (refresh_sender, refresh_receiver) = unbounded_channel();
         let service = Self {
@@ -122,7 +118,6 @@ impl StructuredProductsService {
             output_csv_path: absolute_path(&settings.output_csv_path)?,
             output_db_path: absolute_path(&settings.output_db_path)?,
             uv_cache_path: absolute_path(&uv_cache_path)?,
-            playwright_browsers_path: absolute_path(&playwright_browsers_path)?,
             settings,
             market_data_repository,
             refresh_sender,
@@ -562,7 +557,6 @@ impl StructuredProductsService {
             tokio::fs::create_dir_all(parent).await?;
         }
         tokio::fs::create_dir_all(&self.uv_cache_path).await?;
-        tokio::fs::create_dir_all(&self.playwright_browsers_path).await?;
 
         let command_path =
             resolve_command_path(&self.settings.command, &self.settings.working_dir)?;
@@ -571,7 +565,6 @@ impl StructuredProductsService {
         if command_uses_uv(&self.settings.command) {
             command
                 .env("UV_CACHE_DIR", &self.uv_cache_path)
-                .env("PLAYWRIGHT_BROWSERS_PATH", &self.playwright_browsers_path)
                 .arg("run")
                 .arg("agent-foundry-structured-products");
         }

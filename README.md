@@ -100,17 +100,8 @@ cargo build -p agent-foundry-backend
 
 Building the backend first prevents the initial compilation from exceeding the launcher's 120-second health-check wait.
 
-The scheduled product refresh no longer starts a browser: terms and Greeks come
-from Börse Frankfurt and Onvista over plain HTTP. Playwright Chromium is only
-needed to run the unused gs.de provider by hand:
-
-```bash
-cd backend/python
-uv run playwright install chromium
-cd ../..
-```
-
-On Linux, if browser system dependencies are missing, run `uv run playwright install --with-deps chromium` from the Python project directory.
+The product refresh needs no browser: terms and Greeks come from Börse
+Frankfurt and Onvista over plain HTTP.
 
 ### 3. Start the application
 

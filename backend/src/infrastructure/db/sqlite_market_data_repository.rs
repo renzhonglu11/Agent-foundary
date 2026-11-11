@@ -1005,7 +1005,7 @@ mod tests {
                 "option_type": "call",
                 "reset_barrier": null,
                 "metadata_source": "onvista",
-                "greeks_source": "gs_de",
+                "greeks_source": "boerse_frankfurt",
                 "metadata_url": "https://example.test",
                 "enrichment_tier": "tier1",
                 "live_enrichment_enabled": true,
@@ -1134,8 +1134,8 @@ mod tests {
             serde_json::json!({
                 "source": "test",
                 "items": [
-                    {"isin": "FRESH", "iv": fresh_iv, "greeks_source": "onvista+gs.de", "quote_price": 1.5},
-                    {"isin": "STALE", "iv": 0.6, "greeks_source": "gs.de+cache_stale"},
+                    {"isin": "FRESH", "iv": fresh_iv, "greeks_source": "boerse_frankfurt+onvista", "quote_price": 1.5},
+                    {"isin": "STALE", "iv": 0.6, "greeks_source": "onvista+cache_stale"},
                     {"isin": "NO_SOURCE", "iv": 0.7},
                     {"isin": "NO_IV", "greeks_source": "onvista"},
                 ],
