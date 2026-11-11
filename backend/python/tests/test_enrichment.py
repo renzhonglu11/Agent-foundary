@@ -600,3 +600,160 @@ async def test_a_product_without_stored_names_takes_them_from_the_source():
     enriched = await enrich_structured_product_rows([_warrant_row()], product_providers=[exchange], cache_store=FakeCacheStore())
 
     assert (enriched[0]["issuer"], enriched[0]["underlying"]) == ("Vontobel", "Zscaler")
+
+
+def _complete_product(source="boerse_frankfurt", delta=0.65):
+    return ProductData(
+        metadata=InstrumentMetadata(isin="DE000VY42C94", leverage=3.84, strike_price=180.0, ratio=0.1, expiry="2027-06-17"),
+        greek=Greek(isin="DE000VY42C94", delta=delta, omega=2.5, theta=-0.0087, iv=0.835),
+        source=source,
+    )
+
+
+@pytest.mark.asyncio
+async def test_greeks_from_the_previous_hourly_run_are_fetched_again():
+    from datetime import datetime, timedelta, timezone
+
+    metadata = InstrumentMetadata(isin="DE000VY42C94", leverage=3.2, strike_price=180.0, ratio=0.1, expiry="2027-06-17")
+
+    async def run(age_minutes):
+        stored = Greek(
+            isin="DE000VY42C94", delta=0.5, omega=2.0, theta=-0.01, iv=0.8,
+            timestamp=datetime.now(timezone.utc) - timedelta(minutes=age_minutes),
+        )
+        cache = FakeCacheStore(metadata={"DE000VY42C94": metadata}, greeks={"DE000VY42C94": stored})
+        exchange = FakeProductProvider({"DE000VY42C94": _complete_product()})
+        rows = await enrich_structured_product_rows([_warrant_row()], product_providers=[exchange], cache_store=cache)
+        return rows[0], exchange.calls
+
+    # A second refresh a few minutes later reuses what was just fetched.
+    row, calls = await run(10)
+    assert (row["delta"], row["greeks_source"], calls) == (0.5, "cache", [])
+    # An hourly run finds Greeks 59 minutes old; they must not count as current.
+    row, calls = await run(59)
+    assert (row["delta"], row["greeks_source"], calls) == (0.65, "boerse_frankfurt", ["DE000VY42C94"])
+
+
+class RememberingCacheStore(FakeCacheStore):
+    def upsert_metadata(self, metadata):
+        super().upsert_metadata(metadata)
+        self.metadata[metadata.isin] = metadata
+
+
+def _outside_live_tier(**changes):
+    return {**_warrant_row(), "enrichment_tier": "tier2", **changes}
+
+
+@pytest.mark.asyncio
+async def test_a_product_outside_the_live_tier_gets_its_terms_once_a_day():
+    from datetime import datetime, timedelta, timezone
+
+    cache = RememberingCacheStore()
+    exchange = FakeProductProvider({"DE000VY42C94": _complete_product()})
+    quotes = FakeQuoteProvider()
+
+    async def run():
+        rows = await enrich_structured_product_rows(
+            [_outside_live_tier()], quote_provider=quotes, product_providers=[exchange],
+            cache_store=cache, live_enrichment_tier="tier1",
+        )
+        return rows[0]
+
+    row = await run()
+    # The fixed terms arrive; nothing that moves with the quote does.
+    assert (row["strike_price"], row["ratio"], row["expiry"]) == (180.0, 0.1, "2027-06-17")
+    assert row.get("leverage") is None and row["delta"] is None and row.get("greeks_source") is None
+    assert (row["metadata_source"], row["live_enrichment_enabled"]) == ("boerse_frankfurt", False)
+    assert exchange.calls == ["DE000VY42C94"]
+
+    # The next hourly run reads the terms from the cache and asks nobody.
+    row = await run()
+    assert (row["strike_price"], row["metadata_source"]) == (180.0, "cache")
+    assert exchange.calls == ["DE000VY42C94"]
+
+    # A day later the terms are renewed.
+    cache.metadata["DE000VY42C94"] = cache.metadata["DE000VY42C94"].model_copy(
+        update={"last_updated": datetime.now(timezone.utc) - timedelta(hours=25)}
+    )
+    await run()
+    assert exchange.calls == ["DE000VY42C94", "DE000VY42C94"]
+
+
+@pytest.mark.asyncio
+async def test_daily_terms_follow_a_knock_out_keep_a_factor_and_remember_a_miss():
+    from datetime import datetime, timedelta, timezone
+
+    day_old = datetime.now(timezone.utc) - timedelta(hours=25)
+    cache = RememberingCacheStore(
+        metadata={
+            "DE000TURBO01": InstrumentMetadata(
+                isin="DE000TURBO01", issuer="HSBC", underlying="Micron", product_type="open_end_turbo",
+                strike_price=265.0, knockout_price=265.0, ratio=0.01, leverage=1.5, last_updated=day_old,
+            )
+        }
+    )
+    exchange = FakeProductProvider(
+        {
+            "DE000TURBO01": ProductData(
+                metadata=InstrumentMetadata(
+                    isin="DE000TURBO01", issuer="HSBC Trinkaus & Burkhardt GmbH", underlying="Micron Technology Inc",
+                    product_type="open_end_turbo", strike_price=265.8, knockout_price=265.8, ratio=0.01, leverage=1.42,
+                ),
+                source="boerse_frankfurt",
+            ),
+            "DE000FACTOR1": ProductData(
+                metadata=InstrumentMetadata(isin="DE000FACTOR1", product_type="factor_certificate", leverage=2.0, reset_barrier=33.9),
+                source="boerse_frankfurt",
+            ),
+        }
+    )
+    rows = [
+        _outside_live_tier(isin="DE000TURBO01", display_name="TurboC O.End Micron", instrument="TurboC O.End Micron", product_type="open_end_turbo"),
+        _outside_live_tier(isin="DE000FACTOR1", display_name="FaktL O.End GlobalF", instrument="FaktL O.End GlobalF", product_type="factor_certificate"),
+        _outside_live_tier(isin="DE000UNKNOWN", display_name="Call 17.06.27 Nobody 10", instrument="Call 17.06.27 Nobody 10"),
+    ]
+
+    async def run():
+        return await enrich_structured_product_rows(rows, product_providers=[exchange], cache_store=cache, live_enrichment_tier="tier1")
+
+    turbo, factor, unknown = await run()
+    # An open-end knock-out's strike and barrier move every day; its names stay as stored.
+    assert (turbo["strike_price"], turbo["knockout_price"]) == (265.8, 265.8)
+    assert (turbo["issuer"], turbo["underlying"]) == ("HSBC", "Micron")
+    # Its leverage moves with the quote and is not kept for a product nobody refreshes hourly.
+    assert turbo.get("leverage") is None
+    # A factor certificate's leverage is its fixed factor; its reset barrier moves.
+    assert (factor["leverage"], factor.get("reset_barrier")) == (2.0, None)
+    assert unknown.get("strike_price") is None and unknown.get("metadata_source") is None
+    assert sorted(exchange.calls) == ["DE000FACTOR1", "DE000TURBO01", "DE000UNKNOWN"]
+
+    # The product no source knew is not asked about again on the next run.
+    await run()
+    assert len(exchange.calls) == 3
+
+
+@pytest.mark.asyncio
+async def test_a_second_source_never_overrides_the_first_one_that_answered():
+    cached = InstrumentMetadata(
+        isin="DE000TURBO01", product_type="open_end_turbo", strike_price=265.8, knockout_price=265.8, ratio=0.01, leverage=1.51
+    )
+    confirming = ProductData(metadata=cached.model_copy(), source="boerse_frankfurt")
+    disagreeing = ProductData(
+        metadata=InstrumentMetadata(
+            isin="DE000TURBO01", product_type="knock_out", strike_price=265.8, knockout_price=265.8, ratio=0.01,
+            leverage=1.42, reset_barrier=250.0,
+        ),
+        source="onvista",
+    )
+    row = {**_warrant_row("DE000TURBO01"), "display_name": "TurboC O.End Micron", "instrument": "TurboC O.End Micron", "product_type": "open_end_turbo"}
+
+    enriched = await enrich_structured_product_rows(
+        [row],
+        product_providers=[FakeProductProvider({"DE000TURBO01": confirming}), FakeProductProvider({"DE000TURBO01": disagreeing})],
+        cache_store=FakeCacheStore(metadata={"DE000TURBO01": cached}),
+    )
+
+    # The first source only confirmed the cache; that does not let the second one rewrite it.
+    assert (enriched[0]["product_type"], enriched[0]["leverage"]) == ("open_end_turbo", 1.51)
+    # It still supplies what nobody had.
+    assert enriched[0]["reset_barrier"] == 250.0

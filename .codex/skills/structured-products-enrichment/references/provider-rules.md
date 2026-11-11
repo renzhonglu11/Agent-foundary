@@ -16,6 +16,11 @@ This reference documents current structured-products enrichment behavior in the 
 - A source that answers HTTP 403 or 429 is not asked again in the same run
   (`providers/refusal.py`). The two Börse Frankfurt providers share one guard.
 - Only rows matching `live_enrichment_tier` are live-enriched; default is `tier1`.
+- Rows outside the live tier get contract terms only: from the cache, renewed
+  from the product providers once a day (`TERMS_REFRESH_SECONDS`). They never
+  get Greeks, a break-even, a reset barrier, or a leverage that moves with the
+  quote; a factor certificate's leverage is its fixed factor and is kept. A
+  product no source knows is remembered and asked about again a day later.
 - `assign_enrichment_tiers(..., tier1_limit=20)` promotes top underlying groups into Tier 1.
 
 ## Börse Frankfurt Product Provider
@@ -63,60 +68,40 @@ Source file: `backend/python/src/agent_foundry_python/structured_products/provid
 
 ### Fetch Rule
 
-- Resolve ISIN through `https://www.onvista.de/suche?searchValue=<ISIN>`.
-- Use the redirected URL as the product page URL.
-- Fetch server-rendered HTML from that URL.
-- Parse metadata/Greeks from HTML; no documented stable ISIN API is used.
-- On HTTP or parse failure, return `None` so enrichment can continue.
+- `GET https://api.onvista.de/api/v1/derivatives/ISIN:<ISIN>/snapshot`, one JSON
+  request per product.
+- The website `www.onvista.de` is not used. It answers the production server
+  with a bot-protection page (HTTP 403/429), and old snapshots show it never
+  supplied data there. The JSON endpoint its pages read from answers normally.
+- The endpoint is not a documented API.
+- A payload whose `instrument.isin` differs from the request returns `None`.
 
-### Parsed HTML Sources
+### Fields Used
 
-Parser tries:
+Metadata:
 
-1. `<dt>/<dd>` definition list fields.
-2. Table-like `<tr><th|td>...`.
-3. Data-card style `<data value=...>` with nearby labels.
-4. `__NEXT_DATA__` snapshot fallback for `isin`, `wkn`, and underlying inferred from `name`.
-5. Title/first heading/full text for product type and direction detection.
+- `instrument.wkn` -> `wkn`
+- `derivativesIssuer.name` -> `issuer`
+- `derivativesUnderlyingList.list[0].instrument.name` -> `underlying`
+- `instrument.entitySubType`: `WARRANT` -> `optionsschein`,
+  `KNOCKOUT_CERTIFICATE` -> `open_end_turbo` when `derivativesDetails.openEnded`
+  else `knock_out`, `FACTOR_CERTIFICATE` -> `factor_certificate`
+- `derivativesDetails.codeExerciseRight` (`C`/`P`) -> `option_type`
+- `derivativesFigure.gearing`; for factor certificates
+  `derivativesDetails.participationRateWin` -> `leverage`
+- barrier list by `typeBarrier`: `STRIKE` -> `strike_price`, `KNOCK_OUT` ->
+  `knockout_price`, `RESET_LEVEL` -> `reset_barrier`
+- `derivativesFigure.breakEven` -> `break_even`
+- `coverRatio` of the underlying -> `ratio`
+- `derivativesDetails.datetimeMaturity` -> `expiry`, `None` for open-end products
 
-### Onvista Label Mapping
+Greeks:
 
-Metadata fields:
-
-- `emittent`, `issuer` -> `issuer`
-- `wkn` -> `wkn`
-- `isin` -> `isin`
-- `basiswert`, `underlying` -> `underlying`
-- `produkttyp`, `produktart`, `product type` -> `product_type`
-- `hebel`, `leverage`, `faktor`, `factor` -> `leverage`
-- `basispreis`, `strike`, `strike price`, `akt. basispreis` -> `strike_price`
-- `knock-out`, `k.o.`, `ko`, `knock out`, `knockout`, `ko-schwelle`, `k.o.-schwelle` -> `knockout_price`
-- `break-even`, `break even`, `break-even-punkt`, `gewinnschwelle` -> `break_even`
-- `bezugsverhaeltnis`, `bezugsverhältnis`, `ratio` -> `ratio`
-- `faelligkeit`, `fälligkeit`, `expiry` -> `expiry`
-- `typ`, `optionstyp` -> `option_type`
-- `akt. reset-barriere`, `reset-barriere`, `reset barrier` -> `reset_barrier`
-
-Greek fields:
-
-- `delta` -> `delta`
-- `omega` -> `omega`
-- `theta` -> `theta`
-- `impl. volatilitaet`, `impl. volatilität`, `implizite volatilitaet`, `implizite volatilität`, `volatilitaet`, `volatilität` -> `iv`
-
-### Onvista Normalization
-
-- Product type mapping:
-  - `optionsschein` -> `optionsschein`
-  - `open-end turbo`, `open end turbo`, `turbo-optionsschein`, `turbo` -> `open_end_turbo`
-  - `knock-out`, `knock out` -> `knock_out`
-  - `faktor zertifikat`, `faktor-zertifikat`, `factor certificate`, `faktor-optionsschein`, `faktor optionsschein` -> `factor_certificate`
-- Direction detection:
-  - `put`, `bear`, `short`, `turbop`, `fakts` -> `put`
-  - `call`, `bull`, `long`, `turboc`, `faktl` -> `call`
-- Numeric values use German decimal parsing.
-- `iv` is divided by 100 when source includes `%` or numeric value is greater than 1.
-- Expiry accepts `DD.MM.YYYY` and `YYYY-MM-DD`; open-ended text becomes `None`.
+- `derivativesFigure.delta` -> `delta`
+- `derivativesFigure.leverage` (onvista's name for the elasticity) -> `omega`
+- `derivativesFigure.thetaDay` -> `theta`
+- `derivativesFigure.impliedVolatility / 100` -> `iv`
+- `derivativesFigure.datetimePrice` -> `Greek.timestamp`
 
 ## Enrichment Merge Rules
 
@@ -135,7 +120,7 @@ For each live-enriched row:
    - `quote_day_low`
    - `quote_timestamp`
 3. Load metadata and latest Greek from `StructuredProductStore`.
-4. Greek cache is fresh for 1 hour.
+4. Greek cache is fresh for 30 minutes (`GREEK_CACHE_SECONDS`). It must stay shorter than the refresh interval: with one hour and an hourly schedule, most products reused the previous run's Greeks and were refreshed only every second hour.
 5. Merge cached metadata and fresh cached Greek first with overwrite.
 6. Keep expired cached Greek as a stale fallback. Do not use it before live providers, but if providers cannot fill Greek fields, merge it into missing fields and mark `greeks_source = cache_stale`.
 7. If `_needs_product_fallback(row)` is true, try product providers in order: Börse Frankfurt, then Onvista.
@@ -170,8 +155,8 @@ Greek merge fields:
 Overwrite rule:
 
 - Cached metadata and fresh cached Greek are merged first.
-- Provider data uses `overwrite=not metadata_sources` and `overwrite=not greek_sources`.
-- If cache supplied a field, later provider data may not overwrite it unless merge logic changes.
+- The first provider that answers may replace cached metadata; providers after it only fill what is still missing. This holds even when the first answer merely confirms the cache.
+- Greeks use `overwrite=not greek_sources`.
 - Expired cached Greek is merged only after provider attempts and only into missing fields; it is not reinserted as a fresh cache record.
 - A cached `break_even` is never served: it moves with the quote.
 - `issuer` and `underlying` are sticky. Sources spell them differently, so once
@@ -263,8 +248,8 @@ When an ISIN still shows missing data:
 4. Check cache: stale or incomplete cached metadata can prevent provider overwrite.
 5. Check `_needs_product_fallback`; missing `theta`/`iv` can keep fallback active.
 6. Check direction detection from instrument/display name and provider fields.
-7. For factor certificates, verify `leverage` comes from Börse Frankfurt `participation` or Onvista `faktor`.
-8. For a missing field, inspect the raw Börse Frankfurt master data before adding Onvista HTML parsing.
+7. For factor certificates, verify `leverage` comes from Börse Frankfurt `participation` or Onvista `participationRateWin`.
+8. For a missing field, inspect the raw Börse Frankfurt master data, then the raw Onvista snapshot.
 9. Check exposure fallback order before editing risk status.
 10. Add tests with the failing ISIN's real response shape.
 
@@ -288,13 +273,12 @@ asyncio.run(main())
 ''')"
 ```
 
-Onvista parser tests should use representative HTML snippets. Börse Frankfurt tests should use fixtures in the shape of the real master-data response.
+Provider tests should use fixtures in the shape of the real JSON responses.
 
 ## Test Targets
 
 - `backend/python/tests/test_boerse_frankfurt_provider.py`
-- `backend/python/tests/test_onvista_parser.py`
-- `backend/python/tests/test_onvista_resolver.py`
+- `backend/python/tests/test_onvista_provider.py`
 - `backend/python/tests/test_enrichment.py`
 - `backend/python/tests/test_exposure.py`
 - `backend/python/tests/test_risk.py`
