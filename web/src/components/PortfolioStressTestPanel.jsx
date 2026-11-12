@@ -23,10 +23,11 @@ const DEFAULT_SETTINGS = { shock: 20, horizonDays: 30, target: '', shockMode: 'u
 const EMPTY_REVIEW = { loading: false, data: null, error: null, at: null, report: null }
 const exitLevelRank = ['urgent', 'warn', 'ok', 'unknown']
 
-export default function PortfolioStressTestPanel({ entries, positions = [], exitSignals, loading, totalMarketValue, totalCostBasis }) {
+// The custom plan lives in the Positions board, so the holdings and exit
+// signal tabs can add to it; `planFocus` changes when they ask to show it.
+export default function PortfolioStressTestPanel({ entries, positions = [], exitSignals, loading, totalMarketValue, totalCostBasis, customReductions, onCustomReductionsChange: setCustomReductions, planFocus = 0 }) {
   const [settings, setSettings] = useState(DEFAULT_SETTINGS)
   const [rankSettings, setRankSettings] = useState({ scope: 'product', reduction: 50, sort: 'efficiency' })
-  const [customReductions, setCustomReductions] = useState({})
   const [selectedPortfolioId, setSelectedPortfolioId] = useState(null)
   const [scenarioId, setScenarioId] = useState(null)
   const [hermesStatus, setHermesStatus] = useState({ loading: true, available: null, model: null })
@@ -85,6 +86,10 @@ export default function PortfolioStressTestPanel({ entries, positions = [], exit
   )
   const exitSignalById = useMemo(() => new Map((exitSignals || []).map(signal => [signal.id, signal])), [exitSignals])
   const targetAvailable = shockTargets.some(({ key }) => key === target)
+
+  useEffect(() => {
+    if (planFocus > 0) setSelectedPortfolioId('custom')
+  }, [planFocus])
 
   useEffect(() => {
     if (target && !targetAvailable) setSettings(current => ({ ...current, target: '' }))

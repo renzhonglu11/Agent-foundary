@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import {
   Alert,
+  Button,
   Box,
   Chip,
   Divider,
@@ -72,7 +73,8 @@ function KeyMetrics({ signal }) {
   </>
 }
 
-export default function ExitSignalsPanel({ report, dailyStats, dailyStatsLoading, dailyStatsError, dailyStatsWarnings = [], onSelectProduct }) {
+export default function ExitSignalsPanel({ report, dailyStats, dailyStatsLoading, dailyStatsError, dailyStatsWarnings = [], onSelectProduct, planReductions = {}, onPlanReduction, onShowPlan }) {
+  const planCount = Object.values(planReductions).filter(pct => pct > 0).length
   const [showAll, setShowAll] = useState(false)
   const flagged = report.counts.urgent + report.counts.warn + report.counts.unknown
   const rows = showAll ? report.signals : report.signals.filter(signal => signal.level !== 'ok')
@@ -95,6 +97,7 @@ export default function ExitSignalsPanel({ report, dailyStats, dailyStatsLoading
               label={`${EXIT_LEVEL_META[level].label} ${report.counts[level]} 个 · ${compactCurrency(report.values[level])}`} />
           ))}
           <FormControlLabel sx={{ ml: 0.5 }} control={<Switch size="small" checked={showAll} onChange={event => setShowAll(event.target.checked)} />} label="显示全部" />
+          {onShowPlan && planCount > 0 ? <Button size="small" onClick={onShowPlan} sx={{ ml: 'auto', textTransform: 'none' }}>自定义方案 {planCount} 只 · 去方案对比</Button> : null}
         </Stack>
         {dailyStatsError && <Alert severity="warning" sx={{ py: 0 }}>标的日线统计读取失败，趋势与历史波动率不可用；以下概率只使用权证隐含波动率。</Alert>}
       </Stack>
@@ -102,10 +105,11 @@ export default function ExitSignalsPanel({ report, dailyStats, dailyStatsLoading
       <Box sx={{ p: { xs: 1.25, md: 1.75 } }}>
         {rows.length === 0 ? <Typography variant="body2" color="text.secondary">当前没有触发信号的持仓。</Typography> : (
           <TableContainer component={Paper} variant="outlined" sx={{ maxHeight: 520 }}>
-            <Table size="small" stickyHeader aria-label="退场信号" sx={{ minWidth: 900, '& th': { whiteSpace: 'nowrap' }, '& td': { verticalAlign: 'top' } }}>
+            <Table size="small" stickyHeader aria-label="退场信号" sx={{ minWidth: onPlanReduction ? 1020 : 900, '& th': { whiteSpace: 'nowrap' }, '& td': { verticalAlign: 'top' } }}>
               <TableHead><TableRow>
                 <TableCell>产品 / 标的</TableCell><TableCell>信号</TableCell><TableCell>关键指标</TableCell>
                 <TableCell align="right">横盘成本</TableCell><TableCell>标的趋势</TableCell><TableCell align="right">市值 / 浮盈亏</TableCell>
+                {onPlanReduction ? <TableCell align="right">方案</TableCell> : null}
               </TableRow></TableHead>
               <TableBody>{rows.map(signal => (
                 <TableRow key={signal.id} hover onClick={() => onSelectProduct?.(signal.id)} sx={{ cursor: onSelectProduct ? 'pointer' : 'default' }}>
@@ -132,6 +136,19 @@ export default function ExitSignalsPanel({ report, dailyStats, dailyStatsLoading
                     <Typography variant="body2">{compactCurrency(signal.currentValue)}</Typography>
                     {signal.unrealizedPct != null && <Line color={signal.unrealizedPct < 0 ? 'error.main' : 'success.main'}>{signed(signal.unrealizedPct)}</Line>}
                   </TableCell>
+                  {onPlanReduction ? (
+                    <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
+                      {planReductions[signal.id] > 0 ? (
+                        <Button size="small" variant="contained" aria-pressed="true" onClick={event => { event.stopPropagation(); onPlanReduction(signal.id, 0) }} sx={{ textTransform: 'none' }}>
+                          已加入 · {planReductions[signal.id] >= 100 ? '退出' : `减 ${planReductions[signal.id]}%`}
+                        </Button>
+                      ) : (
+                        <Button size="small" variant="outlined" aria-pressed="false" onClick={event => { event.stopPropagation(); onPlanReduction(signal.id, 50) }} sx={{ textTransform: 'none' }}>
+                          加入方案 · 减 50%
+                        </Button>
+                      )}
+                    </TableCell>
+                  ) : null}
                 </TableRow>
               ))}</TableBody>
             </Table>

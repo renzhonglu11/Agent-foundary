@@ -27,6 +27,8 @@ import { buildExitSignals } from '../utils/exitSignals.js'
 import { RISK_SIGNAL_LABELS, confidenceLabel } from '../utils/labels.js'
 import { buildOpportunityScreen } from '../utils/opportunityScreen.js'
 import { buildPositionsCoverage } from '../utils/positionsCoverage.js'
+import { withRowReduction } from '../utils/portfolioComparison.js'
+import { EXIT_LEVEL_META } from '../utils/labels.js'
 import { buildGroupShockScales } from '../utils/portfolioStress.js'
 import { buildRollWhatIfs } from '../utils/rollWhatIf.js'
 import { buildWatchlistGroups, canonicalGroupKey } from '../utils/watchlistGrouping.js'
@@ -128,6 +130,9 @@ export default function PositionsActionBoard({ data, riskData, riskLoading, risk
   // survive tab switches while unopened panels skip their calculations.
   const [visitedTabs, setVisitedTabs] = useState(() => new Set([subTab]))
   const [healthOpen, setHealthOpen] = useState(false)
+  // Shared by the holdings, exit signal and plan tabs: product id → % sold.
+  const [customReductions, setCustomReductions] = useState({})
+  const [planFocus, setPlanFocus] = useState(0)
   const dataHealth = useDataHealth()
   const totalMarketValue = Number(data?.summary?.totalMarketValue) || 0
   const totalCostBasis = Number(data?.summary?.totalCostBasis) || 0
@@ -171,6 +176,8 @@ export default function PositionsActionBoard({ data, riskData, riskLoading, risk
     shownEntries: productEntries,
   }), [data, tier1Groups, productEntries])
   const urgentExitCount = exitReport.counts?.urgent || 0
+  const exitSignalById = useMemo(() => new Map(exitReport.signals.map(signal => [signal.id, signal])), [exitReport])
+  const customCount = Object.values(customReductions).filter(pct => pct > 0).length
   const flaggedRollCount = rollWhatIfs.filter(roll => roll.flagged).length
   const sections = useMemo(() => (
     actionDefinitions.map((definition) => ({
@@ -193,6 +200,12 @@ export default function PositionsActionBoard({ data, riskData, riskLoading, risk
     setSubTab(value)
     setVisitedTabs(current => (current.has(value) ? current : new Set([...current, value])))
     storeSubTab(value)
+  }
+
+  const setPlanReduction = (id, pct) => setCustomReductions(current => withRowReduction(current, [id], pct))
+  const showPlan = () => {
+    handleSubTabChange(null, 'plans')
+    setPlanFocus(current => current + 1)
   }
 
   const handleRowClick = (row) => {
@@ -240,7 +253,8 @@ export default function PositionsActionBoard({ data, riskData, riskLoading, risk
           label={<TabLabel label="持仓" count={`${coverage.shownCount} / ${coverage.heldCount}`} />} />
         <Tab value="exits" id="positions-tab-exits" aria-controls="positions-panel-exits"
           label={<TabLabel label="退场信号" badge={urgentExitCount} color="error" />} />
-        <Tab value="plans" id="positions-tab-plans" aria-controls="positions-panel-plans" label="方案对比" />
+        <Tab value="plans" id="positions-tab-plans" aria-controls="positions-panel-plans"
+          label={<TabLabel label="方案对比" badge={customCount} />} />
         <Tab value="opportunities" id="positions-tab-opportunities" aria-controls="positions-panel-opportunities"
           label={<TabLabel label="机会与换仓" badge={flaggedRollCount} />} />
       </Tabs>
@@ -296,6 +310,14 @@ export default function PositionsActionBoard({ data, riskData, riskLoading, risk
                   minWidth: 0,
                 }}
               >
+                {selectedProduct ? (
+                  <ProductPlanStrip
+                    signal={exitSignalById.get(String(selectedProduct.item?.symbol))}
+                    reduction={customReductions[String(selectedProduct.item?.symbol)] || 0}
+                    onReduce={pct => setPlanReduction(String(selectedProduct.item?.symbol), pct)}
+                    onShowPlan={showPlan}
+                  />
+                ) : null}
                 <ProductMonitoringDashboard
                   item={selectedProduct?.item ?? null}
                   riskLeg={selectedProduct?.riskLeg ?? null}
@@ -315,6 +337,9 @@ export default function PositionsActionBoard({ data, riskData, riskLoading, risk
               dailyStatsLoading={dailyStats.loading}
               dailyStatsError={dailyStats.error}
               dailyStatsWarnings={dailyStats.warnings}
+              planReductions={customReductions}
+              onPlanReduction={setPlanReduction}
+              onShowPlan={showPlan}
               onSelectProduct={(id) => {
                 const entry = productEntries.find(candidate => candidate.item.symbol === id)
                 if (!entry) return
@@ -338,6 +363,9 @@ export default function PositionsActionBoard({ data, riskData, riskLoading, risk
             loading={loading}
             totalMarketValue={totalMarketValue}
             totalCostBasis={totalCostBasis}
+            customReductions={customReductions}
+            onCustomReductionsChange={setCustomReductions}
+            planFocus={planFocus}
           />
         </SubTabPanel>
 
@@ -381,6 +409,14 @@ export default function PositionsActionBoard({ data, riskData, riskLoading, risk
             },
           }}
         >
+          {selectedProduct ? (
+            <ProductPlanStrip
+              signal={exitSignalById.get(String(selectedProduct.item?.symbol))}
+              reduction={customReductions[String(selectedProduct.item?.symbol)] || 0}
+              onReduce={pct => setPlanReduction(String(selectedProduct.item?.symbol), pct)}
+              onShowPlan={() => { setSelectedProduct(null); showPlan() }}
+            />
+          ) : null}
           <ProductMonitoringDashboard
             item={selectedProduct?.item ?? null}
             riskLeg={selectedProduct?.riskLeg ?? null}
@@ -388,6 +424,42 @@ export default function PositionsActionBoard({ data, riskData, riskLoading, risk
             onAddPnlRecord={onAddPnlRecord}
           />
         </Drawer>
+      ) : null}
+    </Box>
+  )
+}
+
+// ---- plan strip ----
+
+// Above the product detail: why the exit signal fired, and a one-click way to
+// put the product into the custom plan without leaving the holdings tab.
+function ProductPlanStrip({ signal, reduction, onReduce, onShowPlan }) {
+  const flagged = signal && (signal.level === 'urgent' || signal.level === 'warn')
+  const meta = signal ? EXIT_LEVEL_META[signal.level] : null
+  return (
+    <Box sx={{ px: 1.5, py: 1, borderBottom: '1px solid #e5eaef', backgroundColor: flagged ? '#fff8ef' : '#f8fafc' }}>
+      <Stack direction="row" spacing={1} useFlexGap sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
+        {meta ? <Chip size="small" color={meta.color} variant={flagged ? 'filled' : 'outlined'} label={`退场信号：${meta.label}`} /> : <Chip size="small" variant="outlined" label="无退场信号数据" />}
+        {signal?.decay?.return30dPct != null ? (
+          <Typography variant="caption" color={signal.decay.return30dPct <= -15 ? 'error.main' : 'text.secondary'}>
+            横盘 30 天 {signal.decay.return30dPct > 0 ? '+' : ''}{number.format(signal.decay.return30dPct)}%
+          </Typography>
+        ) : null}
+        <Stack direction="row" spacing={0.75} sx={{ ml: 'auto' }}>
+          {reduction > 0 ? <>
+            <Button size="small" variant="contained" onClick={onShowPlan} sx={{ textTransform: 'none' }}>
+              已在方案中（{reduction >= 100 ? '退出' : `减 ${reduction}%`}）· 去对比
+            </Button>
+            <Button size="small" onClick={() => onReduce(0)} sx={{ textTransform: 'none' }}>移出</Button>
+          </> : (
+            <Button size="small" variant="outlined" onClick={() => onReduce(50)} sx={{ textTransform: 'none' }}>在方案中减 50%</Button>
+          )}
+        </Stack>
+      </Stack>
+      {flagged && signal.reasons?.length ? (
+        <Typography variant="caption" component="div" sx={{ mt: 0.5 }}>
+          {signal.reasons.slice(0, 2).map(reason => reason.text).join('；')}
+        </Typography>
       ) : null}
     </Box>
   )
