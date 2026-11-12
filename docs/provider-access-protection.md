@@ -1,6 +1,6 @@
 # 通用数据源访问保护
 
-实现分支：`feat/shared-provider-protection`，基于已发布的 `e9cc29d`。
+通用模块最初由 `feat/shared-provider-protection` 实现；请求预算、Tier 1 优先和可选 Tier 2 调度由 `feat/provider-budgets-priority` 扩展，基于 `b9f9b04`。
 
 ## 模块边界
 
@@ -25,6 +25,40 @@ Python 衍生品 worker 使用 `structured_products/providers/refusal.py` 中的
 | `fincalapi.com` | 2 秒 | XETRA 交易日历 |
 
 未登记来源使用默认 2 秒。间隔是应用的保守配置，不代表供应商授权额度；它是共享数据库的请求启动间隔，并非对其他服务器或无关程序的 IP 总额度控制。
+
+## 滚动请求预算与优先级
+
+同一策略文件的 `budget` 定义最近 **1 小时 / 24 小时**的上限，不在整点或零点清零。预算不是供应商公布的额度，而是本应用的初始负载上限，需要根据成功率、缓存命中和供应商约定维护。
+
+| 来源 | 1 小时上限 | 24 小时上限 | Tier 1 保留（小时 / 24 小时） |
+| --- | ---: | ---: | ---: |
+| Börse Frankfurt | 360 | 5000 | 240 / 3400 |
+| Onvista | 180 | 1800 | 120 / 1200 |
+| Alpaca | 600 | 6000 | 0 / 0 |
+| FRED | 120 | 500 | 0 / 0 |
+| Frankfurter | 12 | 48 | 0 / 0 |
+| ApeWisdom | 60 | 800 | 0 / 0 |
+| FinCal | 12 | 48 | 0 / 0 |
+| 未登记来源 | 120 | 1000 | 0 / 0 |
+
+`provider_request_events` 只存来源、领取时间和优先级，不存 URL、密钥或产品清单。Python 与 Rust 在同一 SQLite `BEGIN IMMEDIATE` 事务内检查预算、预留请求间隔并记账。网络发生在事务提交之后。缓存命中、404 负缓存、间隔等待、冷却或预算拒绝不重复计数；领取后崩溃也保留计数，因此显示的是保守的请求配额占用量，不保证每次都已发出 HTTP。24 小时外的明细在后续成功预留时清理。
+
+所有请求必须满足总预算；后台请求还必须满足 `总上限 - Tier 1 保留` 的子预算。后台包含 Tier 2 实时报价、每日条款、候选搜索和观察列表请求。Tier 1 可以使用剩余总额度，但不能突破总上限。报价和元数据共用同一来源预算，HTTP 拒绝仍使该来源的所有优先级冷却。
+
+一次抓取中先完成 Tier 1，再执行其他工作；Tier 1 内按持仓市值优先。保留额度限制其他进程抢占预算，不会中断已发出的后台请求。冷却与预算是独立状态：预算用完不伪造 HTTP 429、不清空缓存、不在任务中等待数小时补抓；滚动窗口恢复额度后，由后续正常任务重试。降低上限时，恢复时间按需要过期的记录数计算。
+
+## 可选 Tier 2 两小时刷新
+
+`STRUCTURED_PRODUCTS_TIER2_SOURCES` 是扩展实时抓取的显式来源列表，支持 `boerse_frankfurt`、`onvista`，逗号分隔。默认空值继续原有 Tier 2 每日条款处理；不自动增加 Onvista 的访问范围。启用来源前应确认该来源允许所需自动访问。[Onvista 官方说明](https://hilfe.onvista.de/migration/de/verstoss-gegen-nutzungsbedingungen)要求自动查询取得书面许可，可访问的网站 JSON 不代表公开 API 授权。
+
+确认来源可用后，在服务器已有的 `shared/.env` 单独配置来源，`STRUCTURED_PRODUCTS_TIER2_INTERVAL_MINS=120` 控制最小间隔（允许 120–1440 分钟），重启服务生效。现有 Tier 1 的 30 分钟服务器配置保留，不修改发布目录或从本地覆盖 `.env`。
+
+- Tier 2 的报价、条款、Greeks 和备用来源全部受来源列表限制；不能借备用请求绕过列表。
+- `product_refresh_schedule` 在请求前记录每个 ISIN 的尝试时间，失败、进程中断、重启和手动刷新都不会跳过间隔。每次到期时，先取临近到期产品，再按持仓市值排序；未到期继续使用缓存。实际执行时间由主刷新周期和交易窗口决定。
+- 报价缓存只保存报价字段和原始市场时间，不保存旧持仓数量、成本或 Tier。当前数量变化仍生效；失败保留已有报价，缺失不伪装成新数据。
+- 导出层不再把缓存元数据和 Greeks 以当前时间重新入库。真实数据在 enrichment 阶段入库；缓存导出不会延长其有效期。重复的同一市场时间、价格、币种报价也不会重复入库。
+- Tier 2 获取数据并不自动改变风险模型或组合比较的 Tier 1 筛选条件。`enrichment_refresh_state=attempted` 只表示尝试过，不表示所有字段都成功更新。
+- 冷却、404 负缓存、小时/日预算和 Tier 1 保护同时适用；两小时是最小尝试间隔，不是每只产品成功获取新报价的保证。
 
 所有来源使用以下默认失败策略，连续失败按倍数延长：
 
@@ -58,6 +92,10 @@ Rust 入口也将重定向、损坏或不完整的 JSON 当作不可用响应暂
 ## 状态与部署验证
 
 `GET /api/structured-products-enrichment/status` 保留原任务字段，`providers` 扩展为全部已尝试来源，并新增 `label` / `scope`。没有请求记录的来源暂不列出。前端顶部“后台更新”中的“数据源访问保护”独立展示全局状态；FRED/汇率冷却不会把产品抓取任务误标为失败。
+
+每个来源的 `budget` 返回 `hour` / `day` 的 `used`、`limit`、`tier1Reserved`、`backgroundUsed`、`remaining`、`backgroundRemaining`，以及 `limited`、`backgroundLimited` 和对应 `retryAt` / `backgroundRetryAt`。前端区分“来源冷却”“全部预算用完”“后台额度用完、Tier 1 可继续”。顶层 `tier2Enabled`、`tier2IntervalMinutes`、`tier2Sources` 表示实际启用配置。
+
+新增 `0003_provider_budgets.sql` 为幂等、增量建表，同时被 Rust 与 Python 包携带；无需清除旧冷却表。新预算从部署后的请求开始记账，没有旧版请求的历史计数。发布必须同步 Rust 二进制与 Python wheel，回滚到不认识预算的旧程序会停止执行预算保护（原限速/冷却仍在），不能把回滚视为保留新保护机制。
 
 发布后检查接口中的各来源、`retryAt`、服务重启次数和任务最近完成时间。不要通过清空访问保护表来验证恢复；使用本地模拟测试，生产等待冷却和下一轮调度。现有数据库备份、原子切换和回滚流程保持兼容。
 

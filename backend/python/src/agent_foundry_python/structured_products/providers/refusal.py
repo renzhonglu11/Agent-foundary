@@ -8,6 +8,7 @@ import json
 import math
 import sqlite3
 import time
+from contextvars import ContextVar
 from datetime import timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -19,6 +20,25 @@ logger = logging.getLogger(__name__)
 REFUSAL_STATUS_CODES = frozenset({401, 403, 429})
 SCHEMA = Path(__file__).parents[1] / "migrations/0002_provider_access.sql"
 POLICY = json.loads((Path(__file__).parents[1] / "provider_policy.json").read_text())
+BUDGET_SCHEMA = Path(__file__).parents[1] / "migrations/0003_provider_budgets.sql"
+# Context-local: concurrent Tier 1 and background tasks cannot overwrite each
+# other's priority, even when they share a provider instance.
+REQUEST_PRIORITY = ContextVar("provider_request_priority", default="background")
+
+
+def budget_retry_at(events: list[tuple[float, str]], policy: dict, now: float, priority: str) -> float:
+    retry_at = 0.0
+    for window, seconds in (("hour", 3600), ("day", 86400)):
+        times = [at for at, _ in events if at > now - seconds]
+        limit = policy[window]
+        if len(times) >= limit:
+            retry_at = max(retry_at, times[len(times) - limit] + seconds)
+        if priority != "tier1":
+            times = [at for at, p in events if at > now - seconds and p != "tier1"]
+            limit -= policy.get("tier1_reserved_" + window, 0)
+            if len(times) >= limit:
+                retry_at = max(retry_at, times[len(times) - limit] + seconds if limit else now + seconds)
+    return retry_at
 
 
 def retry_after_seconds(value: str | None, now: float) -> float:
@@ -45,6 +65,12 @@ class SourceGuard:
         # Standalone callers use memory; the CLI always supplies its persistent DB.
         self._db = sqlite3.connect(str(db_path) if db_path else ":memory:", timeout=5)
         self._db.executescript(SCHEMA.read_text())
+        self._db.executescript(BUDGET_SCHEMA.read_text())
+        self.budget = POLICY["sources"].get(source, {}).get("budget", POLICY["budget"])
+        for window in ("hour", "day"):
+            if not 0 <= self.budget.get("tier1_reserved_" + window, 0) < self.budget[window]:
+                raise ValueError("invalid provider budget")
+        self.budget_retry_at = 0.0
 
     def _reserve(self, resource: str) -> float | None:
         now = time.time()
@@ -63,11 +89,26 @@ class SourceGuard:
             ).fetchone()
             if missing and missing[0] > now:
                 return None
+            events = self._db.execute(
+                "SELECT requested_at,priority FROM provider_request_events WHERE source=? AND requested_at>? ORDER BY requested_at",
+                (self.source, now - 86400),
+            ).fetchall()
+            priority = REQUEST_PRIORITY.get()
+            self.budget_retry_at = budget_retry_at(events, self.budget, now, priority)
+            if self.budget_retry_at > now:
+                # Budget exhaustion is not an HTTP refusal and must not block
+                # another priority or write a fabricated HTTP status.
+                return None
             if next_at > now:
                 return next_at - now
             self._db.execute(
                 "UPDATE provider_access SET next_request_at=? WHERE source=?", (now + self.interval, self.source)
             )
+            self._db.execute(
+                "INSERT INTO provider_request_events(source,requested_at,priority) VALUES (?,?,?)",
+                (self.source, now, priority),
+            )
+            self._db.execute("DELETE FROM provider_request_events WHERE requested_at<=?", (now - 86400,))
         return 0
 
     def check(self, response: httpx.Response) -> None:

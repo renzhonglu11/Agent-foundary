@@ -12,7 +12,8 @@ from agent_foundry_python.structured_products.agent_foundry import (
     assign_enrichment_tiers,
     write_structured_product_rows_outputs,
 )
-from agent_foundry_python.structured_products.enrichment import apply_cached_enrichment, enrich_structured_product_rows
+from agent_foundry_python.structured_products.enrichment import apply_cached_enrichment
+from agent_foundry_python.structured_products.refresh_scheduler import refresh_with_tiers
 from agent_foundry_python.structured_products.providers.boerse_frankfurt import (
     BoerseFrankfurtProductProvider,
     BoerseFrankfurtQuoteProvider,
@@ -55,7 +56,7 @@ async def generate_outputs(args: argparse.Namespace) -> list[dict]:
         # asked only for what that leaves open.
         product_providers = [boerse_frankfurt_provider, onvista_provider]
         try:
-            rows = await enrich_structured_product_rows(
+            rows = await refresh_with_tiers(
                 rows,
                 quote_provider=quote_provider,
                 quote_fallback_providers=[onvista_provider],
@@ -63,6 +64,8 @@ async def generate_outputs(args: argparse.Namespace) -> list[dict]:
                 cache_store=store,
                 request_delay_seconds=args.request_delay,
                 live_enrichment_tier=args.live_enrichment_tier,
+                tier2_sources=[s.strip() for s in getattr(args, "tier2_sources", "").split(",") if s.strip()],
+                tier2_interval_seconds=getattr(args, "tier2_interval_minutes", 120) * 60,
                 progress_callback=emit_progress if args.emit_progress else None,
             )
         finally:
@@ -75,7 +78,7 @@ async def generate_outputs(args: argparse.Namespace) -> list[dict]:
             for guard in guards:
                 guard.close()
 
-    write_structured_product_rows_outputs(rows, csv_path=args.csv, json_path=args.json, db_path=args.db)
+    write_structured_product_rows_outputs(rows, csv_path=args.csv, json_path=args.json, db_path=args.db, market_data_already_persisted=True)
 
     # Risk assessment
     nav = summary.get("summary", {}).get("totalMarketValue", 0.0)
@@ -102,6 +105,8 @@ def main() -> int:
     parser.add_argument("--provider-timeout", type=float, default=10.0, help="Per-request provider timeout in seconds.")
     parser.add_argument("--tier1-limit", type=int, default=20, help="Maximum number of underlying groups eligible for live quote/Greeks enrichment.")
     parser.add_argument("--live-enrichment-tier", default="tier1", help="Only rows in this enrichment tier call live providers. Use empty string to enrich all tiers.")
+    parser.add_argument("--tier2-sources", default="", help="Opt-in Tier 2 sources permitted for automated use: boerse_frankfurt,onvista. Empty keeps existing daily-terms behavior.")
+    parser.add_argument("--tier2-interval-minutes", type=int, default=120, help="Minimum interval between Tier 2 attempts, persisted per ISIN (at least 120).")
     parser.add_argument("--limit", type=int, help="Only process the first N structured products; useful for low-frequency smoke runs.")
     parser.add_argument("--request-delay", type=float, default=2.0, help="Delay between product enrichment requests in seconds.")
     parser.add_argument("--no-live-enrichment", action="store_true", help="Only write Rust summary rows; skip Onvista/Börse Frankfurt enrichment.")

@@ -8,7 +8,9 @@ use serde_json::{Value, json};
 use sqlx::SqlitePool;
 use tokio::sync::Mutex;
 
-use super::provider_access::{ProviderAccess, ProviderCoolingDown, ProviderRequestError};
+use super::provider_access::{
+    ProviderAccess, ProviderBudgetExhausted, ProviderCoolingDown, ProviderRequestError,
+};
 use crate::{application::services::fx_rate_service::FxRateService, services::monitor_symbols};
 
 // The endpoints serve onvista.de itself; they are not a documented API.
@@ -494,7 +496,9 @@ impl WarrantCandidate {
 
 /// HTTP 403 and 429 answer the client, not the product that was asked for.
 fn refused(error: &anyhow::Error) -> bool {
-    if error.downcast_ref::<ProviderCoolingDown>().is_some() {
+    if error.downcast_ref::<ProviderCoolingDown>().is_some()
+        || error.downcast_ref::<ProviderBudgetExhausted>().is_some()
+    {
         return true;
     }
     error

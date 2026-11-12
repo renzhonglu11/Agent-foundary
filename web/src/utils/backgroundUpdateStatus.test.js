@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { backgroundUpdateState, lastMonitorCheck, monitorUpdateState, productUpdateState, providerUpdateState } from './backgroundUpdateStatus.js'
+import { backgroundUpdateState, lastMonitorCheck, monitorUpdateState, providerAccessLabel, productUpdateState, providerUpdateState } from './backgroundUpdateStatus.js'
 import { fetchStructuredProductsRefreshStatus } from '../hooks/useStructuredProductsRefreshStatus.js'
 
 const now = Date.parse('2026-11-10T12:00:00Z')
@@ -106,4 +106,19 @@ test('non-product cooldowns warn globally without mislabelling a product refresh
   assert.equal(providers.label, '部分来源暂停')
   assert.equal(backgroundUpdateState(monitorUpdateState(healthy, null, now), products, providers).label, '需关注')
   assert.equal(providerUpdateState(refresh, new Error('offline')).color, 'warning')
+})
+
+
+test('local request budgets are distinct from HTTP refusals and reserve Tier 1 capacity', () => {
+  const source = { source: 'api.onvista.de', scope: 'products', lastStatus: 200, coolingDown: false,
+    budget: { limited: false, backgroundLimited: true } }
+  const refresh = { ...scheduled, running: true, providers: [source] }
+  assert.equal(productUpdateState(refresh, null, true).label, '正在抓取')
+  assert.equal(providerUpdateState(refresh, null).label, '后台请求受限')
+  assert.equal(providerAccessLabel(source), '后台额度用完，Tier 1 可继续')
+  const exhausted = { ...source, budget: { limited: true, backgroundLimited: true } }
+  assert.equal(productUpdateState({ ...refresh, providers: [exhausted] }, null, true).label, '请求预算已用完')
+  assert.equal(providerUpdateState({ providers: [exhausted] }, null).label, '部分来源预算用完')
+  assert.equal(providerAccessLabel({ ...exhausted, coolingDown: true }), '暂停请求')
+  assert.equal(providerAccessLabel({ lastStatus: 200 }), '最近请求成功')
 })

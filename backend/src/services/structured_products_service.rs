@@ -431,6 +431,9 @@ impl StructuredProductsService {
                 "autoRefreshActive": status.auto_refresh_active,
                 "lastScheduledRefreshAt": status.last_scheduled_refresh_at,
                 "intervalMinutes": self.settings.auto_refresh_interval_mins,
+                "tier2Enabled": !self.settings.tier2_sources.is_empty(),
+                "tier2IntervalMinutes": self.settings.tier2_interval_mins,
+                "tier2Sources": self.settings.tier2_sources,
                 "marketOpenHourBerlin": self.settings.market_open_hour_cet,
                 "marketCloseHourBerlin": self.settings.market_close_hour_cet,
                 "liveEnabled": self.settings.enabled && !self.settings.no_live_enrichment,
@@ -584,7 +587,11 @@ impl StructuredProductsService {
             .arg("--risk-json")
             .arg(&output_paths.risk_json)
             .arg("--db")
-            .arg(&self.output_db_path);
+            .arg(&self.output_db_path)
+            .arg("--tier2-sources")
+            .arg(self.settings.tier2_sources.join(","))
+            .arg("--tier2-interval-minutes")
+            .arg(self.settings.tier2_interval_mins.to_string());
 
         if self.settings.no_live_enrichment || matches!(mode, RefreshMode::FallbackOnly) {
             command.arg("--no-live-enrichment");

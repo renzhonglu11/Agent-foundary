@@ -238,10 +238,11 @@ def write_structured_product_rows_outputs(
     csv_path: str | Path,
     json_path: str | Path,
     db_path: str | Path,
+    market_data_already_persisted: bool = False,
 ) -> None:
     _write_csv(rows, csv_path)
     _write_json(rows, json_path)
-    _write_sqlite(rows, db_path)
+    _write_sqlite(rows, db_path, market_data_already_persisted=market_data_already_persisted)
 
 
 def _is_structured_product_position(position: dict[str, Any]) -> bool:
@@ -360,7 +361,7 @@ def _write_json(rows: list[dict[str, Any]], path: str | Path) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def _write_sqlite(rows: list[dict[str, Any]], path: str | Path) -> None:
+def _write_sqlite(rows: list[dict[str, Any]], path: str | Path, *, market_data_already_persisted: bool = False) -> None:
     path = Path(path)
     store = StructuredProductStore(path)
     import sqlite3
@@ -375,32 +376,37 @@ def _write_sqlite(rows: list[dict[str, Any]], path: str | Path) -> None:
                 source="rust_portfolio_summary",
             )
         )
-        store.upsert_metadata(
-            InstrumentMetadata(
-                isin=row["isin"],
-                wkn=row.get("wkn") or None,
-                issuer=row.get("issuer") or None,
-                underlying=row.get("underlying") or None,
-                product_type=row.get("product_type"),
-                leverage=_optional_float(row.get("leverage")),
-                strike_price=_optional_float(row.get("strike_price")),
-                knockout_price=_optional_float(row.get("knockout_price")),
-                break_even=_optional_float(row.get("break_even")),
-                ratio=_optional_float(row.get("ratio")),
-                expiry=row.get("expiry") or None,
-                option_type=row.get("option_type") or None,
-                reset_barrier=_optional_float(row.get("reset_barrier")),
+        # The live pipeline already saves genuine metadata/Greek fetches. Its
+        # export must not renew timestamps of cached, failed or deferred rows.
+        if not market_data_already_persisted:
+            store.upsert_metadata(
+                InstrumentMetadata(
+                    isin=row["isin"],
+                    wkn=row.get("wkn") or None,
+                    issuer=row.get("issuer") or None,
+                    underlying=row.get("underlying") or None,
+                    product_type=row.get("product_type"),
+                    leverage=_optional_float(row.get("leverage")),
+                    strike_price=_optional_float(row.get("strike_price")),
+                    knockout_price=_optional_float(row.get("knockout_price")),
+                    break_even=_optional_float(row.get("break_even")),
+                    ratio=_optional_float(row.get("ratio")),
+                    expiry=row.get("expiry") or None,
+                    option_type=row.get("option_type") or None,
+                    reset_barrier=_optional_float(row.get("reset_barrier")),
+                )
             )
-        )
-        if row["quote_price"]:
+        quote_time = row.get("quote_timestamp")
+        if row["quote_price"] is not None and (quote_time or not market_data_already_persisted):
             store.insert_quote(
                 Quote(
                     isin=row["isin"],
                     price=row["quote_price"],
                     currency=row["quote_currency"],
+                    **({"timestamp": quote_time} if quote_time else {}),
                 )
             )
-        if any(row.get(field) is not None and row.get(field) != "" for field in ("delta", "omega", "theta", "iv")):
+        if not market_data_already_persisted and any(row.get(field) is not None and row.get(field) != "" for field in ("delta", "omega", "theta", "iv")):
             store.insert_greek(
                 Greek(
                     isin=row["isin"],

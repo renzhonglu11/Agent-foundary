@@ -8,6 +8,11 @@ use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use sqlx::{SqlitePool, sqlite::SqliteConnectOptions};
 
+use super::provider_budget::Budget;
+const BUDGET_SCHEMA: &str = include_str!(
+    "../../python/src/agent_foundry_python/structured_products/migrations/0003_provider_budgets.sql"
+);
+
 const SCHEMA: &str = include_str!(
     "../../python/src/agent_foundry_python/structured_products/migrations/0002_provider_access.sql"
 );
@@ -25,6 +30,7 @@ struct SourcePolicy {
     label: String,
     scope: String,
     interval_seconds: f64,
+    budget: Budget,
 }
 #[derive(Deserialize)]
 struct Policy {
@@ -35,6 +41,7 @@ struct Policy {
     limited: Backoff,
     unavailable: Backoff,
     sources: HashMap<String, SourcePolicy>,
+    budget: Budget,
 }
 
 #[derive(Clone)]
@@ -63,6 +70,13 @@ impl std::fmt::Display for ProviderCoolingDown {
 }
 impl std::error::Error for ProviderCoolingDown {}
 
+#[derive(Debug, thiserror::Error)]
+#[error("{source_name}: request budget exhausted; retry after {retry_at}")]
+pub struct ProviderBudgetExhausted {
+    pub source_name: String,
+    pub retry_at: String,
+}
+
 impl ProviderAccess {
     pub async fn open(path: &Path) -> anyhow::Result<Self> {
         if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
@@ -90,7 +104,12 @@ impl ProviderAccess {
 
     async fn build(pool: SqlitePool, interval_override: Option<f64>) -> anyhow::Result<Self> {
         let policy: Policy = serde_json::from_str(POLICY)?;
+        anyhow::ensure!(
+            policy.budget.valid() && policy.sources.values().all(|p| p.budget.valid()),
+            "invalid provider budget"
+        );
         sqlx::raw_sql(SCHEMA).execute(&pool).await?;
+        sqlx::raw_sql(BUDGET_SCHEMA).execute(&pool).await?;
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(policy.timeout_seconds))
             .connect_timeout(Duration::from_secs(10))
@@ -172,34 +191,49 @@ impl ProviderAccess {
         Ok(payload)
     }
 
+    fn budget(&self, source: &str) -> &Budget {
+        self.policy
+            .sources
+            .get(source)
+            .map(|p| &p.budget)
+            .unwrap_or(&self.policy.budget)
+    }
+
     pub async fn acquire(&self, source: &str, resource: &str) -> anyhow::Result<()> {
-        sqlx::query("INSERT OR IGNORE INTO provider_access(source) VALUES (?)")
-            .bind(source)
-            .execute(&self.pool)
-            .await?;
+        self.acquire_priority(source, resource, false).await
+    }
+
+    // Tier 1 workers and background clients reserve from the same sliding windows.
+    async fn acquire_priority(
+        &self,
+        source: &str,
+        resource: &str,
+        tier1: bool,
+    ) -> anyhow::Result<()> {
         loop {
             let now = now_seconds();
-            // Atomic reservation: Python and Rust cannot reserve the same slot.
-            let reserved: Option<String> = sqlx::query_scalar(
-                "UPDATE provider_access SET next_request_at=? WHERE source=? AND next_request_at<=? AND blocked_until<=? AND NOT EXISTS (SELECT 1 FROM provider_missing_products WHERE source=? AND resource=? AND retry_at>?) RETURNING source",
-            ).bind(now + self.interval_override.unwrap_or_else(|| self.policy.sources.get(source).map_or(self.policy.interval_seconds, |p| p.interval_seconds))).bind(source).bind(now).bind(now)
-                .bind(source).bind(resource).bind(now).fetch_optional(&self.pool).await?;
-            if reserved.is_some() {
-                return Ok(());
-            }
+            // The lock covers both budget accounting and the spacing reservation.
+            // It is released before sleeping or doing network I/O.
+            let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+            sqlx::query("INSERT OR IGNORE INTO provider_access(source) VALUES (?)")
+                .bind(source)
+                .execute(&mut *tx)
+                .await?;
             let (next, blocked): (f64, f64) = sqlx::query_as(
                 "SELECT next_request_at, blocked_until FROM provider_access WHERE source=?",
             )
             .bind(source)
-            .fetch_one(&self.pool)
+            .fetch_one(&mut *tx)
             .await?;
             if blocked > now {
+                tx.commit().await?;
                 return Err(ProviderCoolingDown(source.to_owned()).into());
             }
             let missing: bool = sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM provider_missing_products WHERE source=? AND resource=? AND retry_at>?)",
-            ).bind(source).bind(resource).bind(now).fetch_one(&self.pool).await?;
+                "SELECT EXISTS(SELECT 1 FROM provider_missing_products WHERE source=? AND resource=? AND retry_at>?)")
+                .bind(source).bind(resource).bind(now).fetch_one(&mut *tx).await?;
             if missing {
+                tx.commit().await?;
                 return Err(ProviderRequestError {
                     source_name: source.into(),
                     status: 404,
@@ -207,7 +241,48 @@ impl ProviderAccess {
                 }
                 .into());
             }
-            tokio::time::sleep(Duration::from_secs_f64((next - now).max(0.01))).await;
+            let events: Vec<(f64, String)> = sqlx::query_as(
+                "SELECT requested_at,priority FROM provider_request_events WHERE source=? AND requested_at>? ORDER BY requested_at")
+                .bind(source).bind(now - 86400.0).fetch_all(&mut *tx).await?;
+            let usage = self.budget(source).usage(&events, now);
+            if usage.blocked(tier1) {
+                tx.commit().await?;
+                return Err(ProviderBudgetExhausted {
+                    source_name: source.into(),
+                    retry_at: iso_time(usage.retry_at(tier1)).unwrap_or_default(),
+                }
+                .into());
+            }
+            if next > now {
+                tx.commit().await?;
+                tokio::time::sleep(Duration::from_secs_f64((next - now).max(0.01))).await;
+                continue;
+            }
+            let interval = self.interval_override.unwrap_or_else(|| {
+                self.policy
+                    .sources
+                    .get(source)
+                    .map_or(self.policy.interval_seconds, |p| p.interval_seconds)
+            });
+            sqlx::query("UPDATE provider_access SET next_request_at=? WHERE source=?")
+                .bind(now + interval)
+                .bind(source)
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query(
+                "INSERT INTO provider_request_events(source,requested_at,priority) VALUES (?,?,?)",
+            )
+            .bind(source)
+            .bind(now)
+            .bind(if tier1 { "tier1" } else { "background" })
+            .execute(&mut *tx)
+            .await?;
+            sqlx::query("DELETE FROM provider_request_events WHERE requested_at<=?")
+                .bind(now - 86400.0)
+                .execute(&mut *tx)
+                .await?;
+            tx.commit().await?;
+            return Ok(());
         }
     }
 
@@ -254,23 +329,27 @@ impl ProviderAccess {
             "SELECT source, blocked_until, last_status, updated_at FROM provider_access ORDER BY source",
         ).fetch_all(&self.pool).await.context("read provider access state")?;
         let now = now_seconds();
-        Ok(json!(
-            rows.into_iter()
-                .map(|(source, until, status, checked)| json!({
-                    "label": self.policy.sources.get(&source).map(|p| p.label.as_str()).unwrap_or(&source),
-                    "scope": self.policy.sources.get(&source).map(|p| p.scope.as_str()).unwrap_or("other"),
-                    "source": source, "coolingDown": until > now, "retryAt": iso_time(until),
-                    "lastStatus": status, "lastCheckedAt": iso_time(checked),
-                }))
-                .collect::<Vec<_>>()
-        ))
+        let mut providers = Vec::with_capacity(rows.len());
+        for (source, until, status, checked) in rows {
+            let events: Vec<(f64, String)> = sqlx::query_as(
+                "SELECT requested_at,priority FROM provider_request_events WHERE source=? AND requested_at>? ORDER BY requested_at")
+                .bind(&source).bind(now - 86400.0).fetch_all(&self.pool).await?;
+            providers.push(json!({
+                "label": self.policy.sources.get(&source).map(|p| p.label.as_str()).unwrap_or(&source),
+                "scope": self.policy.sources.get(&source).map(|p| p.scope.as_str()).unwrap_or("other"),
+                "source": source, "coolingDown": until > now, "retryAt": iso_time(until),
+                "lastStatus": status, "lastCheckedAt": iso_time(checked),
+                "budget": self.budget(&source).usage(&events, now).payload(),
+            }));
+        }
+        Ok(json!(providers))
     }
 }
 
 fn now_seconds() -> f64 {
     Utc::now().timestamp_millis() as f64 / 1000.0
 }
-fn iso_time(seconds: f64) -> Option<String> {
+pub(super) fn iso_time(seconds: f64) -> Option<String> {
     if seconds <= 0.0 {
         return None;
     }
@@ -474,5 +553,117 @@ mod tests {
             7200.0
         );
         assert_eq!(retry_after_seconds(Some("tomorrow"), 0.0), 0.0);
+    }
+
+    async fn small_budget() -> anyhow::Result<ProviderAccess> {
+        let mut access = access().await?;
+        let mut policy: Policy = serde_json::from_str(POLICY)?;
+        policy.budget = Budget {
+            hour: 4,
+            day: 5,
+            tier1_reserved_hour: 2,
+            tier1_reserved_day: 2,
+        };
+        access.policy = Arc::new(policy);
+        Ok(access)
+    }
+
+    #[tokio::test]
+    async fn budgets_survive_clients_and_preserve_tier1_capacity() -> anyhow::Result<()> {
+        let first = small_budget().await?;
+        first.acquire("test", "one").await?;
+        first.acquire("test", "two").await?;
+        let mut restarted = ProviderAccess::from_pool(first.pool.clone(), 0.0).await?;
+        restarted.policy = first.policy.clone();
+        let error = restarted
+            .acquire("test", "background")
+            .await
+            .err()
+            .context("must deny background")?;
+        assert!(error.downcast_ref::<ProviderBudgetExhausted>().is_some());
+        let state = restarted.status().await?;
+        assert_eq!(state[0]["coolingDown"], false);
+        assert_eq!(state[0]["budget"]["limited"], false);
+        assert_eq!(state[0]["budget"]["backgroundLimited"], true);
+        restarted.acquire_priority("test", "tier1-a", true).await?;
+        restarted.acquire_priority("test", "tier1-b", true).await?;
+        assert!(
+            restarted
+                .acquire_priority("test", "tier1-c", true)
+                .await
+                .is_err()
+        );
+        // Rolling hour expiry does not erase the daily budget.
+        sqlx::query("UPDATE provider_request_events SET requested_at=requested_at-3601")
+            .execute(&first.pool)
+            .await?;
+        restarted.acquire("test", "last-day-slot").await?;
+        restarted.record("test", "last-day-slot", 200, None).await?;
+        assert!(
+            restarted
+                .acquire_priority("test", "daily-denied", true)
+                .await
+                .is_err()
+        );
+        let state = restarted.status().await?;
+        assert_eq!(state[0]["budget"]["day"]["used"], 5);
+        assert_eq!(state[0]["lastStatus"], 200);
+        assert_eq!(state[0]["budget"]["limited"], true);
+        sqlx::query("UPDATE provider_request_events SET requested_at=requested_at-86401")
+            .execute(&first.pool)
+            .await?;
+        restarted.acquire_priority("test", "new-day", true).await?;
+        assert_eq!(restarted.status().await?[0]["budget"]["day"]["used"], 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn concurrent_callers_cannot_overspend_and_denied_http_never_sends() -> anyhow::Result<()>
+    {
+        let access = small_budget().await?;
+        let mut tasks = tokio::task::JoinSet::new();
+        for _ in 0..12 {
+            let client = access.clone();
+            tasks.spawn(async move { client.acquire("test", "same").await.is_ok() });
+        }
+        let mut admitted = 0;
+        while let Some(result) = tasks.join_next().await {
+            admitted += usize::from(result?);
+        }
+        assert_eq!(admitted, 2);
+        // A failing network endpoint would produce a transport error if reached.
+        let error = access
+            .json::<Value>("test", "denied", |client| {
+                client.get("http://127.0.0.1:1/unreachable")
+            })
+            .await
+            .err()
+            .context("must deny before network")?;
+        assert!(error.downcast_ref::<ProviderBudgetExhausted>().is_some());
+        assert_eq!(access.status().await?[0]["budget"]["hour"]["used"], 2);
+        assert_eq!(access.status().await?[0]["lastStatus"], Value::Null);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn reservations_from_external_workers_count_towards_the_same_limits() -> anyhow::Result<()>
+    {
+        let access = small_budget().await?;
+        // Matches the Python SourceGuard insert and shared migration exactly.
+        for _ in 0..2 {
+            sqlx::query(
+                "INSERT INTO provider_request_events(source,requested_at,priority) VALUES (?,?,?)",
+            )
+            .bind("test")
+            .bind(now_seconds())
+            .bind("background")
+            .execute(&access.pool)
+            .await?;
+        }
+        assert!(access.acquire("test", "rust-background").await.is_err());
+        access.acquire_priority("test", "tier1", true).await?;
+        assert_eq!(access.status().await?[0]["budget"]["hour"]["used"], 3);
+        access.acquire("independent-source", "allowed").await?;
+        Ok(())
     }
 }

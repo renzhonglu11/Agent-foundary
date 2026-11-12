@@ -105,9 +105,12 @@ class StructuredProductStore:
             conn.execute(
                 """
                 INSERT INTO quotes (isin, timestamp, price, currency)
-                VALUES (?, ?, ?, ?)
+                SELECT ?, ?, ?, ? WHERE NOT EXISTS (
+                    SELECT 1 FROM quotes WHERE isin=? AND timestamp=? AND price=? AND currency=?
+                )
                 """,
-                (quote.isin, quote.timestamp.isoformat(), quote.price, quote.currency),
+                (quote.isin, quote.timestamp.isoformat(), quote.price, quote.currency,
+                 quote.isin, quote.timestamp.isoformat(), quote.price, quote.currency),
             )
 
     def insert_greek(self, greek: Greek) -> None:

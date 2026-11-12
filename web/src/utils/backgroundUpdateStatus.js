@@ -44,6 +44,9 @@ export function productUpdateState(data, error, marketOpen) {
   if (Array.isArray(data.providers) && data.providers.some(provider => provider.coolingDown && (provider.scope === 'products' || ['api.onvista.de', 'api.boerse-frankfurt.de'].includes(provider.source)))) {
     return { label: '渠道冷却中', color: 'warning', busy: Boolean(data.running), issue: '部分数据源暂时暂停请求；可用渠道继续更新，缺失部分保留缓存。' }
   }
+  if (Array.isArray(data.providers) && data.providers.some(provider => provider.budget?.limited && provider.scope === 'products')) {
+    return { label: '请求预算已用完', color: 'warning', busy: Boolean(data.running), issue: '部分产品来源达到本地请求预算，额度恢复后由后续任务重试；已有缓存继续保留。' }
+  }
   if (data.running) return { label: data.mode === 'fallback' ? '整理缓存中' : '正在抓取', color: 'info', busy: true }
   if (data.queued) return { label: '排队中', color: 'info', busy: true }
   if (data.liveEnabled === false) return { label: '实时抓取关闭', color: 'warning', issue: '产品实时抓取已关闭，已有缓存仍可显示。' }
@@ -58,7 +61,16 @@ export function providerUpdateState(data, error) {
   if (error || data?.providerStatusError) return { label: '状态不可用', color: 'warning', issue: data?.providerStatusError || '无法读取数据源访问保护状态。' }
   if (!Array.isArray(data?.providers) || !data.providers.length) return { label: '暂无请求记录', color: 'default' }
   if (data.providers.some(provider => provider.coolingDown)) return { label: '部分来源暂停', color: 'warning', issue: '部分数据源处于冷却期；等待结束后由后续任务重试，已有缓存继续保留。' }
+  if (data.providers.some(provider => provider.budget?.limited)) return { label: '部分来源预算用完', color: 'warning', issue: '已达到本地请求上限；这不代表数据源封禁。滚动额度恢复后再尝试。' }
+  if (data.providers.some(provider => provider.budget?.backgroundLimited)) return { label: '后台请求受限', color: 'warning', issue: '后台请求额度已用完，剩余额度保留给 Tier 1 持仓更新。' }
   return { label: '未在冷却', color: 'success' }
+}
+
+export function providerAccessLabel(provider) {
+  if (provider.coolingDown) return '暂停请求'
+  if (provider.budget?.limited) return '请求预算已用完'
+  if (provider.budget?.backgroundLimited) return '后台额度用完，Tier 1 可继续'
+  return provider.lastStatus >= 200 && provider.lastStatus < 300 ? '最近请求成功' : '等待下次尝试'
 }
 
 export function backgroundUpdateState(monitor, products, providers) {

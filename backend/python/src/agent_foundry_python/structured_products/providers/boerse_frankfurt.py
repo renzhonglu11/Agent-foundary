@@ -68,6 +68,7 @@ class BoerseFrankfurtProductProvider:
     """
 
     BASE_URL = "https://api.boerse-frankfurt.de/v1/data/derivatives_master_data"
+    source = SOURCE
 
     def __init__(
         self,

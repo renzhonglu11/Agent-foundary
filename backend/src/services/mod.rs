@@ -20,3 +20,5 @@ pub mod systemd_status;
 
 #[cfg(test)]
 pub(crate) mod provider_test_support;
+
+mod provider_budget;

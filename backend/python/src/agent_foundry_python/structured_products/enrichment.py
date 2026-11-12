@@ -7,6 +7,7 @@ from typing import Any, Callable, Protocol
 
 from agent_foundry_python.structured_products.models import Greek, InstrumentMetadata, Quote
 from agent_foundry_python.structured_products.storage import StructuredProductStore
+from agent_foundry_python.structured_products.providers.refusal import REQUEST_PRIORITY
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +63,7 @@ async def enrich_structured_product_rows(
     live_enrichment_tier: str | None = None,
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
     max_concurrency: int = 3,
+    preserve_order: bool = False,
 ) -> list[dict]:
     """Enrich rows with live quotes, metadata, and greeks.
 
@@ -325,8 +327,23 @@ async def enrich_structured_product_rows(
                 
             return enriched
 
-    tasks = [process_row(row) for row in rows]
-    return list(await asyncio.gather(*tasks))
+    async def prioritized_row(index, row):
+        token = REQUEST_PRIORITY.set("tier1" if row.get("enrichment_tier") == "tier1" else "background")
+        try:
+            return index, await process_row(row)
+        finally:
+            REQUEST_PRIORITY.reset(token)
+
+    # Tier 2 term lookups used to run concurrently and could take the request
+    # slots before Tier 1. Complete Tier 1 first, with larger positions first.
+    result = [None] * len(rows)
+    for tier1 in (True, False):
+        batch = [(i, row) for i, row in enumerate(rows) if (row.get("enrichment_tier") == "tier1") == tier1]
+        if not preserve_order:
+            batch.sort(key=lambda pair: -abs(float(pair[1].get("market_value") or 0)))
+        for index, enriched in await asyncio.gather(*(prioritized_row(i, row) for i, row in batch)):
+            result[index] = enriched
+    return result
 
 
 def apply_cached_enrichment(rows: list[dict], cache_store: StructuredProductStore) -> list[dict]:

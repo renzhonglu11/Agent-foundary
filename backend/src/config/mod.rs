@@ -29,6 +29,8 @@ pub struct StructuredProductsSettings {
     pub export_files: bool,
     pub auto_refresh_enabled: bool,
     pub auto_refresh_interval_mins: u64,
+    pub tier2_sources: Vec<String>,
+    pub tier2_interval_mins: u64,
     pub market_open_hour_cet: u32,
     pub market_close_hour_cet: u32,
 }
@@ -144,6 +146,16 @@ impl StructuredProductsSettings {
             )
             .parse()
             .unwrap_or(60),
+            tier2_sources: env_or("STRUCTURED_PRODUCTS_TIER2_SOURCES", "")
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+                .collect(),
+            tier2_interval_mins: env_or("STRUCTURED_PRODUCTS_TIER2_INTERVAL_MINS", "120")
+                .parse::<u64>()
+                .unwrap_or(120)
+                .clamp(120, 1440),
             market_open_hour_cet: env_or("STRUCTURED_PRODUCTS_MARKET_OPEN_HOUR_CET", "8")
                 .parse()
                 .unwrap_or(8),
