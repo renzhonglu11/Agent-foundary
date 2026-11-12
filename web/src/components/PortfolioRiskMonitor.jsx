@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Alert, Box, Button, Checkbox, Chip, FormControlLabel, Paper, Stack, Table, TableBody, TableCell, TableHead, TableRow, TextField, Typography } from '@mui/material'
 import { compactCurrency } from '../utils/formatters.js'
+import { KNOWN_DATA_LIMITATIONS } from '../utils/dataHealth.js'
 import { useMonitorActions, useMonitorEvents, useMonitorHistory } from '../hooks/usePortfolioMonitor.js'
 
 const time = value => value ? new Date(value).toLocaleString() : '—'
@@ -21,8 +22,6 @@ const reasonLabels = {
   strike_missing: '行权价缺失', ratio_missing: '兑换比率缺失', expired_or_expiry_missing: '已到期或到期日缺失', volatility_unavailable: '无法取得定价波动率',
   leverage_missing: '杠杆缺失', turbo_terms_missing: 'Turbo 条款不完整', product_data_unusable: '产品输入过期或时间错位', short_or_missing_quantity: '空头或缺少有效数量', fx_missing: '汇率缺失',
 }
-// Standing limits of the data sources; they do not raise the data-quality alert.
-const knownDataLimitations = new Set(['valuation_market_time_unknown', 'greeks_market_time_unknown', 'underlying_unmapped', 'product_currency_unsupported'])
 const fields = [
   ['shockPct', '基准冲击幅度 %', 1, 100], ['horizonDays', '情景期限（天）', 0, 90],
   ['ivMovePct', 'IV 相对变化 %', -90, 200], ['fxMovePct', '美元兑欧元变化 %', -90, 100],
@@ -60,7 +59,7 @@ export default function PortfolioRiskMonitor({ data }) {
   const events = useMonitorEvents(eventKey)
   const risk = data?.snapshot?.risk
   const activeLimits = limits.filter(([key]) => data?.configuration?.settings?.[key] != null)
-  const limitedOnly = (data?.snapshot?.positions || []).filter(row => row.issues?.length && row.issues.every(issue => knownDataLimitations.has(issue))).length
+  const limitedOnly = (data?.snapshot?.positions || []).filter(row => row.issues?.length && row.issues.every(issue => KNOWN_DATA_LIMITATIONS.has(issue))).length
   const alerts = [...(data?.alerts || [])].sort((a, b) => ['active', 'acknowledged', 'pending', 'invalidated', 'resolved'].indexOf(a.status) - ['active', 'acknowledged', 'pending', 'invalidated', 'resolved'].indexOf(b.status))
   return <Paper variant="outlined" sx={{ p: 1.5, mt: 1.5, minWidth: 0 }}>
     <Typography variant="subtitle1" fontWeight={700}>后台风险、预警与日终复盘</Typography>

@@ -19,20 +19,9 @@ import {
 
 import { compactCurrency, number } from '../utils/formatters.js'
 import { EXIT_SIGNAL_DEFAULTS } from '../utils/exitSignals.js'
+import { EXIT_LEVEL_META, productTypeLabel } from '../utils/labels.js'
 
-const levelMeta = {
-  urgent: { label: '优先复核', color: 'error' },
-  warn: { label: '留意', color: 'warning' },
-  ok: { label: '未触发', color: 'success' },
-  unknown: { label: '数据不足', color: 'default' },
-}
 
-const productTypeLabels = {
-  optionsschein: '权证',
-  open_end_turbo: 'Turbo',
-  knock_out: 'Knock-out',
-  factor_certificate: 'Factor',
-}
 
 const trendLabels = { against: '逆向', with: '顺向', mixed: '不明确' }
 const volatilitySourceLabels = { realized20: '20 日历史', realized60: '60 日历史', implied: '权证隐含' }
@@ -102,8 +91,8 @@ export default function ExitSignalsPanel({ report, dailyStats, dailyStatsLoading
         </Box>
         <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap', alignItems: 'center' }}>
           {['urgent', 'warn', 'ok', 'unknown'].filter(level => report.counts[level] > 0).map(level => (
-            <Chip key={level} size="small" color={levelMeta[level].color} variant={level === 'ok' || level === 'unknown' ? 'outlined' : 'filled'}
-              label={`${levelMeta[level].label} ${report.counts[level]} 个 · ${compactCurrency(report.values[level])}`} />
+            <Chip key={level} size="small" color={EXIT_LEVEL_META[level].color} variant={level === 'ok' || level === 'unknown' ? 'outlined' : 'filled'}
+              label={`${EXIT_LEVEL_META[level].label} ${report.counts[level]} 个 · ${compactCurrency(report.values[level])}`} />
           ))}
           <FormControlLabel sx={{ ml: 0.5 }} control={<Switch size="small" checked={showAll} onChange={event => setShowAll(event.target.checked)} />} label="显示全部" />
         </Stack>
@@ -122,10 +111,10 @@ export default function ExitSignalsPanel({ report, dailyStats, dailyStatsLoading
                 <TableRow key={signal.id} hover onClick={() => onSelectProduct?.(signal.id)} sx={{ cursor: onSelectProduct ? 'pointer' : 'default' }}>
                   <TableCell sx={{ maxWidth: 230 }}>
                     <Typography variant="body2" fontWeight={700} noWrap title={signal.name}>{signal.name}</Typography>
-                    <Line>{productTypeLabels[signal.productType] || signal.productType} · {signal.groupName}{signal.daysToExpiry != null ? ` · ${signal.daysToExpiry} 天到期` : ''}</Line>
+                    <Line>{productTypeLabel(signal.productType)} · {signal.groupName}{signal.daysToExpiry != null ? ` · ${signal.daysToExpiry} 天到期` : ''}</Line>
                   </TableCell>
                   <TableCell sx={{ minWidth: 260, maxWidth: 380 }}>
-                    <Chip size="small" color={levelMeta[signal.level].color} variant={signal.level === 'urgent' || signal.level === 'warn' ? 'filled' : 'outlined'} label={levelMeta[signal.level].label} sx={{ height: 20, mb: 0.25 }} />
+                    <Chip size="small" color={EXIT_LEVEL_META[signal.level].color} variant={signal.level === 'urgent' || signal.level === 'warn' ? 'filled' : 'outlined'} label={EXIT_LEVEL_META[signal.level].label} sx={{ height: 20, mb: 0.25 }} />
                     {signal.reasons.map(reason => <Line key={reason.code} color={reason.severity === 'urgent' ? 'error.main' : 'text.primary'}>{reason.text}</Line>)}
                   </TableCell>
                   <TableCell sx={{ minWidth: 250 }}><KeyMetrics signal={signal} /></TableCell>

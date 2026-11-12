@@ -7,6 +7,8 @@ import {
   Drawer,
   LinearProgress,
   Stack,
+  Tab,
+  Tabs,
   Tooltip,
   Typography,
   keyframes,
@@ -18,10 +20,13 @@ import AddCircleRoundedIcon from '@mui/icons-material/AddCircleRounded'
 import AutorenewRoundedIcon from '@mui/icons-material/AutorenewRounded'
 import CheckCircleRoundedIcon from '@mui/icons-material/CheckCircleRounded'
 import TrendingDownRoundedIcon from '@mui/icons-material/TrendingDownRounded'
+import ViewListRoundedIcon from '@mui/icons-material/ViewListRounded'
 
 import { compactCurrency, number } from '../utils/formatters.js'
 import { buildExitSignals } from '../utils/exitSignals.js'
+import { RISK_SIGNAL_LABELS, confidenceLabel } from '../utils/labels.js'
 import { buildOpportunityScreen } from '../utils/opportunityScreen.js'
+import { buildPositionsCoverage } from '../utils/positionsCoverage.js'
 import { buildGroupShockScales } from '../utils/portfolioStress.js'
 import { buildRollWhatIfs } from '../utils/rollWhatIf.js'
 import { buildWatchlistGroups, canonicalGroupKey } from '../utils/watchlistGrouping.js'
@@ -29,12 +34,15 @@ import { useAlpacaDailyStats } from '../hooks/useAlpacaDailyStats.js'
 import { useIvHistory } from '../hooks/useIvHistory.js'
 import { useProductWatchlist } from '../hooks/useProductCandidates.js'
 import { mergeOpportunityGroups } from '../utils/productCandidates.js'
+import { DataHealthChip, DataHealthPanel, useDataHealth } from './DataHealthBadge.jsx'
 import ExitSignalsPanel from './ExitSignalsPanel.jsx'
 import OpportunitiesPanel from './OpportunitiesPanel.jsx'
 import PortfolioStressTestPanel from './PortfolioStressTestPanel.jsx'
 import ProductMonitoringDashboard from './ProductMonitoringDashboard.jsx'
 
+const ALL_ACTIONS = 'ALL'
 const actionDefinitions = [
+  { id: ALL_ACTIONS, title: '全部', subtitle: '全部 Tier 1 产品', color: 'primary', icon: ViewListRoundedIcon },
   { id: 'SELL', title: 'SELL', subtitle: '卖出 / 降低风险', color: 'error', icon: TrendingDownRoundedIcon },
   { id: 'ROLL', title: 'ROLL', subtitle: '展期 / 换仓', color: 'warning', icon: AutorenewRoundedIcon },
   { id: 'HOLD', title: 'HOLD', subtitle: '继续持有并监控', color: 'info', icon: CheckCircleRoundedIcon },
@@ -56,6 +64,26 @@ const riskActionColors = {
   BUY_MORE: 'success',
 }
 
+const subTabs = ['holdings', 'exits', 'plans', 'opportunities']
+const SUB_TAB_STORAGE_KEY = 'positions.subTab'
+
+function storedSubTab() {
+  try {
+    const value = window.localStorage.getItem(SUB_TAB_STORAGE_KEY)
+    return subTabs.includes(value) ? value : 'holdings'
+  } catch {
+    return 'holdings'
+  }
+}
+
+function storeSubTab(value) {
+  try {
+    window.localStorage.setItem(SUB_TAB_STORAGE_KEY, value)
+  } catch {
+    // Storage can be blocked; the tab then resets on reload.
+  }
+}
+
 const rowClickedPulse = keyframes`
   0% { background-color: rgba(19, 222, 185, 0.28); }
   70% { background-color: rgba(19, 222, 185, 0.14); }
@@ -70,26 +98,13 @@ const riskSignalColors = {
   OK: '#4caf50',
 }
 
-const riskSignalLabels = {
-  HARD_BLOCKED: '危险',
-  WATCH: '观察',
-  OK: '安全',
-}
 
-const confidenceLabels = {
-  live_delta: '实时 Delta',
-  estimated_delta: '估算 Delta',
-  estimated_omega: '估算 Omega',
-  estimated_leverage: '估算杠杆',
-  estimated_market_value: '估算市值',
-  no_data: '无数据',
-}
 
 function riskTooltipLines(leg) {
   if (!leg) return '无风险数据'
   const lines = [
-    `状态: ${riskSignalLabels[leg.legRiskStatus] || leg.legRiskStatus || '—'}`,
-    `敞口置信度: ${confidenceLabels[leg.exposureConfidence] || leg.exposureConfidence || '—'}`,
+    `状态: ${RISK_SIGNAL_LABELS[leg.legRiskStatus] || leg.legRiskStatus || '—'}`,
+    `敞口置信度: ${confidenceLabel(leg.exposureConfidence)}`,
     `数据完整度: ${leg.dataCompletenessRiskScore ?? '—'} / 10`,
   ]
   if (leg.barrierDistancePct != null) lines.push(`障碍距离: ${(leg.barrierDistancePct * 100).toFixed(1)}%`)
@@ -108,6 +123,12 @@ export default function PositionsActionBoard({ data, riskData, riskLoading, risk
   const [activeActionId, setActiveActionId] = useState(null)
   const [selectedProduct, setSelectedProduct] = useState(null)
   const [clickedRowId, setClickedRowId] = useState(null)
+  const [subTab, setSubTab] = useState(storedSubTab)
+  // Panels mount on first visit and then stay mounted, so their own settings
+  // survive tab switches while unopened panels skip their calculations.
+  const [visitedTabs, setVisitedTabs] = useState(() => new Set([subTab]))
+  const [healthOpen, setHealthOpen] = useState(false)
+  const dataHealth = useDataHealth()
   const totalMarketValue = Number(data?.summary?.totalMarketValue) || 0
   const totalCostBasis = Number(data?.summary?.totalCostBasis) || 0
   const productWatchlist = useProductWatchlist()
@@ -144,14 +165,20 @@ export default function PositionsActionBoard({ data, riskData, riskLoading, risk
     totalMarketValue,
   }), [opportunityGroups, dailyStats.data, productEntries, ivHistory.data, exitReport, totalMarketValue])
   const rollWhatIfs = useMemo(() => buildRollWhatIfs(productEntries, exitReport.signals), [productEntries, exitReport])
+  const coverage = useMemo(() => buildPositionsCoverage({
+    positions: data?.positions,
+    tier1Groups,
+    shownEntries: productEntries,
+  }), [data, tier1Groups, productEntries])
+  const urgentExitCount = exitReport.counts?.urgent || 0
+  const flaggedRollCount = rollWhatIfs.filter(roll => roll.flagged).length
   const sections = useMemo(() => (
     actionDefinitions.map((definition) => ({
       ...definition,
-      entries: productEntries.filter((entry) => entry.primaryAction === definition.id),
+      entries: definition.id === ALL_ACTIONS ? productEntries : productEntries.filter((entry) => entry.primaryAction === definition.id),
     }))
   ), [productEntries])
-  const defaultActionId = sections.find((section) => section.entries.length > 0)?.id || 'SELL'
-  const resolvedActiveActionId = activeActionId ?? defaultActionId
+  const resolvedActiveActionId = activeActionId ?? ALL_ACTIONS
   const activeSection = sections.find((section) => section.id === resolvedActiveActionId) || sections[0]
 
   const loading = Boolean(riskLoading || structuredProductsLoading)
@@ -160,6 +187,12 @@ export default function PositionsActionBoard({ data, riskData, riskLoading, risk
     setActiveActionId(actionId)
     setSelectedProduct(null)
     setClickedRowId(null)
+  }
+
+  const handleSubTabChange = (_event, value) => {
+    setSubTab(value)
+    setVisitedTabs(current => (current.has(value) ? current : new Set([...current, value])))
+    storeSubTab(value)
   }
 
   const handleRowClick = (row) => {
@@ -182,103 +215,145 @@ export default function PositionsActionBoard({ data, riskData, riskLoading, risk
           <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap' }}>
             <Chip size="small" color="primary" label={`${groupsWithRisk.length} 标的组`} />
             <Chip size="small" variant="outlined" label={`${productEntries.length} 产品`} />
+            <DataHealthChip health={dataHealth} open={healthOpen} onToggle={() => setHealthOpen(current => !current)} />
           </Stack>
         </Stack>
       </Box>
+      <DataHealthPanel health={dataHealth} open={healthOpen} />
 
       {loading ? <LinearProgress /> : null}
 
-      <Stack spacing={1.5} sx={{ p: { xs: 1.5, md: 2 } }}>
+      <Tabs
+        value={subTab}
+        onChange={handleSubTabChange}
+        variant="scrollable"
+        allowScrollButtonsMobile
+        aria-label="仓位监控子页面"
+        sx={{
+          px: { xs: 1, md: 1.5 },
+          minHeight: 44,
+          borderBottom: '1px solid #e5eaef',
+          '& .MuiTab-root': { minHeight: 44, textTransform: 'none', fontWeight: 700 },
+        }}
+      >
+        <Tab value="holdings" id="positions-tab-holdings" aria-controls="positions-panel-holdings"
+          label={<TabLabel label="持仓" count={`${coverage.shownCount} / ${coverage.heldCount}`} />} />
+        <Tab value="exits" id="positions-tab-exits" aria-controls="positions-panel-exits"
+          label={<TabLabel label="退场信号" badge={urgentExitCount} color="error" />} />
+        <Tab value="plans" id="positions-tab-plans" aria-controls="positions-panel-plans" label="方案对比" />
+        <Tab value="opportunities" id="positions-tab-opportunities" aria-controls="positions-panel-opportunities"
+          label={<TabLabel label="机会与换仓" badge={flaggedRollCount} />} />
+      </Tabs>
+
+      <Stack spacing={1.5} useFlexGap sx={{ p: { xs: 1.5, md: 2 } }}>
         {riskError ? <Alert severity="warning" sx={{ py: 0 }}>风险数据加载失败：{riskError.message}</Alert> : null}
 
-        <Box
-          sx={{
-            display: 'grid',
-            gridTemplateColumns: { xs: '1fr', lg: 'minmax(0, 3fr) minmax(440px, 2fr)' },
-            gap: 1.5,
-            alignItems: 'start',
-          }}
-        >
-          <Stack spacing={1} sx={{ minWidth: 0 }}>
-            <ActionFilterBar
-              sections={sections}
-              activeActionId={resolvedActiveActionId}
-              onChange={handleActionChange}
-            />
-            <Box sx={{ border: '1px solid #e5eaef', borderRadius: 2, overflow: 'hidden' }}>
-              {activeSection.entries.length ? (
-                <ProductActionTable
-                  entries={activeSection.entries}
-                  onRowClick={handleRowClick}
-                  clickedRowId={clickedRowId}
-                />
-              ) : (
-                <Box sx={{ px: 1.5, py: 2 }}>
-                  <Typography variant="body2" color="text.secondary">
-                    当前没有匹配的 Tier 1 产品。
-                  </Typography>
-                </Box>
-              )}
-            </Box>
-          </Stack>
-
-          {isDesktopLayout ? (
-            <Box
-              sx={{
-                position: 'sticky',
-                top: 72,
-                zIndex: 5,
-                maxHeight: 'calc(100vh - 80px)',
-                overflowY: 'auto',
-                backgroundColor: '#ffffff',
-                borderRadius: 2,
-                boxShadow: '0 8px 24px rgba(15, 23, 42, 0.08)',
-                overscrollBehavior: 'contain',
-                minWidth: 0,
-              }}
-            >
-              <ProductMonitoringDashboard
-                item={selectedProduct?.item ?? null}
-                riskLeg={selectedProduct?.riskLeg ?? null}
-                onClose={() => setSelectedProduct(null)}
-                onAddPnlRecord={onAddPnlRecord}
+        <SubTabPanel value="holdings" active={subTab} visited={visitedTabs}>
+          <CoverageNotice coverage={coverage} loading={loading} />
+          <Box
+            sx={{
+              display: 'grid',
+              gridTemplateColumns: { xs: '1fr', lg: 'minmax(0, 3fr) minmax(440px, 2fr)' },
+              gap: 1.5,
+              alignItems: 'start',
+            }}
+          >
+            <Stack spacing={1} sx={{ minWidth: 0 }}>
+              <ActionFilterBar
+                sections={sections}
+                activeActionId={resolvedActiveActionId}
+                onChange={handleActionChange}
               />
-            </Box>
-          ) : null}
-        </Box>
+              <Box sx={{ border: '1px solid #e5eaef', borderRadius: 2, overflow: 'hidden' }}>
+                {activeSection.entries.length ? (
+                  <ProductActionTable
+                    entries={activeSection.entries}
+                    onRowClick={handleRowClick}
+                    clickedRowId={clickedRowId}
+                  />
+                ) : (
+                  <Box sx={{ px: 1.5, py: 2 }}>
+                    <Typography variant="body2" color="text.secondary">
+                      当前没有匹配的 Tier 1 产品。
+                    </Typography>
+                  </Box>
+                )}
+              </Box>
+            </Stack>
 
-        <ExitSignalsPanel
-          report={exitReport}
-          dailyStats={dailyStats.data}
-          dailyStatsLoading={dailyStats.loading}
-          dailyStatsError={dailyStats.error}
-          dailyStatsWarnings={dailyStats.warnings}
-          onSelectProduct={(id) => {
-            const entry = productEntries.find(candidate => candidate.item.symbol === id)
-            if (entry) setSelectedProduct(entry)
-          }}
-        />
+            {isDesktopLayout ? (
+              <Box
+                sx={{
+                  position: 'sticky',
+                  top: 72,
+                  zIndex: 5,
+                  maxHeight: 'calc(100vh - 80px)',
+                  overflowY: 'auto',
+                  backgroundColor: '#ffffff',
+                  borderRadius: 2,
+                  boxShadow: '0 8px 24px rgba(15, 23, 42, 0.08)',
+                  overscrollBehavior: 'contain',
+                  minWidth: 0,
+                }}
+              >
+                <ProductMonitoringDashboard
+                  item={selectedProduct?.item ?? null}
+                  riskLeg={selectedProduct?.riskLeg ?? null}
+                  onClose={() => setSelectedProduct(null)}
+                  onAddPnlRecord={onAddPnlRecord}
+                />
+              </Box>
+            ) : null}
+          </Box>
+        </SubTabPanel>
 
-        <PortfolioStressTestPanel
-          exitSignals={exitReport.signals}
-          positions={data.positions}
-          entries={productEntries}
-          loading={loading}
-          totalMarketValue={totalMarketValue}
-          totalCostBasis={totalCostBasis}
-        />
+        <SubTabPanel value="exits" active={subTab} visited={visitedTabs}>
+          {exitReport.signals.length ? (
+            <ExitSignalsPanel
+              report={exitReport}
+              dailyStats={dailyStats.data}
+              dailyStatsLoading={dailyStats.loading}
+              dailyStatsError={dailyStats.error}
+              dailyStatsWarnings={dailyStats.warnings}
+              onSelectProduct={(id) => {
+                const entry = productEntries.find(candidate => candidate.item.symbol === id)
+                if (!entry) return
+                setSelectedProduct(entry)
+                // On desktop the detail view lives beside the holdings table.
+                if (isDesktopLayout) handleSubTabChange(null, 'holdings')
+              }}
+            />
+          ) : (
+            <Typography variant="body2" color="text.secondary" sx={{ py: 1 }}>
+              {loading ? '正在读取风险数据…' : '当前没有可计算退场信号的 Tier 1 产品。'}
+            </Typography>
+          )}
+        </SubTabPanel>
 
-        <OpportunitiesPanel
-          watchlist={productWatchlist}
-          entries={productEntries}
-          heldIsins={heldIsins}
-          ivHistory={ivHistory.data}
-          screen={opportunityScreen}
-          rolls={rollWhatIfs}
-          loading={dailyStats.loading}
-          statsError={dailyStats.error}
-          ivMinObservations={ivHistory.minObservations}
-        />
+        <SubTabPanel value="plans" active={subTab} visited={visitedTabs}>
+          <PortfolioStressTestPanel
+            exitSignals={exitReport.signals}
+            positions={data.positions}
+            entries={productEntries}
+            loading={loading}
+            totalMarketValue={totalMarketValue}
+            totalCostBasis={totalCostBasis}
+          />
+        </SubTabPanel>
+
+        <SubTabPanel value="opportunities" active={subTab} visited={visitedTabs}>
+          <OpportunitiesPanel
+            watchlist={productWatchlist}
+            entries={productEntries}
+            heldIsins={heldIsins}
+            ivHistory={ivHistory.data}
+            screen={opportunityScreen}
+            rolls={rollWhatIfs}
+            loading={dailyStats.loading}
+            statsError={dailyStats.error}
+            ivMinObservations={ivHistory.minObservations}
+          />
+        </SubTabPanel>
       </Stack>
 
       {!isDesktopLayout ? (
@@ -315,6 +390,78 @@ export default function PositionsActionBoard({ data, riskData, riskLoading, risk
         </Drawer>
       ) : null}
     </Box>
+  )
+}
+
+// ---- sub tabs ----
+
+function TabLabel({ label, count, badge, color = 'primary' }) {
+  return (
+    <Stack direction="row" spacing={0.75} sx={{ alignItems: 'center' }}>
+      <span>{label}</span>
+      {count ? <Typography component="span" variant="caption" color="text.secondary" sx={{ fontVariantNumeric: 'tabular-nums' }}>{count}</Typography> : null}
+      {badge > 0 ? <Chip component="span" size="small" color={color} label={badge} sx={{ height: 18, fontSize: 11, '& .MuiChip-label': { px: 0.75 } }} /> : null}
+    </Stack>
+  )
+}
+
+// Hidden with `display: none` rather than the `hidden` attribute, which the
+// Stack's own display rule would override.
+function SubTabPanel({ value, active, visited, children }) {
+  if (!visited.has(value)) return null
+  return (
+    <Stack
+      spacing={1.5}
+      role="tabpanel"
+      id={`positions-panel-${value}`}
+      aria-labelledby={`positions-tab-${value}`}
+      sx={{ display: value === active ? 'flex' : 'none', minWidth: 0 }}
+    >
+      {children}
+    </Stack>
+  )
+}
+
+// What the product table leaves out, so a partial view is never mistaken for
+// the whole account.
+function CoverageNotice({ coverage, loading }) {
+  const [open, setOpen] = useState(false)
+  if (loading || !coverage.heldCount) return null
+  const { missingRisk, tier1Stocks, otherTiers } = coverage
+  const hiddenCount = coverage.heldCount - coverage.shownCount
+  const parts = [
+    missingRisk.count ? `${missingRisk.count} 个 Tier 1 产品缺少风险数据（${compactCurrency(missingRisk.value)}）` : null,
+    tier1Stocks.count ? `${tier1Stocks.count} 个 Tier 1 股票 / ETF 不在本表（${compactCurrency(tier1Stocks.value)}）` : null,
+    otherTiers.count ? `${otherTiers.count} 个 Tier 2 / 3 持仓（${compactCurrency(otherTiers.value)}）` : null,
+  ].filter(Boolean)
+  const listed = missingRisk.rows.slice(0, 12)
+  return (
+    <Alert
+      severity={missingRisk.count ? 'warning' : 'info'}
+      sx={{ py: 0.25, '& .MuiAlert-message': { minWidth: 0 } }}
+      action={missingRisk.count ? (
+        <Button size="small" color="inherit" aria-expanded={open} onClick={() => setOpen(current => !current)}>
+          {open ? '收起' : '查看缺失产品'}
+        </Button>
+      ) : null}
+    >
+      <Typography variant="body2">
+        本表显示 <b>{coverage.shownCount} / {coverage.heldCount}</b> 个持仓，占持仓市值 <b>{number.format(coverage.shownValuePct)}%</b>
+        {hiddenCount > 0 ? `；未显示 ${hiddenCount} 个：${parts.join('；')}。` : '，全部持仓都已显示。'}
+      </Typography>
+      {open ? (
+        <Box component="ul" sx={{ m: 0, mt: 0.5, pl: 2.5 }}>
+          {listed.map(row => (
+            <Typography component="li" variant="caption" key={row.symbol}>
+              {row.name} · {row.groupName} · {compactCurrency(row.marketValue)}
+            </Typography>
+          ))}
+          {missingRisk.rows.length > listed.length ? (
+            <Typography component="li" variant="caption">另有 {missingRisk.rows.length - listed.length} 个</Typography>
+          ) : null}
+        </Box>
+      ) : null}
+    </Alert>
   )
 }
 
@@ -378,7 +525,11 @@ function ActionFilterBar({ sections, activeActionId, onChange }) {
                   fontWeight={900}
                   sx={{ fontVariantNumeric: 'tabular-nums' }}
                 >
-                  {section.title} {section.entries.length}
+                  {section.title}
+                  {section.id !== ALL_ACTIONS ? (
+                    <Box component="span" sx={{ display: { xs: 'none', md: 'inline' }, fontWeight: 500, ml: 0.75, opacity: 0.75 }}>{section.subtitle}</Box>
+                  ) : null}
+                  <Box component="span" sx={{ ml: 0.75 }}>{section.entries.length}</Box>
                 </Typography>
               </Button>
             </Tooltip>
@@ -390,6 +541,22 @@ function ActionFilterBar({ sections, activeActionId, onChange }) {
 }
 
 // ---- table columns ----
+
+const GROUP_ACTION_LABELS = {
+  SELL: '卖出',
+  BUY: '买入',
+  HOLD: '持有',
+  EXIT_NOW: '立即退出',
+  REDUCE_CONCENTRATION: '降低集中度',
+  REDUCE_RISK: '降低风险',
+  REDUCE_DERIVATIVE_RISK: '降衍生品风险',
+  ROLL: '展期',
+  CLOSE_OR_ROLL_DERIVATIVE: '平仓或展期',
+  HOLD_MONITOR: '持有观察',
+  ADD_ALLOWED: '允许加仓',
+  BUY_MORE: '主动加仓',
+  'N/A': '无评估',
+}
 
 const actionDescriptions = {
   SELL: '产品风险、到期、障碍价、数据质量或单品敞口触发卖出/减仓',
@@ -437,12 +604,13 @@ const tableColumns = [
   {
     field: 'groupAction',
     headerName: '组动作',
+    description: '整个标的组的风险动作，来自组级风险检查；可能与上方按单个产品划分的 SELL / ROLL / HOLD / BUY 不同。',
     flex: 1,
-    minWidth: 100,
+    minWidth: 104,
     valueGetter: (_, row) => row.riskGroup?.action?.groupActionLabel || row.riskGroup?.groupActionLabel || '',
     renderCell: ({ row }) => {
       const action = row.riskGroup?.action?.groupActionLabel || row.riskGroup?.groupActionLabel || 'N/A'
-      const label = String(action).replace(/_/g, ' ')
+      const label = GROUP_ACTION_LABELS[action] || String(action).replace(/_/g, ' ')
       const desc = actionDescriptions[action] || '暂无风险评估'
       return (
         <Tooltip title={desc} arrow placement="top" slotProps={{ tooltip: { sx: { cursor: 'default' } } }}>
@@ -582,17 +750,46 @@ const tableColumns = [
 
 // ---- table ----
 
+// Greeks and quantity are one click away; the default view fits without
+// horizontal scrolling.
+const DEFAULT_HIDDEN_COLUMNS = { delta: false, omega: false, leverage: false, iv: false, quantity: false }
+const COLUMN_STORAGE_KEY = 'positions.columnVisibility'
+
+function storedColumnVisibility() {
+  try {
+    const value = JSON.parse(window.localStorage.getItem(COLUMN_STORAGE_KEY))
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : DEFAULT_HIDDEN_COLUMNS
+  } catch {
+    return DEFAULT_HIDDEN_COLUMNS
+  }
+}
+
 function ProductActionTable({ entries, onRowClick, clickedRowId }) {
   const rows = useMemo(() => entries.map((entry, index) => ({
     id: `${entry.primaryAction}-${entry.item.id ?? index}`,
     ...entry,
   })), [entries])
+  const [columnVisibility, setColumnVisibility] = useState(storedColumnVisibility)
+  const changeColumnVisibility = (model) => {
+    setColumnVisibility(model)
+    try {
+      window.localStorage.setItem(COLUMN_STORAGE_KEY, JSON.stringify(model))
+    } catch {
+      // Storage can be blocked; the choice then lasts for this visit.
+    }
+  }
+  const showingMore = Object.keys(DEFAULT_HIDDEN_COLUMNS).some(field => columnVisibility[field] !== false)
+  const toggleMore = () => changeColumnVisibility(showingMore
+    ? { ...columnVisibility, ...DEFAULT_HIDDEN_COLUMNS }
+    : { ...columnVisibility, ...Object.fromEntries(Object.keys(DEFAULT_HIDDEN_COLUMNS).map(field => [field, true])) })
 
   return (
     <Box sx={{ width: '100%' }}>
       <DataGrid
         rows={rows}
         columns={tableColumns}
+        columnVisibilityModel={columnVisibility}
+        onColumnVisibilityModelChange={changeColumnVisibility}
         density="compact"
         disableRowSelectionOnClick
         onRowClick={({ row }) => onRowClick?.(row)}
@@ -619,6 +816,11 @@ function ProductActionTable({ entries, onRowClick, clickedRowId }) {
           }),
         }}
       />
+      <Box sx={{ px: 1, py: 0.5, borderTop: '1px solid #e5eaef' }}>
+        <Button size="small" onClick={toggleMore} aria-pressed={showingMore} sx={{ textTransform: 'none' }}>
+          {showingMore ? '收起 Delta、Omega、杠杆、IV、数量' : '+ 更多列：Delta、Omega、杠杆、IV、数量'}
+        </Button>
+      </Box>
     </Box>
   )
 }

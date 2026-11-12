@@ -1,21 +1,10 @@
 import { Alert, Box, Chip, Stack, Typography, Table, TableHead, TableBody, TableRow, TableCell } from '@mui/material'
 import { usePortfolioMonitorStatus } from '../hooks/usePortfolioMonitor.js'
 import { compactCurrency } from '../utils/formatters.js'
+import { UNDERLYING_QUALITY_LABELS, dataIssueLabel } from '../utils/labels.js'
 import { lastMonitorCheck, MONITOR_STALE_MS } from '../utils/backgroundUpdateStatus.js'
 import PortfolioRiskMonitor from './PortfolioRiskMonitor.jsx'
 
-const qualityLabels = {
-  fresh: '交易时段内有效', closed_last_session: '休市 · 最近交易时段', stale: '行情过期',
-  unknown_time: '市场时间未知', unknown_calendar: '交易日历未知', future_time: '行情时间异常',
-  missing: '缺少行情', unmapped: '尚未识别标的', invalid_quote: '报价无效',
-}
-const issueLabels = {
-  valuation_market_time_unknown: '持仓估值市场时间未知', valuation_missing_or_invalid: '估值缺失或无效',
-  product_underlying_time_gap_over_24h: '产品抓取与标的时间相差超过 24 小时',
-  fx_reference_fallback: '汇率使用备用值', greeks_market_time_unknown: 'Greeks 市场时间未知',
-  product_capture_stale: '交易时段内产品抓取已过期', product_capture_future: '产品抓取时间异常',
-  product_currency_unsupported: '产品币种未知或不支持，使用汇总估值',
-}
 const time = value => value ? new Date(value).toLocaleString() : '未知'
 
 export default function PortfolioDataMonitor() {
@@ -60,8 +49,8 @@ export default function PortfolioDataMonitor() {
           <TableBody>{rows.map(row => <TableRow key={row.symbol}>
             <TableCell>{row.name || row.symbol}<Typography variant="caption" component="div">{compactCurrency(row.marketValue)}</Typography></TableCell>
             <TableCell>{row.valuationSource || '未知'}<Typography variant="caption" component="div">市场：{time(row.marketAsOf)}<br />抓取 / 导入：{time(row.fetchedAt)}</Typography></TableCell>
-            <TableCell>{row.underlyingSymbol || '未识别'} · {qualityLabels[row.underlyingQuality] || row.underlyingQuality}<Typography variant="caption" component="div">市场：{time(row.underlyingQuote?.priceAsOf)}<br />抓取：{time(row.underlyingQuote?.fetchedAt)}</Typography></TableCell>
-            <TableCell>{(row.issues || []).filter(issue => !issue.startsWith('underlying_')).map(issue => <Typography variant="caption" component="div" key={issue}>{issueLabels[issue] || issue}</Typography>)}</TableCell>
+            <TableCell>{row.underlyingSymbol || '未识别'} · {UNDERLYING_QUALITY_LABELS[row.underlyingQuality] || row.underlyingQuality}<Typography variant="caption" component="div">市场：{time(row.underlyingQuote?.priceAsOf)}<br />抓取：{time(row.underlyingQuote?.fetchedAt)}</Typography></TableCell>
+            <TableCell>{(row.issues || []).filter(issue => !issue.startsWith('underlying_')).map(issue => <Typography variant="caption" component="div" key={issue}>{dataIssueLabel(issue)}</Typography>)}</TableCell>
           </TableRow>)}</TableBody>
         </Table>
       </Box>

@@ -19,15 +19,12 @@ import {
 } from '@mui/material'
 
 import { compactCurrency, number } from '../utils/formatters.js'
+import { EXIT_LEVEL_META } from '../utils/labels.js'
 import { OPPORTUNITY_DEFAULTS } from '../utils/opportunityScreen.js'
 import { ROLL_ASSUMPTIONS, ROLL_EXTENSION_DAYS } from '../utils/rollWhatIf.js'
 import ProductCandidatesPanel from './ProductCandidatesPanel.jsx'
 
 const toneColors = { positive: 'success', caution: 'warning', neutral: 'default' }
-const exitLevelMeta = {
-  urgent: { label: '退场信号：优先复核', color: 'error' },
-  warn: { label: '退场信号：留意', color: 'warning' },
-}
 const trendLabels = { up: '上升', down: '下降', mixed: '不明确', unknown: '历史不足' }
 const SCREEN_PREVIEW_ROWS = 12
 const ROLL_PREVIEW_COUNT = 6
@@ -55,7 +52,7 @@ function ScreenTable({ rows, minObservations }) {
               <Typography variant="body2" fontWeight={700} noWrap title={row.name}>{row.name}</Typography>
               <Line>{row.symbol} · 仓位 {percentage(row.weightPct)} · {row.productCount} 个持仓</Line>
               {row.watchCount > 0 && <Line>{row.watchCount} 个未持有观察产品</Line>}
-              {exitLevelMeta[row.exitLevel] && <Chip size="small" color={exitLevelMeta[row.exitLevel].color} label={exitLevelMeta[row.exitLevel].label} sx={{ height: 18, mt: 0.25 }} />}
+              {(row.exitLevel === 'urgent' || row.exitLevel === 'warn') && <Chip size="small" color={EXIT_LEVEL_META[row.exitLevel].color} label={`退场信号：${EXIT_LEVEL_META[row.exitLevel].label}`} sx={{ height: 18, mt: 0.25 }} />}
             </TableCell>
             <TableCell sx={{ minWidth: 220, maxWidth: 320 }}>
               <Stack direction="row" spacing={0.5} useFlexGap sx={{ flexWrap: 'wrap' }}>

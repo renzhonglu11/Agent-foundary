@@ -22,6 +22,7 @@ import CloseRoundedIcon from '@mui/icons-material/CloseRounded'
 
 import NumberField from './shared/NumberField.jsx'
 import { number } from '../utils/formatters.js'
+import { PRODUCT_TYPE_LABELS } from '../utils/labels.js'
 import {
   calculateDrawdown,
   calculateExpiryPnl,
@@ -309,11 +310,6 @@ export default function ProductMonitoringDashboard({ item, riskLeg, onClose, onA
 // ---- header ----
 
 function DashboardHeader({ item, direction, onClose }) {
-  const productTypeLabels = {
-    optionsschein: 'Optionsschein',
-    open_end_turbo: 'Open-End Turbo',
-    factor_certificate: 'Factor Certificate',
-  }
 
   if (!item) {
     return (
@@ -352,10 +348,10 @@ function DashboardHeader({ item, direction, onClose }) {
               sx={{ height: 18, '& .MuiChip-label': { px: 0.75, fontSize: '0.65rem', fontWeight: 700 } }}
             />
           )}
-          {productType && productTypeLabels[productType] && (
+          {productType && PRODUCT_TYPE_LABELS[productType] && (
             <Chip
               size="small"
-              label={productTypeLabels[productType]}
+              label={PRODUCT_TYPE_LABELS[productType]}
               variant="outlined"
               sx={{ height: 18, '& .MuiChip-label': { px: 0.75, fontSize: '0.65rem' } }}
             />
