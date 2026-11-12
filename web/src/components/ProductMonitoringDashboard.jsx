@@ -3,7 +3,6 @@ import {
   Box,
   Chip,
   IconButton,
-  InputAdornment,
   Snackbar,
   Stack,
   Table,
@@ -256,8 +255,8 @@ export default function ProductMonitoringDashboard({ item, riskLeg, onClose, onA
         </ToggleButtonGroup>
       </Box>
 
-      {/* Tab panels */}
-      <Box sx={{ p: 1.5 }}>
+      {/* Tab panels; the bottom padding keeps the page's floating button off the notes */}
+      <Box sx={{ p: 1.5, pb: 8 }}>
         {!item ? (
           <Box sx={{ py: 4, textAlign: 'center' }}>
             <Typography variant="body2" color="text.secondary">
@@ -378,62 +377,63 @@ function DashboardContextBar({ item, riskLeg, direction }) {
     )
   }
 
-  const spot = item.underlyingSpot
-  const strike = item.strikePrice
-  const expiry = item.expiry
-  const quantity = item.quantity
-  const dte = riskLeg?.daysToExpiry
+  const finiteOrNull = value => (value != null && Number.isFinite(Number(value)) ? Number(value) : null)
+  const spot = finiteOrNull(item.underlyingSpot)
+  const strike = finiteOrNull(item.strikePrice)
+  const quantity = finiteOrNull(item.quantity)
+  const dte = finiteOrNull(riskLeg?.daysToExpiry)
   const isFactorCert = item.productType === 'factor_certificate'
-  const resetBarrier = item.resetBarrier
+  const isOpenEnd = item.productType === 'open_end_turbo' || isFactorCert
+  const marketValue = finiteOrNull(item.marketValue)
+  const pnl = finiteOrNull(item.unrealizedPnl)
+  const pnlPct = finiteOrNull(item.unrealizedPct)
+  const delta = finiteOrNull(item.delta)
+  const iv = finiteOrNull(item.iv)
+  const leverage = finiteOrNull(item.leverage ?? item.effectiveLeverage)
+  const resetBarrier = finiteOrNull(item.resetBarrier)
+  const pnlColor = pnl == null ? undefined : pnl >= 0 ? 'success.main' : 'error.main'
 
-  return (
-    <Stack direction="row" spacing={1} useFlexGap sx={{ px: 1.5, py: 0.75, flexWrap: 'wrap', borderBottom: '1px solid #e5eaef', backgroundColor: '#fafbfc' }}>
-      {spot != null && Number.isFinite(Number(spot)) && (
-        <ContextChip label="标的价格" value={formatUnderlyingUsd(spot, item)} />
-      )}
-      {strike != null && Number.isFinite(Number(strike)) && (
-        <ContextChip label={isFactorCert ? '当前基准价' : '行权价'} value={formatStrikeDisplay(strike, item)} />
-      )}
-      {isFactorCert && resetBarrier != null && Number.isFinite(Number(resetBarrier)) && (
-        <ContextChip label="Reset Barrier" value={formatStrikeDisplay(resetBarrier, item)} />
-      )}
-      {isFactorCert && item.leverage != null && Number.isFinite(Number(item.leverage)) && (
-        <ContextChip label="Factor" value={`${oneDecimalNumber.format(item.leverage)}×`} />
-      )}
-      {expiry && (
-        <ContextChip label="到期日" value={new Date(expiry).toLocaleDateString('de-DE', { dateStyle: 'medium' })} />
-      )}
-      {quantity != null && (
-        <ContextChip label="持仓" value={number.format(quantity)} />
-      )}
-      {dte != null && (
-        <ContextChip label="DTE" value={`${dte}天`} highlight={dte < 30} />
-      )}
-      {item.delta != null && Number.isFinite(Number(item.delta)) && (
-        <ContextChip label="Delta" value={number.format(item.delta)} />
-      )}
-      {item.theta != null && Number.isFinite(Number(item.theta)) && (
-        <ContextChip label="Theta" value={fxRateNumber.format(item.theta)} />
-      )}
-      {item.currency && item.currency !== 'EUR' && (
-        <Chip size="small" variant="outlined" label={`${item.currency} → EUR: ${number.format(item.usdEurRate || 0.92)}`}
-          sx={{ height: 18, '& .MuiChip-label': { px: 0.75, fontSize: '0.65rem' } }} />
-      )}
-    </Stack>
-  )
-}
+  const tiles = [
+    { label: '市值', value: marketValue == null ? '—' : oneDecimalCurrency.format(marketValue) },
+    { label: '浮盈亏', value: pnl == null ? '—' : formatPnl(pnl), note: pnlPct == null ? null : formatPnlPct(pnlPct), color: pnlColor },
+    { label: '距到期', value: dte != null ? `${dte} 天` : isOpenEnd ? '开放式' : '—', color: dte != null && dte < 30 ? 'error.main' : undefined },
+    { label: 'Delta', value: delta == null ? '—' : number.format(delta) },
+    isFactorCert
+      ? { label: 'Factor', value: leverage == null ? '—' : `${oneDecimalNumber.format(leverage)}× ${direction === 'put' ? 'Short' : 'Long'}` }
+      : { label: 'IV', value: iv == null ? '—' : `${Math.round(iv * 100)}%` },
+    isFactorCert
+      ? { label: '持仓', value: quantity == null ? '—' : number.format(quantity) }
+      : { label: '杠杆', value: leverage == null ? '—' : `${oneDecimalNumber.format(leverage)}×` },
+  ]
+  const details = [
+    spot != null ? ['标的', formatUnderlyingUsd(spot, item)] : null,
+    strike != null ? [isFactorCert ? '基准价' : '行权价', formatStrikeDisplay(strike, item)] : null,
+    isFactorCert && resetBarrier != null ? ['Reset Barrier', formatStrikeDisplay(resetBarrier, item)] : null,
+    item.expiry ? ['到期', new Date(item.expiry).toLocaleDateString('de-DE', { dateStyle: 'medium' })] : null,
+    quantity != null ? ['持仓', number.format(quantity)] : null,
+    item.theta != null && Number.isFinite(Number(item.theta)) ? ['Theta', fxRateNumber.format(item.theta)] : null,
+    item.currency && item.currency !== 'EUR' ? [`${item.currency}→EUR`, number.format(item.usdEurRate || FALLBACK_USD_EUR_RATE)] : null,
+  ].filter(Boolean)
 
-function ContextChip({ label, value, highlight }) {
+  // Six numbers people look for first, then the contract terms in one line.
   return (
-    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.35 }}>
-      <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.65rem' }}>{label}</Typography>
-      <Typography variant="caption" fontWeight={700} sx={{
-        fontSize: '0.7rem',
-        fontVariantNumeric: 'tabular-nums',
-        color: highlight ? '#d32f2f' : 'text.primary',
-      }}>
-        {value}
-      </Typography>
+    <Box sx={{ px: 1.5, pt: 1.25, pb: 1, borderBottom: '1px solid #e5eaef' }}>
+      <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 0.75 }}>
+        {tiles.map(tile => (
+          <Box key={tile.label} sx={{ backgroundColor: '#f4f7fa', borderRadius: 1.5, px: 1, py: 0.75, minWidth: 0 }}>
+            <Typography variant="caption" color="text.secondary" component="div" sx={{ fontSize: '0.68rem' }}>{tile.label}</Typography>
+            <Typography variant="body2" fontWeight={800} noWrap sx={{ fontVariantNumeric: 'tabular-nums', color: tile.color }}>
+              {tile.value}
+              {tile.note ? <Box component="span" sx={{ fontWeight: 500, fontSize: '0.72rem', ml: 0.5 }}>{tile.note}</Box> : null}
+            </Typography>
+          </Box>
+        ))}
+      </Box>
+      {details.length ? (
+        <Typography variant="caption" color="text.secondary" component="div" sx={{ mt: 0.75, fontVariantNumeric: 'tabular-nums' }}>
+          {details.map(([label, value]) => `${label} ${value}`).join(' · ')}
+        </Typography>
+      ) : null}
     </Box>
   )
 }
@@ -571,14 +571,14 @@ function ExpiryPnlTable({ item, direction, hasSpot, onAddPnlRecord }) {
   return (
     <Stack spacing={1.5}>
       <TableContainer sx={{ border: '1px solid #e5eaef', borderRadius: 1, overflowX: 'auto' }}>
-        <Table size="small" sx={{ tableLayout: 'fixed', minWidth: 720 }}>
+        <Table size="small" sx={{ tableLayout: 'fixed', minWidth: 380 }}>
+          <colgroup><col style={{ width: '28%' }} /><col style={{ width: '24%' }} /><col style={{ width: '20%' }} /><col style={{ width: '28%' }} /></colgroup>
           <TableHead>
             <TableRow sx={{ backgroundColor: '#f8fafc' }}>
-              <TableCell sx={thSx}>情景价格 ({underlyingCurrencySymbol})</TableCell>
+              <TableCell sx={thSx}>标的价格 ({underlyingCurrencySymbol})</TableCell>
+              <TableCell sx={thSx}>变动</TableCell>
               <TableCell sx={thSx}>内在价值</TableCell>
-              <TableCell sx={thSx}>P&L</TableCell>
-              <TableCell sx={thSx}>P&L%</TableCell>
-              <TableCell sx={thSx}>变动%</TableCell>
+              <TableCell sx={{ ...thSx, textAlign: 'right' }}>到期 P&L</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
@@ -598,56 +598,39 @@ function ExpiryPnlTable({ item, direction, hasSpot, onAddPnlRecord }) {
                 <TableCell sx={tdSx}>
                   <Box onClick={(event) => event.stopPropagation()}>
                     <NumberField
+                      compact
                       ariaLabel="情景价格"
                       value={row.priceUsd}
                       onChange={(value) => updateScenarioPrice(row.id, value)}
-                      startAdornment={<InputAdornment position="start" sx={{ '& .MuiTypography-root': { fontSize: '0.72rem' } }}>{underlyingCurrencySymbol}</InputAdornment>}
-                      width={118}
+                      width="100%"
                       inputSx={{ fontWeight: row.isCurrent ? 800 : 500 }}
                     />
                   </Box>
-                </TableCell>
-                <TableCell sx={tdSx}>
-                  <Typography variant="body2" sx={{ fontVariantNumeric: 'tabular-nums' }}>
-                    {row.result ? oneDecimalCurrency.format(row.result.intrinsic) : '—'}
-                  </Typography>
-                </TableCell>
-                <TableCell sx={tdSx}>
-                  {row.result ? (
-                    <Typography variant="body2" fontWeight={600} sx={{
-                      fontVariantNumeric: 'tabular-nums',
-                      color: row.result.pnl >= 0 ? 'success.main' : 'error.main',
-                    }}>
-                      {formatPnl(row.result.pnl)}
-                    </Typography>
-                  ) : (
-                    <Typography variant="body2" color="text.disabled">—</Typography>
-                  )}
-                </TableCell>
-                <TableCell sx={tdSx}>
-                  {row.result ? (
-                    <Typography variant="body2" sx={{
-                      fontVariantNumeric: 'tabular-nums',
-                      color: row.result.pnlPct >= 0 ? 'success.main' : 'error.main',
-                    }}>
-                      {formatPnlPct(row.result.pnlPct)}
-                    </Typography>
-                  ) : (
-                    <Typography variant="body2" color="text.disabled">—</Typography>
-                  )}
                 </TableCell>
                 <TableCell sx={tdSx}>
                   <Box onClick={(event) => event.stopPropagation()}>
                     <NumberField
+                      compact
                       ariaLabel="变动百分比"
                       value={row.pct}
                       onChange={(value) => updateScenarioPct(row.id, value)}
                       suffix="%"
-                      width={104}
+                      width="100%"
                       inputSx={{ fontWeight: row.isCurrent ? 800 : 500 }}
                       format={{ signDisplay: 'exceptZero' }}
                     />
                   </Box>
+                </TableCell>
+                <TableCell sx={tdSx}>
+                  <TwoLine main={row.result ? oneDecimalCurrency.format(row.result.intrinsic) : null} />
+                </TableCell>
+                <TableCell sx={{ ...tdSx, textAlign: 'right' }}>
+                  <TwoLine
+                    bold
+                    main={row.result ? formatPnl(row.result.pnl) : null}
+                    sub={row.result ? formatPnlPct(row.result.pnlPct) : null}
+                    color={row.result ? signColor(row.result.pnl) : undefined}
+                  />
                 </TableCell>
               </TableRow>
             ))}
@@ -693,60 +676,34 @@ function TimeDecayTable({ item, riskLeg, direction, hasStrike, hasRatio }) {
   return (
     <Stack spacing={1.5}>
       <TableContainer sx={{ border: '1px solid #e5eaef', borderRadius: 1, overflowX: 'auto' }}>
-        <Table size="small" sx={{ tableLayout: 'fixed', minWidth: 680 }}>
+        <Table size="small" sx={{ tableLayout: 'fixed', minWidth: 360 }}>
+          <colgroup><col style={{ width: '26%' }} /><col style={{ width: '28%' }} /><col style={{ width: '26%' }} /><col style={{ width: '20%' }} /></colgroup>
           <TableHead>
             <TableRow sx={{ backgroundColor: '#f8fafc' }}>
               <TableCell sx={thSx}>期间</TableCell>
-              <TableCell sx={thSx}>天数</TableCell>
-              <TableCell sx={thSx}>价格变化</TableCell>
-              <TableCell sx={thSx}>预估价格</TableCell>
-              <TableCell sx={thSx}>持仓P&L</TableCell>
-              <TableCell sx={thSx} width={72}>方法</TableCell>
+              <TableCell sx={thSx}>产品价格</TableCell>
+              <TableCell sx={{ ...thSx, textAlign: 'right' }}>持仓 P&L</TableCell>
+              <TableCell sx={thSx}>方法</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
             {rows.map((row) => (
               <TableRow key={row.days}>
                 <TableCell sx={tdSx}>
-                  <Typography variant="body2" fontWeight={700}>{row.label}</Typography>
+                  <TwoLine bold main={row.label} sub={row.result?.days != null ? `${row.result.days} 天` : null} subColor="text.secondary" />
                 </TableCell>
                 <TableCell sx={tdSx}>
-                  <Typography variant="body2" sx={{ fontVariantNumeric: 'tabular-nums' }}>{row.result?.days ?? '—'}</Typography>
+                  <TwoLine
+                    main={row.result ? oneDecimalCurrency.format(row.result.newPrice) : null}
+                    sub={row.result ? formatPnl(row.result.priceChange) : null}
+                    color="text.primary"
+                    subColor={row.result ? signColor(row.result.priceChange, true) : undefined}
+                  />
+                </TableCell>
+                <TableCell sx={{ ...tdSx, textAlign: 'right' }}>
+                  <TwoLine bold main={row.result ? formatPnl(row.result.pnlChange) : null} color={row.result ? signColor(row.result.pnlChange, true) : undefined} />
                 </TableCell>
                 <TableCell sx={tdSx}>
-                  {row.result ? (
-                    <Typography variant="body2" fontWeight={600} sx={{
-                      fontVariantNumeric: 'tabular-nums',
-                      color: row.result.priceChange <= 0 ? 'error.main' : 'success.main',
-                    }}>
-                      {formatPnl(row.result.priceChange)}
-                    </Typography>
-                  ) : (
-                    <Typography variant="body2" color="text.disabled">—</Typography>
-                  )}
-                </TableCell>
-                <TableCell sx={tdSx}>
-                  {row.result ? (
-                    <Typography variant="body2" sx={{ fontVariantNumeric: 'tabular-nums' }}>
-                      {oneDecimalCurrency.format(row.result.newPrice)}
-                    </Typography>
-                  ) : (
-                    <Typography variant="body2" color="text.disabled">—</Typography>
-                  )}
-                </TableCell>
-                <TableCell sx={tdSx}>
-                  {row.result ? (
-                    <Typography variant="body2" sx={{
-                      fontVariantNumeric: 'tabular-nums',
-                      color: row.result.pnlChange <= 0 ? 'error.main' : 'success.main',
-                    }}>
-                      {formatPnl(row.result.pnlChange)}
-                    </Typography>
-                  ) : (
-                    <Typography variant="body2" color="text.disabled">—</Typography>
-                  )}
-                </TableCell>
-                <TableCell sx={{ ...tdSx, width: 72 }}>
                   {row.result ? <MethodChip method={row.result.method} /> : null}
                 </TableCell>
               </TableRow>
@@ -793,7 +750,6 @@ function DrawdownTable({ item, onAddPnlRecord }) {
     DEFAULT_SCENARIO_PCTS.map((pct) => ({ id: pct, pct }))
   ))
   const calcItem = useMemo(() => productCalculationItem(item), [item])
-  const underlyingCurrencySymbol = hasUsdUnderlying(item) ? '$' : '€'
   const isFactorCert = item?.productType === 'factor_certificate'
 
   const rows = useMemo(() => (
@@ -828,16 +784,14 @@ function DrawdownTable({ item, onAddPnlRecord }) {
   return (
     <Stack spacing={1.5}>
       <TableContainer sx={{ border: '1px solid #e5eaef', borderRadius: 1, overflowX: 'auto' }}>
-        <Table size="small" sx={{ tableLayout: 'fixed', minWidth: 760 }}>
+        <Table size="small" sx={{ tableLayout: 'fixed', minWidth: 380 }}>
+          <colgroup><col style={{ width: '27%' }} /><col style={{ width: '27%' }} /><col style={{ width: '27%' }} /><col style={{ width: '19%' }} /></colgroup>
           <TableHead>
             <TableRow sx={{ backgroundColor: '#f8fafc' }}>
-              <TableCell sx={thSx}>标的变动</TableCell>
-              <TableCell sx={thSx}>新标的价格 ({underlyingCurrencySymbol})</TableCell>
-              <TableCell sx={thSx}>价格变化</TableCell>
-              <TableCell sx={thSx}>预估价格</TableCell>
-              <TableCell sx={thSx}>P&L</TableCell>
-              <TableCell sx={thSx}>P&L%</TableCell>
-              <TableCell sx={thSx} width={80}>方法</TableCell>
+              <TableCell sx={thSx}>标的变动 → 价格</TableCell>
+              <TableCell sx={thSx}>产品价格</TableCell>
+              <TableCell sx={{ ...thSx, textAlign: 'right' }}>P&L</TableCell>
+              <TableCell sx={thSx}>方法</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
@@ -857,11 +811,12 @@ function DrawdownTable({ item, onAddPnlRecord }) {
                   <TableCell sx={tdSx}>
                     <Box onClick={(event) => event.stopPropagation()}>
                       <NumberField
+                        compact
                         ariaLabel="标的变动百分比"
                         value={row.pct}
                         onChange={(value) => updateScenarioPct(row.id, value)}
                         suffix="%"
-                        width={104}
+                        width="100%"
                         inputSx={{
                           fontWeight: Math.abs(Number(row.pct) || 0) < 0.05 ? 800 : 500,
                           '& .MuiOutlinedInput-input': {
@@ -871,62 +826,29 @@ function DrawdownTable({ item, onAddPnlRecord }) {
                         format={{ signDisplay: 'exceptZero' }}
                       />
                     </Box>
-                  </TableCell>
-                  <TableCell sx={tdSx}>
                     {row.result ? (
-                      <Typography variant="body2" sx={{ fontVariantNumeric: 'tabular-nums' }}>
-                        {formatUnderlyingUsd(row.result.newSpot, item)}
+                      <Typography variant="caption" color="text.secondary" component="div" sx={{ fontSize: '0.68rem', mt: 0.25, fontVariantNumeric: 'tabular-nums' }}>
+                        → {formatUnderlyingUsd(row.result.newSpot, item)}
                       </Typography>
-                    ) : (
-                      <Typography variant="body2" color="text.disabled">—</Typography>
-                    )}
+                    ) : null}
                   </TableCell>
                   <TableCell sx={tdSx}>
-                    {row.result ? (
-                      <Typography variant="body2" fontWeight={600} sx={{
-                        fontVariantNumeric: 'tabular-nums',
-                        color: row.result.priceChange <= 0 ? 'error.main' : 'success.main',
-                      }}>
-                        {formatPnl(row.result.priceChange)}
-                      </Typography>
-                    ) : (
-                      <Typography variant="body2" color="text.disabled">—</Typography>
-                    )}
+                    <TwoLine
+                      main={row.result ? oneDecimalCurrency.format(row.result.newPrice) : null}
+                      sub={row.result ? formatPnl(row.result.priceChange) : null}
+                      color="text.primary"
+                      subColor={row.result ? signColor(row.result.priceChange, true) : undefined}
+                    />
+                  </TableCell>
+                  <TableCell sx={{ ...tdSx, textAlign: 'right' }}>
+                    <TwoLine
+                      bold
+                      main={row.result ? formatPnl(row.result.pnl) : null}
+                      sub={row.result?.pnlPct != null ? formatPnlPct(row.result.pnlPct) : null}
+                      color={row.result ? signColor(row.result.pnl, true) : undefined}
+                    />
                   </TableCell>
                   <TableCell sx={tdSx}>
-                    {row.result ? (
-                      <Typography variant="body2" sx={{ fontVariantNumeric: 'tabular-nums' }}>
-                        {oneDecimalCurrency.format(row.result.newPrice)}
-                      </Typography>
-                    ) : (
-                      <Typography variant="body2" color="text.disabled">—</Typography>
-                    )}
-                  </TableCell>
-                  <TableCell sx={tdSx}>
-                    {row.result ? (
-                      <Typography variant="body2" sx={{
-                        fontVariantNumeric: 'tabular-nums',
-                        color: row.result.pnl <= 0 ? 'error.main' : 'success.main',
-                      }}>
-                        {formatPnl(row.result.pnl)}
-                      </Typography>
-                    ) : (
-                      <Typography variant="body2" color="text.disabled">—</Typography>
-                    )}
-                  </TableCell>
-                  <TableCell sx={tdSx}>
-                    {row.result?.pnlPct != null ? (
-                      <Typography variant="body2" sx={{
-                        fontVariantNumeric: 'tabular-nums',
-                        color: row.result.pnlPct <= 0 ? 'error.main' : 'success.main',
-                      }}>
-                        {formatPnlPct(row.result.pnlPct)}
-                      </Typography>
-                    ) : (
-                      <Typography variant="body2" color="text.disabled">—</Typography>
-                    )}
-                  </TableCell>
-                  <TableCell sx={{ ...tdSx, width: 80 }}>
                     {row.result ? <MethodChip method={row.result.method} /> : null}
                   </TableCell>
                 </TableRow>
@@ -978,6 +900,19 @@ function DrawdownTable({ item, onAddPnlRecord }) {
 }
 
 // ---- shared table styles ----
+
+// A value with a smaller second line, so one column can carry two numbers.
+function TwoLine({ main, sub, color, subColor, bold = false }) {
+  if (main == null) return <Typography variant="body2" color="text.disabled">—</Typography>
+  return (
+    <Box sx={{ fontVariantNumeric: 'tabular-nums' }}>
+      <Typography variant="body2" fontWeight={bold ? 700 : 400} sx={{ color, fontSize: '0.78rem' }} noWrap>{main}</Typography>
+      {sub != null ? <Typography variant="caption" component="div" sx={{ color: subColor ?? color ?? 'text.secondary', fontSize: '0.68rem' }} noWrap>{sub}</Typography> : null}
+    </Box>
+  )
+}
+
+const signColor = (value, zeroIsLoss = false) => (value > 0 || (!zeroIsLoss && value === 0) ? 'success.main' : 'error.main')
 
 const thSx = {
   py: 0.75,
