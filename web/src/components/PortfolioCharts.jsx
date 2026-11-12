@@ -159,8 +159,8 @@ function CashFlowTrend({ data }) {
     return (
         <Box sx={{ width: '100%', height: '100%' }}>
             <Stack direction="row" spacing={2} sx={{ justifyContent: 'flex-end', mb: 1 }}>
-                <LegendDot color="#1f5fa8" label="净现金" />
-                <LegendDot color="#17803d" label="交易净额" />
+                <LegendDot color="#2a6fc0" label="净现金" />
+                <LegendDot color="#1d9a4c" label="交易净额" />
             </Stack>
             <Box component="svg" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMidYMid meet" sx={{ width: '100%', height: 'calc(100% - 24px)', display: 'block' }}>
                 {[0.25, 0.5, 0.75].map((ratio) => {
@@ -171,12 +171,12 @@ function CashFlowTrend({ data }) {
                 <text x={8} y={yFor(max)} fill="#748396" fontSize="12">{compactCurrency(max)}</text>
                 <text x={8} y={zeroY + 4} fill="#748396" fontSize="12">€0</text>
                 <text x={8} y={yFor(min)} fill="#748396" fontSize="12">{compactCurrency(min)}</text>
-                <path d={netCashPath} fill="none" stroke="#1f5fa8" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
-                <path d={tradingPath} fill="none" stroke="#17803d" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+                <path d={netCashPath} fill="none" stroke="#2a6fc0" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+                <path d={tradingPath} fill="none" stroke="#1d9a4c" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
                 {data.map((item, index) => (
                     <g key={item.month}>
-                        <circle cx={xFor(index)} cy={yFor(item.netCash)} r={hoveredIndex === index ? 6 : 4} fill="#1f5fa8" vectorEffect="non-scaling-stroke" />
-                        <circle cx={xFor(index)} cy={yFor(item.trading)} r={hoveredIndex === index ? 6 : 4} fill="#17803d" vectorEffect="non-scaling-stroke" />
+                        <circle cx={xFor(index)} cy={yFor(item.netCash)} r={hoveredIndex === index ? 6 : 4} fill="#2a6fc0" vectorEffect="non-scaling-stroke" />
+                        <circle cx={xFor(index)} cy={yFor(item.trading)} r={hoveredIndex === index ? 6 : 4} fill="#1d9a4c" vectorEffect="non-scaling-stroke" />
                         {index % 3 === 0 || index === data.length - 1 ? (
                             <text x={xFor(index)} y={height - 10} fill="#748396" fontSize="12" textAnchor="middle">{shortMonth(item.month)}</text>
                         ) : null}
@@ -202,8 +202,8 @@ function CashFlowTrend({ data }) {
                             y={hoveredY}
                             title={hoveredItem.month}
                             rows={[
-                                { label: '净现金', value: hoveredItem.netCash, color: '#1f5fa8' },
-                                { label: '交易净额', value: hoveredItem.trading, color: '#17803d' },
+                                { label: '净现金', value: hoveredItem.netCash, color: '#2a6fc0' },
+                                { label: '交易净额', value: hoveredItem.trading, color: '#1d9a4c' },
                                 { label: '入金', value: hoveredItem.deposits, color: '#9ec5fe' },
                                 { label: '出金', value: hoveredItem.withdrawals, color: '#ff9aa5' },
                             ]}
@@ -236,8 +236,8 @@ function CashFlowAreaWidget({ data }) {
                     />
                     <YAxis tickFormatter={compactCurrency} tick={{ fill: '#748396', fontSize: 12 }} axisLine={false} tickLine={false} width={76} />
                     <Tooltip content={<ChartTooltip />} />
-                    <Area name="净现金" type="monotone" dataKey="netCash" stroke="#1f5fa8" fill="#1f5fa833" strokeWidth={2} />
-                    <Area name="交易净额" type="monotone" dataKey="trading" stroke="#17803d" fill="#17803d55" strokeWidth={2} />
+                    <Area name="净现金" type="monotone" dataKey="netCash" stroke="#2a6fc0" fill="#2a6fc033" strokeWidth={2} />
+                    <Area name="交易净额" type="monotone" dataKey="trading" stroke="#1d9a4c" fill="#1d9a4c55" strokeWidth={2} />
                 </AreaChart>
             )}
         </MeasuredChart>
@@ -267,8 +267,8 @@ function MonthlyTradingBars({ data }) {
     return (
         <Box sx={{ width: '100%', height: '100%' }}>
             <Stack direction="row" spacing={2} sx={{ justifyContent: 'flex-end', mb: 1 }}>
-                <LegendDot color="#c23a33" label="买入" />
-                <LegendDot color="#17803d" label="卖出" />
+                <LegendDot color="#d6453d" label="买入" />
+                <LegendDot color="#1d9a4c" label="卖出" />
             </Stack>
             <Box component="svg" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMidYMid meet" sx={{ width: '100%', height: 'calc(100% - 24px)', display: 'block' }}>
                 {[0.25, 0.5, 0.75].map((ratio) => {
@@ -283,8 +283,8 @@ function MonthlyTradingBars({ data }) {
                     const sellHeight = baseY - yFor(item.sells)
                     return (
                         <g key={item.month}>
-                            <rect x={groupX - barWidth - 2} y={baseY - buyHeight} width={barWidth} height={buyHeight} rx="4" fill="#c23a33" opacity={hoveredIndex === null || hoveredIndex === index ? 1 : 0.45} />
-                            <rect x={groupX + 2} y={baseY - sellHeight} width={barWidth} height={sellHeight} rx="4" fill="#17803d" opacity={hoveredIndex === null || hoveredIndex === index ? 1 : 0.45} />
+                            <rect x={groupX - barWidth - 2} y={baseY - buyHeight} width={barWidth} height={buyHeight} rx="4" fill="#d6453d" opacity={hoveredIndex === null || hoveredIndex === index ? 1 : 0.45} />
+                            <rect x={groupX + 2} y={baseY - sellHeight} width={barWidth} height={sellHeight} rx="4" fill="#1d9a4c" opacity={hoveredIndex === null || hoveredIndex === index ? 1 : 0.45} />
                             {index % 3 === 0 || index === data.length - 1 ? (
                                 <text x={groupX} y={height - 10} fill="#748396" fontSize="12" textAnchor="middle">{shortMonth(item.month)}</text>
                             ) : null}
@@ -314,11 +314,11 @@ function MonthlyTradingBars({ data }) {
                             y={hoveredY}
                             title={hoveredItem.month}
                             rows={[
-                                { label: '买入', value: hoveredItem.buys, color: '#c23a33' },
-                                { label: '卖出', value: hoveredItem.sells, color: '#17803d' },
-                                { label: '买卖净额', value: (hoveredItem.sells || 0) - (hoveredItem.buys || 0), color: '#1f5fa8' },
-                                { label: '手续费', value: hoveredItem.fees, color: '#b26b00' },
-                                { label: '税费', value: hoveredItem.taxes, color: '#5b6b8c' },
+                                { label: '买入', value: hoveredItem.buys, color: '#d6453d' },
+                                { label: '卖出', value: hoveredItem.sells, color: '#1d9a4c' },
+                                { label: '买卖净额', value: (hoveredItem.sells || 0) - (hoveredItem.buys || 0), color: '#2a6fc0' },
+                                { label: '手续费', value: hoveredItem.fees, color: '#c97c00' },
+                                { label: '税费', value: hoveredItem.taxes, color: '#66789b' },
                             ]}
                         />
                     </>

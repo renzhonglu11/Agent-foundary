@@ -32,7 +32,7 @@ body {
   display: grid;
   place-items: center;
   border-radius: 16px;
-  color: #1f5fa8;
+  color: #2a6fc0;
   background: transparent;
   border: 0;
   box-shadow: none;
@@ -126,7 +126,7 @@ body {
 }
 
 .sidebar-toggle:hover {
-  color: #1f5fa8 !important;
+  color: #2a6fc0 !important;
   background: transparent !important;
 }
 

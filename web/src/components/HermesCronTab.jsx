@@ -31,15 +31,15 @@ function statusPillMeta(row) {
     const label = row.statusLabel || 'Scheduled'
 
     if (row.statusGroup === 'failed' || row.statusGroup === 'delivery_failed') {
-        return { label, color: '#c23a33', bg: '#fff1ee', border: '#ffc9bd' }
+        return { label, color: '#d6453d', bg: '#fff1ee', border: '#ffc9bd' }
     }
     if (row.statusGroup === 'paused') {
-        return { label, color: '#b26b00', bg: '#fff9df', border: '#ffe18a' }
+        return { label, color: '#c97c00', bg: '#fff9df', border: '#ffe18a' }
     }
     if (row.statusGroup === 'pending') {
-        return { label, color: '#2b72c2', bg: '#edf8ff', border: '#a9dcff' }
+        return { label, color: '#3584d6', bg: '#edf8ff', border: '#a9dcff' }
     }
-    return { label, color: '#17803d', bg: '#e9fff9', border: '#9bf3df' }
+    return { label, color: '#1d9a4c', bg: '#e9fff9', border: '#9bf3df' }
 }
 
 function StatusPill({ row }) {
@@ -224,23 +224,23 @@ function JobsGrid({ jobs }) {
 // Systemd unit status section
 // ---------------------------------------------------------------------------
 const UNIT_STATE_COLORS = {
-    active: '#17803d',
-    inactive: '#b26b00',
-    failed: '#c23a33',
-    activating: '#2b72c2',
-    deactivating: '#2b72c2',
+    active: '#1d9a4c',
+    inactive: '#c97c00',
+    failed: '#d6453d',
+    activating: '#3584d6',
+    deactivating: '#3584d6',
     'not-found': '#8b8b8b',
-    error: '#c23a33',
+    error: '#d6453d',
     unknown: '#8b8b8b',
 }
 
 const UNIT_ENABLED_COLORS = {
-    enabled: '#17803d',
-    disabled: '#b26b00',
-    static: '#2b72c2',
-    indirect: '#17803d',
+    enabled: '#1d9a4c',
+    disabled: '#c97c00',
+    static: '#3584d6',
+    indirect: '#1d9a4c',
     'not-found': '#8b8b8b',
-    error: '#c23a33',
+    error: '#d6453d',
     unknown: '#8b8b8b',
 }
 

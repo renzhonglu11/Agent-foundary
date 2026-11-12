@@ -9,9 +9,9 @@ import { compactCurrency, number, preciseCurrency, pnlColor } from '../utils/for
 import MeasuredChart from './MeasuredChart.jsx';
 
 const MONTHLY_CHART_COLORS = {
-  net: '#17803d',
-  tax: '#c23a33',
-  cumulative: '#1f5fa8',
+  net: '#1d9a4c',
+  tax: '#d6453d',
+  cumulative: '#2a6fc0',
 };
 
 function MetricCard({ title, value, sub, icon: Icon, color }) {
@@ -125,7 +125,7 @@ function DividendCharts({ monthly, topSymbols }) {
                     <XAxis type="number" tickFormatter={compactCurrency} tick={{ fill: '#748396', fontSize: 12 }} axisLine={false} tickLine={false} />
                     <YAxis dataKey="shortName" type="category" tick={{ fill: '#748396', fontSize: 12 }} axisLine={false} tickLine={false} width={150} />
                     <Tooltip content={<ChartTooltip />} />
-                    <Bar name="税后收入" dataKey="netAmount" fill="#1f5fa8" radius={[0, 6, 6, 0]} />
+                    <Bar name="税后收入" dataKey="netAmount" fill="#2a6fc0" radius={[0, 6, 6, 0]} />
                   </BarChart>
                 )}
               </MeasuredChart>

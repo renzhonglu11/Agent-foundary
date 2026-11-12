@@ -78,7 +78,7 @@ const describeArc = (cx, cy, r, startAngle, endAngle) => {
 
 const profitGaugeColors = {
     unrealized: '#EEF2F6',
-    realized: '#1f5fa8',
+    realized: '#2a6fc0',
     income: '#EB7900',
 }
 

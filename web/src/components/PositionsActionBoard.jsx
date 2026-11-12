@@ -109,8 +109,8 @@ function storePlan(value) {
 }
 
 const rowClickedPulse = keyframes`
-  0% { background-color: rgba(31, 95, 168, 0.28); }
-  70% { background-color: rgba(31, 95, 168, 0.14); }
+  0% { background-color: rgba(42, 111, 192, 0.28); }
+  70% { background-color: rgba(42, 111, 192, 0.14); }
   100% { background-color: transparent; }
 `
 

@@ -10,7 +10,7 @@ import { backgroundUpdateState, lastMonitorCheck, monitorUpdateState, productUpd
 import PortfolioDataMonitor from './PortfolioDataMonitor.jsx'
 
 const time = value => validTimestamp(value) ? dateTime(value) : '暂无记录'
-const dotColors = { success: '#17803d', warning: '#b26b00', error: '#c23a33', info: '#2b72c2', default: '#9aa6b4' }
+const dotColors = { success: '#1d9a4c', warning: '#c97c00', error: '#d6453d', info: '#3584d6', default: '#9aa6b4' }
 
 function JobStatus({ title, state, children }) {
   return <Stack spacing={0.75}>

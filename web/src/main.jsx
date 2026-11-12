@@ -31,12 +31,12 @@ const theme = createTheme({
   palette: {
     mode: 'light',
     background: { default: tokens.bg, paper: tokens.surface },
-    primary: { main: '#1f5fa8', light: '#e3eefa', dark: '#174a84', contrastText: '#ffffff' },
-    secondary: { main: '#5b6b8c', light: '#eceff5', dark: '#435069' },
-    success: { main: '#17803d', light: '#e6f5ec', dark: '#12632f', contrastText: '#ffffff' },
-    error: { main: '#c23a33', light: '#fdecea', dark: '#9a2c27', contrastText: '#ffffff' },
-    warning: { main: '#b26b00', light: '#fff4e0', dark: '#8a5200', contrastText: '#ffffff' },
-    info: { main: '#2b72c2', light: '#e6f0fb', dark: '#1f5fa8', contrastText: '#ffffff' },
+    primary: { main: '#2a6fc0', light: '#e6f0fc', dark: '#1f5fa8', contrastText: '#ffffff' },
+    secondary: { main: '#66789b', light: '#eef1f7', dark: '#4b5a78' },
+    success: { main: '#1d9a4c', light: '#e7f6ed', dark: '#157a3b', contrastText: '#ffffff' },
+    error: { main: '#d6453d', light: '#fdeceb', dark: '#ad322c', contrastText: '#ffffff' },
+    warning: { main: '#c97c00', light: '#fff4df', dark: '#9a5f00', contrastText: '#ffffff' },
+    info: { main: '#3584d6', light: '#e8f2fc', dark: '#2a6fc0', contrastText: '#ffffff' },
     text: { primary: tokens.ink, secondary: tokens.ink2, disabled: tokens.ink3 },
     divider: tokens.line,
   },
@@ -95,8 +95,8 @@ const theme = createTheme({
     },
     MuiAlert: {
       styleOverrides: {
-        standardInfo: { backgroundColor: '#e3eefa', color: tokens.ink },
-        standardWarning: { backgroundColor: '#fff4e0', color: tokens.ink },
+        standardInfo: { backgroundColor: '#e6f0fc', color: tokens.ink },
+        standardWarning: { backgroundColor: '#fff4df', color: tokens.ink },
       },
     },
     MuiButtonBase: {

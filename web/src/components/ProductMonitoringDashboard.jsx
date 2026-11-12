@@ -73,8 +73,8 @@ const fxRateNumber = new Intl.NumberFormat('de-DE', {
 
 const FALLBACK_USD_EUR_RATE = 0.92
 const rowAddedPulse = keyframes`
-  0% { background-color: rgba(31, 95, 168, 0.28); }
-  70% { background-color: rgba(31, 95, 168, 0.14); }
+  0% { background-color: rgba(42, 111, 192, 0.28); }
+  70% { background-color: rgba(42, 111, 192, 0.14); }
   100% { background-color: transparent; }
 `
 
