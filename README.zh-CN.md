@@ -61,15 +61,7 @@ cargo build -p agent-foundry-backend
 
 提前构建后端，可以避免首次编译超过联合启动脚本的 120 秒健康检查等待时间。
 
-如果需要 GS Markets 的浏览器回退查询，还需安装 Playwright Chromium：
-
-```bash
-cd backend/python
-uv run playwright install chromium
-cd ../..
-```
-
-Linux 上如果缺少浏览器系统依赖，可在 Python 项目目录执行 `uv run playwright install --with-deps chromium`。
+产品数据刷新不需要浏览器：条款和 Greeks 通过普通 HTTP 请求从法兰克福交易所和 Onvista 获取。
 
 ### 3. 启动应用
 
@@ -135,11 +127,11 @@ demo-001,2026-01-15,BUY,TRADE,STOCK,Example Stock,DEMO,Demo purchase,-100,0,0,1,
 | Frankfurter | USD/EUR 汇率 | 无 API 密钥；查询失败时使用配置的回退汇率 |
 | ApeWisdom | Reddit 热门股票数据 | 无 API 密钥 |
 | FinCal | XETRA 交易日历 | 可选 `FINCAL_API_KEY`；查询失败时使用内置日历回退 |
-| Onvista / GS Markets / Börse Frankfurt | 产品元数据、Greeks 与报价 | Python 环境；GS Markets 回退需要 Chromium |
+| Börse Frankfurt / Onvista | 产品报价、条款与 Greeks | Python 环境 |
 | Hermes | 宏观分析中的 AI 解读 | 单独安装 Hermes，并按需设置 `HERMES_PATH` |
 | Hermes Cron / systemd | 外部任务与服务状态 | 作业快照文件及相应系统服务；详见部署文档 |
 
-结构化产品数据默认优先从 Onvista 获取，使用 GS Markets 补充缺失字段，并从 Börse Frankfurt 更新报价。实时查询按基础资产分组分层，优先覆盖市值较高的最多 20 个基础资产组，以控制提供商请求量。提供商页面变更或访问限制可能影响数据可用性。
+结构化产品的报价、条款与 Greeks 从 Börse Frankfurt 获取，它没有给出的字段再向 Onvista 查询。实时查询按基础资产分组分层，优先覆盖市值较高的最多 20 个基础资产组，以控制提供商请求量。不在这些组里的产品每天获取一次合约条款。提供商页面变更或访问限制可能影响数据可用性。
 
 ## 架构
 

@@ -15,6 +15,12 @@ Environment=PYTHONDONTWRITEBYTECODE=1
 ExecStart=/home/rz/Agent-Foundry/current/bin/agent-foundry-backend
 Restart=on-failure
 RestartSec=5
+# The product scraper runs a headless browser inside this unit. Keep it from
+# exhausting the host, and keep the API alive when the kernel kills a scraper
+# process: the default policy stops the whole unit, which then restarts and
+# scrapes again.
+MemoryMax=3G
+OOMPolicy=continue
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict

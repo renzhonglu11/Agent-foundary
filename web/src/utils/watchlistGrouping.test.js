@@ -111,6 +111,15 @@ test('tier1 fallback rows are not marked as realtime data', () => {
   assert.equal(groups.tier1[0].apiStatus, 'portfolio')
 })
 
+test('a quote from the Onvista fallback counts as provider data without metadata', () => {
+  const groups = buildWatchlistGroups({ summary: { totalMarketValue: 100 }, positions: [] }, [{
+    isin: 'DE000ONV001', display_name: 'Call Intel', instrument: 'Call Intel', asset_class: 'DERIVATIVE',
+    product_type: 'optionsschein', enrichment_tier: 'tier1', quote_source: 'onvista', quote_price: 2, quantity: 50, market_value: 100,
+  }])
+  assert.equal(groups.tier1[0].liveDerivativeCount, 1)
+  assert.equal(groups.tier1[0].derivatives[0].quoteSource, 'onvista')
+})
+
 test('groups multiple derivative products by inferred underlying when live metadata is missing', () => {
   const groups = buildWatchlistGroups({ summary: {}, positions: [] }, [
     { isin: 'D1', display_name: 'Call 18.06.26 NVIDIA 131', instrument: 'Call 18.06.26 NVIDIA 131', asset_class: 'DERIVATIVE', product_type: 'optionsschein', enrichment_tier: 'tier2', live_enrichment_enabled: false },

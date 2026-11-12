@@ -1,3 +1,4 @@
+mod alpaca_http;
 pub mod alpaca_market_data;
 pub mod apewisdom;
 pub mod daily_bars;
@@ -13,5 +14,11 @@ pub mod monitor_symbols;
 pub mod pnl_snapshots;
 pub mod portfolio_monitor;
 pub mod product_candidates;
+pub mod provider_access;
 pub mod structured_products_service;
 pub mod systemd_status;
+
+#[cfg(test)]
+pub(crate) mod provider_test_support;
+
+mod provider_budget;

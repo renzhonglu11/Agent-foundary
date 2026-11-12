@@ -68,6 +68,11 @@ fn lookup(value: &str, ticker_allowed: bool) -> Option<String> {
     None
 }
 
+/// The symbol the registry lists for an ISIN, a company name or a known ticker.
+pub fn registry_symbol(value: &str) -> Option<String> {
+    lookup(value, false)
+}
+
 pub fn underlying_symbol(position: &Position, item: &Value) -> Option<String> {
     let derivative = position.asset_class.to_uppercase().contains("DERIVATIVE")
         || item["product_type"].is_string();

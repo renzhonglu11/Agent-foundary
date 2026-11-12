@@ -100,15 +100,8 @@ cargo build -p agent-foundry-backend
 
 Building the backend first prevents the initial compilation from exceeding the launcher's 120-second health-check wait.
 
-For browser-based GS Markets fallback queries, also install Playwright Chromium:
-
-```bash
-cd backend/python
-uv run playwright install chromium
-cd ../..
-```
-
-On Linux, if browser system dependencies are missing, run `uv run playwright install --with-deps chromium` from the Python project directory.
+The product refresh needs no browser: terms and Greeks come from Börse
+Frankfurt and Onvista over plain HTTP.
 
 ### 3. Start the application
 
@@ -174,11 +167,11 @@ See [`.env.example`](.env.example) for the full configuration template. Relative
 | Frankfurter | USD/EUR exchange rates | No API key; uses a configured fallback rate if requests fail |
 | ApeWisdom | Reddit stock trends | No API key |
 | FinCal | XETRA trading calendar | Optional `FINCAL_API_KEY`; uses a built-in calendar fallback if requests fail |
-| Onvista / GS Markets / Börse Frankfurt | Product metadata, Greeks, and quotes | Python environment; GS Markets fallback requires Chromium |
+| Börse Frankfurt / Onvista | Product quotes, terms, and Greeks | Python environment |
 | Hermes | AI commentary in macro analysis | Separate Hermes installation; set `HERMES_PATH` as needed |
 | Hermes Cron / systemd | External job and service status | Job snapshot files and corresponding system services; see the deployment documentation |
 
-Structured-product enrichment uses Onvista first, GS Markets for missing fields, and Börse Frankfurt for quote updates. Live queries are tiered by underlying, prioritizing up to 20 underlying groups with the highest aggregate derivative market value to limit provider requests. Provider page changes and access restrictions can affect data availability.
+Structured-product enrichment takes quotes, terms, and Greeks from Börse Frankfurt and asks Onvista only for fields that leaves open. Live queries are tiered by underlying, prioritizing up to 20 underlying groups with the highest aggregate derivative market value to limit provider requests; products outside those groups get their contract terms once a day. Provider page changes and access restrictions can affect data availability.
 
 ## API
 

@@ -4,8 +4,12 @@ use std::{
     time::{Duration, Instant},
 };
 
+use super::{
+    alpaca_http::AlpacaHttp,
+    provider_access::{ProviderAccess, ProviderRequestError},
+};
 use apca::{
-    ApiInfo, Client,
+    ApiInfo,
     data::v2::{Feed, bars, last_quotes},
 };
 use chrono::{DateTime, Utc};
@@ -33,11 +37,10 @@ pub struct AlpacaMarketDataService {
     settings: AlpacaSettings,
     fx_rate_service: FxRateService,
     market_data_repository: Arc<dyn MarketDataRepository>,
-    client: Option<Arc<Client>>,
+    client: Option<Arc<AlpacaHttp>>,
     cache: Arc<RwLock<HashMap<String, CachedQuote>>>,
     // All callers (HTTP and monitoring) share one cache check / network critical section.
     refresh_gate: Arc<tokio::sync::Mutex<()>>,
-    retry_after: Arc<tokio::sync::Mutex<Option<Instant>>>,
     // Concurrent callers wait for one history refresh and then read its cache.
     daily_bars_gate: Arc<tokio::sync::Mutex<()>>,
 }
@@ -123,13 +126,14 @@ impl AlpacaMarketDataService {
         settings: AlpacaSettings,
         fx_rate_service: FxRateService,
         market_data_repository: Arc<dyn MarketDataRepository>,
+        access: ProviderAccess,
     ) -> Self {
         let client = if settings.enabled
             && std::env::var_os("APCA_API_KEY_ID").is_some()
             && std::env::var_os("APCA_API_SECRET_KEY").is_some()
         {
             match ApiInfo::from_env() {
-                Ok(api_info) => Some(Arc::new(Client::new(api_info))),
+                Ok(api_info) => Some(Arc::new(AlpacaHttp::new(api_info, access))),
                 Err(error) => {
                     warn!(%error, "failed to initialize Alpaca client from environment");
                     None
@@ -146,7 +150,6 @@ impl AlpacaMarketDataService {
             client,
             cache: Arc::new(RwLock::new(HashMap::new())),
             refresh_gate: Arc::new(tokio::sync::Mutex::new(())),
-            retry_after: Arc::new(tokio::sync::Mutex::new(None)),
             daily_bars_gate: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
@@ -261,7 +264,7 @@ impl AlpacaMarketDataService {
     /// the remaining symbols are left on their cached history.
     async fn refresh_daily_bars(
         &self,
-        client: &Arc<Client>,
+        client: &Arc<AlpacaHttp>,
         symbols: &[String],
         now: DateTime<Utc>,
         cached: &mut HashMap<String, CachedDailyBars>,
@@ -352,42 +355,9 @@ impl AlpacaMarketDataService {
 
     pub async fn latest_quotes(&self, symbols_param: &str) -> AlpacaQuotesResponse {
         let _guard = self.refresh_gate.lock().await;
-        if self
-            .retry_after
-            .lock()
-            .await
-            .is_some_and(|until| Instant::now() < until)
-        {
-            let (symbols, _) =
-                parse_symbols_param(symbols_param, self.settings.max_symbols_per_request);
-            return self.stored_quotes_response(AlpacaQuoteStatus::Error, &symbols,
-                vec!["Alpaca refresh cooling down after a failed request; stored quotes retain their original timestamps".to_owned()]).await;
-        }
-        let result = tokio::time::timeout(
-            Duration::from_secs(45),
-            self.latest_quotes_inner(symbols_param),
-        )
-        .await;
-        match result {
-            Ok(response) => {
-                if matches!(response.status, AlpacaQuoteStatus::Error) {
-                    *self.retry_after.lock().await =
-                        Some(Instant::now() + Duration::from_secs(300));
-                }
-                response
-            }
-            Err(_) => {
-                *self.retry_after.lock().await = Some(Instant::now() + Duration::from_secs(300));
-                let (symbols, _) =
-                    parse_symbols_param(symbols_param, self.settings.max_symbols_per_request);
-                self.stored_quotes_response(
-                    AlpacaQuoteStatus::Error,
-                    &symbols,
-                    vec!["Alpaca refresh timed out".to_owned()],
-                )
-                .await
-            }
-        }
+        // Successful cache reads remain available even while the shared
+        // provider is cooling down; only network access is paused.
+        self.latest_quotes_inner(symbols_param).await
     }
 
     pub fn batch_size(&self) -> usize {
@@ -405,11 +375,7 @@ impl AlpacaMarketDataService {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Alpaca credentials unavailable"))?;
         let request = apca::api::v2::calendar::ListReqInit::default().init(start, end);
-        Ok(tokio::time::timeout(
-            Duration::from_secs(15),
-            client.issue::<apca::api::v2::calendar::List>(&request),
-        )
-        .await??)
+        client.calendar(&request).await
     }
 
     async fn latest_quotes_inner(&self, symbols_param: &str) -> AlpacaQuotesResponse {
@@ -558,7 +524,7 @@ impl AlpacaMarketDataService {
             }
             .init(missing.clone());
 
-            match client.issue::<last_quotes::Get>(&request).await {
+            match client.quotes(&request).await {
                 Ok(items) => {
                     let fetched_at = Instant::now();
                     let fetched_at_utc = Utc::now();
@@ -770,34 +736,50 @@ impl AlpacaMarketDataService {
 }
 
 async fn fetch_daily_bars(
-    client: &Client,
+    client: &AlpacaHttp,
     symbol: &str,
     start: DateTime<Utc>,
     end: DateTime<Utc>,
 ) -> anyhow::Result<StoredDailyBars> {
-    let request = bars::ListReqInit {
+    let mut request = bars::ListReqInit {
         limit: Some(1000),
         adjustment: Some(bars::Adjustment::All),
         feed: Some(Feed::IEX),
         ..Default::default()
     }
     .init(symbol, start, end, bars::TimeFrame::OneDay);
-    let response = tokio::time::timeout(
-        Duration::from_secs(15),
-        client.issue::<bars::List>(&request),
-    )
-    .await?;
-    let bars = match response {
-        Ok(page) => page.bars.iter().filter_map(convert_bar).collect(),
-        // The provider does not know the symbol. That is an answer, not an
-        // outage: an empty history is cached so the symbol is not asked for
-        // again on every request, and it cannot stall the refresh of others.
-        Err(apca::RequestError::Endpoint(bars::ListError::InvalidInput(_))) => {
-            info!(%symbol, "Alpaca rejected the symbol for daily bars");
-            Vec::new()
+    let mut bars = Vec::new();
+    // Normally a single page for 400 calendar days; never silently truncate.
+    for page_index in 0..5 {
+        match client.bars(&request).await {
+            Ok(page) => {
+                anyhow::ensure!(
+                    page.symbol == symbol,
+                    "Alpaca bars returned a different symbol"
+                );
+                bars.extend(page.bars.iter().filter_map(convert_bar));
+                if page.next_page_token.is_none() {
+                    break;
+                }
+                anyhow::ensure!(page_index < 4, "Alpaca daily history exceeded page limit");
+                request.page_token = page.next_page_token;
+            }
+            Err(error)
+                if error
+                    .downcast_ref::<ProviderRequestError>()
+                    .is_some_and(|e| matches!(e.status, 400 | 404 | 422)) =>
+            {
+                // Invalid symbols are a cached empty result, not a host outage.
+                return Ok(StoredDailyBars {
+                    symbol: symbol.into(),
+                    feed: "iex".into(),
+                    adjustment: "all".into(),
+                    bars: Vec::new(),
+                });
+            }
+            Err(error) => return Err(error),
         }
-        Err(error) => return Err(error.into()),
-    };
+    }
     Ok(StoredDailyBars {
         symbol: symbol.to_owned(),
         feed: "iex".to_owned(),
@@ -977,7 +959,8 @@ mod tests {
         run_migrations(&pool).await?;
         let repository: Arc<dyn MarketDataRepository> =
             Arc::new(SqliteMarketDataRepository::new(pool.clone()));
-        let fx_cache: Arc<dyn FxRateCache> = Arc::new(SqliteFxRateCache::new(pool));
+        let fx_cache: Arc<dyn FxRateCache> = Arc::new(SqliteFxRateCache::new(pool.clone()));
+        let access = ProviderAccess::from_pool(pool, 0.0).await?;
         // Disabled provider: no client, so nothing can reach the network.
         let service = AlpacaMarketDataService::new(
             AlpacaSettings {
@@ -994,8 +977,10 @@ mod tests {
                     cache_ttl_seconds: 3600,
                     fallback_usd_eur_rate: 0.9,
                 },
+                access.clone(),
             ),
             Arc::clone(&repository),
+            access,
         );
 
         let history = |symbol: &str| -> anyhow::Result<String> {

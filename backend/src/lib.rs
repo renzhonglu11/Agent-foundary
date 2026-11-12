@@ -49,6 +49,10 @@ impl App {
     pub async fn build(settings: Settings) -> anyhow::Result<Self> {
         let pool = connect(&settings.database_url).await?;
         run_migrations(&pool).await?;
+        let provider_access = services::provider_access::ProviderAccess::open(
+            &settings.structured_products.output_db_path,
+        )
+        .await?;
 
         let repository: Arc<dyn TransactionRepository> =
             Arc::new(SqliteTransactionRepository::new(pool.clone()));
@@ -73,27 +77,34 @@ impl App {
         let structured_products_service = StructuredProductsService::new(
             settings.structured_products.clone(),
             market_data_repository.clone(),
+            services::market_calendar::MarketCalendar::new(provider_access.clone()),
         )
         .context("failed to configure structured products enrichment")?;
         structured_products_service
             .refresh_if_missing(summary)
             .await;
         let fx_rate_cache: Arc<dyn FxRateCache> = Arc::new(SqliteFxRateCache::new(pool.clone()));
-        let fx_rate_service = FxRateService::new(fx_rate_cache, settings.fx_rates.clone());
+        let fx_rate_service = FxRateService::new(
+            fx_rate_cache,
+            settings.fx_rates.clone(),
+            provider_access.clone(),
+        );
         let product_candidates = services::product_candidates::ProductCandidates::new(
             pool.clone(),
             fx_rate_service.clone(),
+            provider_access.clone(),
         )?;
         product_candidates.start_watchlist_refresh();
         let alpaca_market_data_service = AlpacaMarketDataService::new(
             settings.alpaca.clone(),
             fx_rate_service,
             market_data_repository,
+            provider_access.clone(),
         );
         let hermes_cron_status_service = HermesCronStatusService::new();
         let systemd_status_service = SystemdStatusService::new();
         let pnl_snapshot_service = PnlSnapshotService::new(pool.clone());
-        let ape_wisdom_service = ApeWisdomService::new();
+        let ape_wisdom_service = ApeWisdomService::new(provider_access.clone());
         if let Err(e) = ape_wisdom_service.load_cache_from_file().await {
             tracing::warn!(error = %e, "Failed to load pre-existing ApeWisdom cache from file on startup");
         }
@@ -109,7 +120,11 @@ impl App {
         portfolio_monitor.start();
 
         let fred_macro_data_cache = Arc::new(SqliteFredMacroDataCache::new(pool.clone()));
-        let fred_service = FredService::new(settings.fred.clone(), fred_macro_data_cache);
+        let fred_service = FredService::new(
+            settings.fred.clone(),
+            fred_macro_data_cache,
+            provider_access,
+        );
         fred_service.warm_cache_in_background();
         let upload_data_service = UploadDataService::new(
             portfolio_service.clone(),

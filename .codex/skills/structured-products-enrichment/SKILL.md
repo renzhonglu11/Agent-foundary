@@ -1,6 +1,6 @@
 ---
 name: structured-products-enrichment
-description: Debug and implement Agent Foundry structured-products enrichment, especially Onvista and gs.de provider behavior, fallback order, metadata/Greek merge rules, factor certificate handling, delta exposure, risk status, and stale or missing fields in structured-products-enrichment/risk payloads. Use when fixing financial derivative data issues such as N/A risk actions, missing Greeks, incorrect factor leverage, wrong call/put direction, stale cache, or provider fallback failures.
+description: Debug and implement Agent Foundry structured-products enrichment, especially Börse Frankfurt and Onvista provider behavior, fallback order, metadata/Greek merge rules, factor certificate handling, delta exposure, risk status, and stale or missing fields in structured-products-enrichment/risk payloads. Use when fixing financial derivative data issues such as N/A risk actions, missing Greeks, incorrect factor leverage, wrong call/put direction, stale cache, or provider fallback failures.
 ---
 
 # Structured Products Enrichment
@@ -12,7 +12,7 @@ Use this skill before changing structured-products provider, enrichment, exposur
 1. Read `references/provider-rules.md`.
 2. Inspect these files in the repo before editing:
    - `backend/python/src/agent_foundry_python/structured_products/providers/onvista.py`
-   - `backend/python/src/agent_foundry_python/structured_products/providers/gs_de.py`
+   - `backend/python/src/agent_foundry_python/structured_products/providers/boerse_frankfurt.py`
    - `backend/python/src/agent_foundry_python/structured_products/enrichment.py`
    - `backend/python/src/agent_foundry_python/structured_products/exposure.py`
    - `backend/python/src/agent_foundry_python/structured_products/risk.py`
@@ -26,7 +26,7 @@ Use this skill before changing structured-products provider, enrichment, exposur
 Run at least:
 
 ```bash
-UV_CACHE_DIR=/tmp/uv-cache uv run --directory backend/python pytest tests/test_gs_de_provider.py tests/test_enrichment.py tests/test_exposure.py tests/test_risk.py
+UV_CACHE_DIR=/tmp/uv-cache uv run --directory backend/python pytest tests/test_boerse_frankfurt_provider.py tests/test_enrichment.py tests/test_exposure.py tests/test_risk.py
 ```
 
 Run full Python tests when touching shared enrichment, storage, or risk behavior:

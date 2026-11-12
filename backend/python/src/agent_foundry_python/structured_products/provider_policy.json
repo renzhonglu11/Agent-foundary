@@ -1,0 +1,100 @@
+{
+  "interval_seconds": 2.0,
+  "timeout_seconds": 20,
+  "missing_seconds": 86400,
+  "refused": {
+    "initial_seconds": 86400,
+    "max_seconds": 604800
+  },
+  "limited": {
+    "initial_seconds": 3600,
+    "max_seconds": 86400
+  },
+  "unavailable": {
+    "initial_seconds": 300,
+    "max_seconds": 3600
+  },
+  "sources": {
+    "api.boerse-frankfurt.de": {
+      "label": "Börse Frankfurt",
+      "scope": "products",
+      "interval_seconds": 2.0,
+      "budget": {
+        "hour": 360,
+        "day": 5000,
+        "tier1_reserved_hour": 240,
+        "tier1_reserved_day": 3400
+      }
+    },
+    "api.onvista.de": {
+      "label": "Onvista",
+      "scope": "products",
+      "interval_seconds": 2.0,
+      "budget": {
+        "hour": 180,
+        "day": 1800,
+        "tier1_reserved_hour": 120,
+        "tier1_reserved_day": 1200
+      }
+    },
+    "alpaca": {
+      "label": "Alpaca",
+      "scope": "underlying",
+      "interval_seconds": 0.5,
+      "budget": {
+        "hour": 600,
+        "day": 6000,
+        "tier1_reserved_hour": 0,
+        "tier1_reserved_day": 0
+      }
+    },
+    "api.stlouisfed.org": {
+      "label": "FRED",
+      "scope": "macro",
+      "interval_seconds": 0.5,
+      "budget": {
+        "hour": 120,
+        "day": 500,
+        "tier1_reserved_hour": 0,
+        "tier1_reserved_day": 0
+      }
+    },
+    "api.frankfurter.dev": {
+      "label": "Frankfurter 汇率",
+      "scope": "fx",
+      "interval_seconds": 2.0,
+      "budget": {
+        "hour": 12,
+        "day": 48,
+        "tier1_reserved_hour": 0,
+        "tier1_reserved_day": 0
+      }
+    },
+    "apewisdom.io": {
+      "label": "ApeWisdom",
+      "scope": "sentiment",
+      "interval_seconds": 2.0,
+      "budget": {
+        "hour": 60,
+        "day": 800,
+        "tier1_reserved_hour": 0,
+        "tier1_reserved_day": 0
+      }
+    },
+    "fincalapi.com": {
+      "label": "FinCal 交易日历",
+      "scope": "calendar",
+      "interval_seconds": 2.0,
+      "budget": {
+        "hour": 12,
+        "day": 48,
+        "tier1_reserved_hour": 0,
+        "tier1_reserved_day": 0
+      }
+    }
+  },
+  "budget": {
+    "hour": 120,
+    "day": 1000
+  }
+}

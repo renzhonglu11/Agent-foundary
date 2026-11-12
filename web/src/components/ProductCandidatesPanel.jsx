@@ -103,7 +103,7 @@ export default function ProductCandidatesPanel({ watchlist, entries, rolls, held
   return <Stack spacing={1.5}>
     <Box>
       <Typography variant="body2" fontWeight={800}>真实产品搜索与换仓</Typography>
-      <Line>从 GS Markets 搜索普通权证（含其他发行人）。换仓模式按原产品的精确标的、方向及更晚到期日筛选；券商是否支持交易需自行核对。</Line>
+      <Line>从 onvista 搜索普通权证（含多家发行人）；按名称搜索时先匹配一个标的。换仓模式按原产品的精确标的、方向及更晚到期日筛选；券商是否支持交易需自行核对。</Line>
     </Box>
     <Stack component="form" onSubmit={submitSearch} direction="row" useFlexGap spacing={1} sx={{ flexWrap: 'wrap', alignItems: 'center' }}>
       <TextField size="small" select label="搜索方式" value={rollFrom} onChange={e => onRollFromChange(e.target.value)} sx={{ minWidth: 220, maxWidth: '100%' }}>

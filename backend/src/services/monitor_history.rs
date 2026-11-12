@@ -36,6 +36,46 @@ pub fn freeze_forecasts(payload: &mut Value) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Reasons that weaken a comparison without voiding it. The product quote has
+/// no market time, the path between the two closes was not observed, or the
+/// volatility came from the provider without a timestamp.
+const SOFT_REASONS: [&str; 3] = [
+    "market_time_unknown",
+    "intraday_path_unobserved",
+    "greeks_time_unknown",
+];
+
+/// Without a market time the capture time stands in, but only for a provider
+/// quote captured around the US close the snapshot belongs to. A price from an
+/// uploaded statement has no such anchor.
+fn captured_near_close(snapshot: &Value, row: &Value) -> Option<DateTime<Utc>> {
+    let close = timestamp(&snapshot["usSession"]["lastClose"])?;
+    let window = (close - TimeDelta::hours(2))..=(close + TimeDelta::minutes(90));
+    let captured = timestamp(&row["fetchedAt"])?;
+    let underlying = timestamp(&row["underlyingQuote"]["priceAsOf"])?;
+    (matches!(
+        row["valuationSource"].as_str(),
+        Some("boerse_frankfurt" | "onvista")
+    ) && window.contains(&captured)
+        && window.contains(&underlying))
+    .then_some(captured)
+}
+
+fn error_summary(rows: &[Value], tier: &str) -> Value {
+    let errors: Vec<f64> = rows
+        .iter()
+        .filter(|row| row[tier] == true)
+        .filter_map(|row| number(&row["modelErrorPct"]))
+        .collect();
+    if errors.is_empty() {
+        return json!({"count":0,"meanAbsoluteErrorPct":null,"meanErrorPct":null});
+    }
+    let count = errors.len() as f64;
+    json!({"count":errors.len(),
+        "meanAbsoluteErrorPct":errors.iter().map(|value| value.abs()).sum::<f64>() / count,
+        "meanErrorPct":errors.iter().sum::<f64>() / count})
+}
+
 pub fn compare(
     origin_key: &str,
     origin: &Value,
@@ -83,13 +123,14 @@ pub fn compare(
             .find(|p| p["id"] == m.id)
             .unwrap_or(&Value::Null);
         let actual = number(&row["price"]).filter(|v| *v > 0.0);
-        let mut reason = None;
+        // Every reason that applies, most serious first; the first one is shown.
+        let mut reasons: Vec<&'static str> = Vec::new();
         if row.is_null() {
-            reason = Some("position_closed_or_missing");
+            reasons.push("position_closed_or_missing");
         } else if actual.is_none() || next_model.is_none() {
-            reason = Some("inputs_unavailable");
+            reasons.push("inputs_unavailable");
         } else if m.dte.is_some_and(|days| days <= elapsed) {
-            reason = Some("expired_without_settlement");
+            reasons.push("expired_without_settlement");
         }
         let mut conditional = None;
         let mut underlying_move = None;
@@ -116,81 +157,93 @@ pub fn compare(
                     .find(|i| i["isin"] == m.id)
                     .map(|i| i["expiry"].clone())
             };
-            if reason.is_none()
-                && (m.product_type != next.product_type
-                    || m.put != next.put
-                    || m.ratio != next.ratio
-                    || strike_changed
-                    || terms(origin) != terms(target))
+            if m.product_type != next.product_type
+                || m.put != next.put
+                || m.ratio != next.ratio
+                || strike_changed
+                || terms(origin) != terms(target)
             {
-                reason = Some("contract_changed");
+                reasons.push("contract_changed");
             }
         }
-        if reason.is_none() {
-            reason = match (
-                timestamp(&old_row["marketAsOf"]),
-                timestamp(&row["marketAsOf"]),
-            ) {
-                (Some(a), Some(b)) if b <= a => Some("quote_not_advanced"),
-                (Some(a), Some(b)) => {
-                    let old_spot = timestamp(&old_row["underlyingQuote"]["priceAsOf"]);
-                    let new_spot = timestamp(&row["underlyingQuote"]["priceAsOf"]);
-                    if a > before + TimeDelta::minutes(2) || b > after + TimeDelta::minutes(2) {
-                        Some("future_market_time")
-                    } else if old_spot.is_none_or(|t| (a - t).num_minutes().abs() > 120)
-                        || new_spot.is_none_or(|t| (b - t).num_minutes().abs() > 120)
-                    {
-                        Some("quote_time_mismatch")
-                    } else {
-                        None
-                    }
+        match (
+            timestamp(&old_row["marketAsOf"]),
+            timestamp(&row["marketAsOf"]),
+        ) {
+            (Some(a), Some(b)) if b <= a => reasons.push("quote_not_advanced"),
+            (Some(a), Some(b)) => {
+                let old_spot = timestamp(&old_row["underlyingQuote"]["priceAsOf"]);
+                let new_spot = timestamp(&row["underlyingQuote"]["priceAsOf"]);
+                if a > before + TimeDelta::minutes(2) || b > after + TimeDelta::minutes(2) {
+                    reasons.push("future_market_time");
+                } else if old_spot.is_none_or(|t| (a - t).num_minutes().abs() > 120)
+                    || new_spot.is_none_or(|t| (b - t).num_minutes().abs() > 120)
+                {
+                    reasons.push("quote_time_mismatch");
                 }
-                _ => Some("market_time_unknown"),
-            };
+            }
+            _ => {
+                reasons.push("market_time_unknown");
+                // The capture times must themselves describe two different closes.
+                let captures =
+                    captured_near_close(origin, old_row).zip(captured_near_close(target, row));
+                if captures.is_none_or(|(first, second)| second <= first) {
+                    reasons.push("capture_time_unusable");
+                }
+            }
         }
-        if reason.is_none()
-            && matches!(
-                m.product_type.as_str(),
-                "factor_certificate" | "open_end_turbo" | "knock_out"
-            )
-        {
-            reason = Some("intraday_path_unobserved");
+        if matches!(
+            m.product_type.as_str(),
+            "factor_certificate" | "open_end_turbo" | "knock_out"
+        ) {
+            reasons.push("intraday_path_unobserved");
         }
-        if reason.is_none() && m.method == "bs_iv" {
-            reason = Some("greeks_time_unknown");
+        if m.method == "bs_iv" {
+            reasons.push("greeks_time_unknown");
         }
-        if reason.is_none()
-            && m.usd
+        if m.usd
             && (old_row["underlyingQuote"]["fxRateSource"] != "frankfurter"
                 || row["underlyingQuote"]["fxRateSource"] != "frankfurter")
         {
-            reason = Some("fx_reference_fallback");
+            reasons.push("fx_reference_fallback");
         }
         let error = conditional
             .zip(actual)
             .map(|(predicted, observed)| (predicted - observed) / m.price * 100.0);
-        let eligible = reason.is_none() && error.is_some();
+        let eligible = reasons.is_empty() && error.is_some();
+        // Usable as a rough reading: nothing voids the comparison, only its timing or path is uncertain.
+        let indicative = !reasons.is_empty()
+            && reasons.iter().all(|reason| SOFT_REASONS.contains(reason))
+            && error.is_some();
         rows.push(json!({"id":m.id,"name":m.name,"productType":m.product_type,"originPrice":m.price,"actualPrice":actual,
             "forecastPrice":forecast["flatPrice"],"forecastHorizonDays":forecast["horizonDays"],"conditionalPrice":conditional,
             "actualChangePct":actual.map(|p|(p/m.price-1.0)*100.0),"forecastErrorPct":number(&forecast["flatPrice"]).zip(actual).map(|(p,a)|(p-a)/m.price*100.0),
-            "modelErrorPct":error,"eligible":eligible,"reason":reason.unwrap_or("comparable"),"underlyingMovePct":underlying_move,
+            "modelErrorPct":error,"eligible":eligible,"indicative":indicative,"reason":reasons.first().copied().unwrap_or("comparable"),"reasons":reasons,"underlyingMovePct":underlying_move,
             "quantityChanged":number(&row["quantity"]).is_some_and(|q|(q-m.quantity).abs()>1e-8),
             "scenarioExceeded":underlying_move.zip(number(&origin["risk"]["settings"]["shockPct"])).map(|(v,s)|v.abs()>s*number(&origin["risk"]["groupScales"][&m.group]).unwrap_or(1.0))}));
     }
-    let errors: Vec<f64> = rows
+    let reliable = error_summary(&rows, "eligible");
+    let indicative = error_summary(&rows, "indicative");
+    let mut by_type: std::collections::BTreeMap<String, Vec<Value>> = Default::default();
+    for row in rows.iter().filter(|row| row["indicative"] == true) {
+        by_type
+            .entry(row["productType"].as_str().unwrap_or("unknown").into())
+            .or_default()
+            .push(row.clone());
+    }
+    let indicative_by_type: std::collections::BTreeMap<_, _> = by_type
         .iter()
-        .filter(|r| r["eligible"] == true)
-        .filter_map(|r| number(&r["modelErrorPct"]))
+        .map(|(product_type, rows)| (product_type, error_summary(rows, "indicative")))
         .collect();
-    let mae = if errors.is_empty() {
-        None
-    } else {
-        Some(errors.iter().map(|v| v.abs()).sum::<f64>() / errors.len() as f64)
-    };
+    let eligible_count = reliable["count"].as_u64().unwrap_or(0) as usize;
     Ok(
         json!({"originKey":origin_key,"targetKey":target_key,"originAt":before,"targetAt":after,"elapsedDays":elapsed,
-        "modelVersion":origin["risk"]["modelVersion"],"eligibleCount":errors.len(),"excludedCount":rows.len()-errors.len(),
-        "meanAbsoluteErrorPct":mae,"rows":rows,"basis":"price_change_per_unit_not_portfolio_return"}),
+        "modelVersion":origin["risk"]["modelVersion"],"eligibleCount":eligible_count,"excludedCount":rows.len()-eligible_count,
+        "meanAbsoluteErrorPct":reliable["meanAbsoluteErrorPct"],"meanErrorPct":reliable["meanErrorPct"],
+        "indicativeCount":indicative["count"],"indicativeMeanAbsoluteErrorPct":indicative["meanAbsoluteErrorPct"],
+        "indicativeMeanErrorPct":indicative["meanErrorPct"],"indicativeByProductType":indicative_by_type,
+        "indicativeBasis":"quote_or_path_timing_uncertain",
+        "rows":rows,"basis":"price_change_per_unit_not_portfolio_return"}),
     )
 }
 
@@ -410,7 +463,7 @@ mod tests {
         use crate::services::monitor_alerts::{self, SettingsRecord};
         let pool = pool().await?;
         let mut p = observation("2026-11-10", 2.0, 100.0)?;
-        p["positions"][0]["issues"] = json!(["valuation_market_time_unknown"]);
+        p["positions"][0]["issues"] = json!(["underlying_missing"]);
         save(&pool, &p).await?;
         let mut tx = pool.begin().await?;
         monitor_alerts::evaluate(
@@ -431,6 +484,91 @@ mod tests {
         assert_eq!(keys.len(), 1);
         assert!(keys[0].starts_with("event:"));
         assert_eq!(monitor_alerts::list(&pool).await?[0]["status"], "active");
+        Ok(())
+    }
+
+    /// A snapshot as production records it: Frankfurt quote, capture time only.
+    fn captured(day: &str, price: f64, spot: f64, capture: &str) -> anyhow::Result<Value> {
+        let mut p = observation(day, price, spot)?;
+        p["positions"][0]["marketAsOf"] = Value::Null;
+        p["positions"][0]["valuationSource"] = json!("boerse_frankfurt");
+        p["positions"][0]["fetchedAt"] = json!(format!("{day}T{capture}Z"));
+        Ok(p)
+    }
+
+    #[test]
+    fn quotes_without_market_time_give_indicative_samples_when_captured_near_the_close()
+    -> anyhow::Result<()> {
+        let before = captured("2026-11-10", 2.0, 100.0, "20:30:00")?;
+        let after = captured("2026-11-17", 2.5, 110.0, "20:40:00")?;
+        let result = compare("a", &before, "b", &after)?;
+        let row = &result["rows"][0];
+        assert_eq!(row["reason"], "market_time_unknown");
+        assert_eq!(row["reasons"], json!(["market_time_unknown"]));
+        assert_eq!(
+            (&row["eligible"], &row["indicative"]),
+            (&json!(false), &json!(true))
+        );
+        // Reliable figures stay empty; the indicative ones carry the same error.
+        assert_eq!(result["eligibleCount"], 0);
+        assert!(result["meanAbsoluteErrorPct"].is_null());
+        assert_eq!(result["indicativeCount"], 1);
+        let error = number(&row["modelErrorPct"]).ok_or_else(|| anyhow::anyhow!("no error"))?;
+        assert_eq!(result["indicativeMeanErrorPct"], error);
+        assert_eq!(result["indicativeMeanAbsoluteErrorPct"], error.abs());
+        assert_eq!(
+            result["indicativeByProductType"]["optionsschein"]["count"],
+            1
+        );
+
+        // A statement upload has no capture anchor, and neither has a capture far from the close.
+        let mut uploaded = after.clone();
+        uploaded["positions"][0]["valuationSource"] = json!("pdf");
+        let far = captured("2026-11-17", 2.5, 110.0, "14:00:00")?;
+        for target in [&uploaded, &far] {
+            let result = compare("a", &before, "b", target)?;
+            assert_eq!(result["rows"][0]["indicative"], false);
+            assert_eq!(
+                result["rows"][0]["reasons"],
+                json!(["market_time_unknown", "capture_time_unusable"])
+            );
+            assert_eq!(result["indicativeCount"], 0);
+            assert!(result["indicativeMeanAbsoluteErrorPct"].is_null());
+        }
+
+        // A reason that voids the comparison is not softened by a good capture time.
+        let mut changed = after.clone();
+        changed["risk"]["models"][0]["ratio"] = json!(0.5);
+        let result = compare("a", &before, "b", &changed)?;
+        assert_eq!(result["rows"][0]["reason"], "contract_changed");
+        assert_eq!(result["rows"][0]["indicative"], false);
+        Ok(())
+    }
+
+    #[test]
+    fn known_market_times_keep_reliable_samples_apart_from_indicative_ones() -> anyhow::Result<()> {
+        let before = observation("2026-11-10", 2.0, 100.0)?;
+        let after = observation("2026-11-17", 2.5, 110.0)?;
+        let reliable = compare("a", &before, "b", &after)?;
+        assert_eq!(
+            (&reliable["eligibleCount"], &reliable["indicativeCount"]),
+            (&json!(1), &json!(0))
+        );
+        assert_eq!(reliable["rows"][0]["reasons"], json!([]));
+        assert_eq!(
+            reliable["meanErrorPct"],
+            reliable["rows"][0]["modelErrorPct"]
+        );
+
+        // Provider volatility without a timestamp is uncertain, not void.
+        let mut provider = before.clone();
+        provider["risk"]["models"][0]["method"] = json!("bs_iv");
+        let result = compare("a", &provider, "b", &after)?;
+        assert_eq!(result["rows"][0]["reason"], "greeks_time_unknown");
+        assert_eq!(
+            (&result["eligibleCount"], &result["indicativeCount"]),
+            (&json!(0), &json!(1))
+        );
         Ok(())
     }
 }

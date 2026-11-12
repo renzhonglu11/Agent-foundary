@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { backgroundUpdateState, monitorUpdateState, productUpdateState } from './backgroundUpdateStatus.js'
+import { backgroundUpdateState, lastMonitorCheck, monitorUpdateState, providerAccessLabel, productUpdateState, providerUpdateState } from './backgroundUpdateStatus.js'
 import { fetchStructuredProductsRefreshStatus } from '../hooks/useStructuredProductsRefreshStatus.js'
 
 const now = Date.parse('2026-11-10T12:00:00Z')
@@ -20,6 +20,19 @@ test('market closure keeps the scheduler healthy while distinguishing it from an
   assert.equal(productUpdateState({ ...scheduled, running: true, mode: 'fallback' }, null, false).label, '整理缓存中')
 })
 
+test('a check that keeps the stored snapshot still counts as a completed check', () => {
+  const later = now + 600_000
+  const reused = { ...healthy, runtime: { running: false, lastCycle: 'unchanged', lastCheckedAt: '2026-11-10T12:09:30Z' } }
+  assert.equal(monitorUpdateState(reused, null, later).label, '运行正常')
+  assert.equal(lastMonitorCheck(reused), Date.parse('2026-11-10T12:09:30Z'))
+  // The last check survives while the next cycle is running.
+  assert.equal(monitorUpdateState({ ...reused, runtime: { running: true, lastCheckedAt: '2026-11-10T12:09:30Z' } }, null, later).label, '正在检查')
+  // A stopped loop is still reported, and an older backend without the field falls back to the snapshot time.
+  assert.equal(monitorUpdateState(reused, null, later + 600_000).label, '检查超时')
+  assert.equal(lastMonitorCheck(healthy), Date.parse(healthy.snapshot.evaluatedAt))
+  assert.equal(lastMonitorCheck({}), null)
+})
+
 test('a running refresh cannot conceal a stalled monitor or a failed data source', () => {
   const stale = monitorUpdateState(healthy, null, now + 180_000)
   const running = productUpdateState({ ...scheduled, running: true }, null, true)
@@ -32,6 +45,16 @@ test('a running refresh cannot conceal a stalled monitor or a failed data source
 test('cached successes do not hide polling failures', () => {
   assert.equal(monitorUpdateState(healthy, new Error('offline'), now).color, 'error')
   assert.equal(productUpdateState(scheduled, new Error('offline'), false).color, 'error')
+})
+
+test('persisted provider cooldown stays visible during refresh and after restart', () => {
+  const limited = { ...scheduled, providers: [{ source: 'api.onvista.de', coolingDown: true, lastStatus: 429 }] }
+  assert.equal(productUpdateState(limited, null, true).label, '渠道冷却中')
+  const running = productUpdateState({ ...limited, running: true }, null, true)
+  assert.equal(running.busy, true)
+  assert.equal(backgroundUpdateState(monitorUpdateState(healthy, null, now), running).label, '需关注')
+  assert.equal(productUpdateState({ ...scheduled, providerStatusError: '不可用' }, null, true).color, 'warning')
+  assert.equal(productUpdateState({ ...scheduled, providers: [{ coolingDown: false }] }, null, false).color, 'success')
 })
 
 test('partial quote and historical data failures remain visible', () => {
@@ -72,4 +95,30 @@ test('HTTP errors from the product status endpoint are not converted to idle suc
   } finally {
     globalThis.fetch = originalFetch
   }
+})
+
+
+test('non-product cooldowns warn globally without mislabelling a product refresh', () => {
+  const refresh = { ...scheduled, running: true, providers: [{ source: 'api.stlouisfed.org', scope: 'macro', coolingDown: true }] }
+  const products = productUpdateState(refresh, null, true)
+  assert.equal(products.label, '正在抓取')
+  const providers = providerUpdateState(refresh, null)
+  assert.equal(providers.label, '部分来源暂停')
+  assert.equal(backgroundUpdateState(monitorUpdateState(healthy, null, now), products, providers).label, '需关注')
+  assert.equal(providerUpdateState(refresh, new Error('offline')).color, 'warning')
+})
+
+
+test('local request budgets are distinct from HTTP refusals and reserve Tier 1 capacity', () => {
+  const source = { source: 'api.onvista.de', scope: 'products', lastStatus: 200, coolingDown: false,
+    budget: { limited: false, backgroundLimited: true } }
+  const refresh = { ...scheduled, running: true, providers: [source] }
+  assert.equal(productUpdateState(refresh, null, true).label, '正在抓取')
+  assert.equal(providerUpdateState(refresh, null).label, '后台请求受限')
+  assert.equal(providerAccessLabel(source), '后台额度用完，Tier 1 可继续')
+  const exhausted = { ...source, budget: { limited: true, backgroundLimited: true } }
+  assert.equal(productUpdateState({ ...refresh, providers: [exhausted] }, null, true).label, '请求预算已用完')
+  assert.equal(providerUpdateState({ providers: [exhausted] }, null).label, '部分来源预算用完')
+  assert.equal(providerAccessLabel({ ...exhausted, coolingDown: true }), '暂停请求')
+  assert.equal(providerAccessLabel({ lastStatus: 200 }), '最近请求成功')
 })

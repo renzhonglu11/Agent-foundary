@@ -44,7 +44,7 @@ cargo build --release
 cd backend/python
 uv sync
 uv run pytest                           # all tests
-UV_CACHE_DIR=/tmp/uv-cache uv run pytest tests/test_gs_de_provider.py tests/test_enrichment.py tests/test_exposure.py tests/test_risk.py
+UV_CACHE_DIR=/tmp/uv-cache uv run pytest tests/test_boerse_frankfurt_provider.py tests/test_enrichment.py tests/test_exposure.py tests/test_risk.py
 ```
 
 ### Frontend

@@ -29,6 +29,8 @@ pub struct StructuredProductsSettings {
     pub export_files: bool,
     pub auto_refresh_enabled: bool,
     pub auto_refresh_interval_mins: u64,
+    pub tier2_sources: Vec<String>,
+    pub tier2_interval_mins: u64,
     pub market_open_hour_cet: u32,
     pub market_close_hour_cet: u32,
 }
@@ -55,8 +57,6 @@ pub struct FredSettings {
     pub cache_ttl_seconds: u64,
     pub fallback_cache_ttl_seconds: u64,
     pub request_delay_ms: u64,
-    pub max_retries: u32,
-    pub retry_base_delay_ms: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -146,6 +146,16 @@ impl StructuredProductsSettings {
             )
             .parse()
             .unwrap_or(60),
+            tier2_sources: env_or("STRUCTURED_PRODUCTS_TIER2_SOURCES", "")
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+                .collect(),
+            tier2_interval_mins: env_or("STRUCTURED_PRODUCTS_TIER2_INTERVAL_MINS", "120")
+                .parse::<u64>()
+                .unwrap_or(120)
+                .clamp(120, 1440),
             market_open_hour_cet: env_or("STRUCTURED_PRODUCTS_MARKET_OPEN_HOUR_CET", "8")
                 .parse()
                 .unwrap_or(8),
@@ -206,10 +216,6 @@ impl FredSettings {
             request_delay_ms: env_or("FRED_REQUEST_DELAY_MS", "350")
                 .parse()
                 .unwrap_or(350),
-            max_retries: env_or("FRED_MAX_RETRIES", "2").parse().unwrap_or(2),
-            retry_base_delay_ms: env_or("FRED_RETRY_BASE_DELAY_MS", "1000")
-                .parse()
-                .unwrap_or(1000),
         }
     }
 }

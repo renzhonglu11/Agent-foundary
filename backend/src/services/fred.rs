@@ -4,9 +4,9 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{Context, bail};
+use super::provider_access::ProviderAccess;
+use anyhow::Context;
 use chrono::{DateTime, Utc};
-use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use tokio::{sync::Mutex, time::sleep};
 use tracing::{info, warn};
@@ -67,17 +67,23 @@ struct FredSeriesRequest {
 pub struct FredService {
     settings: FredSettings,
     persistent_cache: Arc<dyn FredMacroDataCache>,
-    client: reqwest::Client,
+    access: ProviderAccess,
+    endpoint: String,
     cache: Arc<RwLock<Option<FredMacroDataCacheEntry>>>,
     refresh_lock: Arc<Mutex<()>>,
 }
 
 impl FredService {
-    pub fn new(settings: FredSettings, persistent_cache: Arc<dyn FredMacroDataCache>) -> Self {
+    pub fn new(
+        settings: FredSettings,
+        persistent_cache: Arc<dyn FredMacroDataCache>,
+        access: ProviderAccess,
+    ) -> Self {
         Self {
             settings,
             persistent_cache,
-            client: reqwest::Client::new(),
+            access,
+            endpoint: "https://api.stlouisfed.org/fred/series/observations".into(),
             cache: Arc::new(RwLock::new(None)),
             refresh_lock: Arc::new(Mutex::new(())),
         }
@@ -148,7 +154,14 @@ impl FredService {
         let ttl = self.cache_ttl_for(&entry.response);
 
         if cache_entry_age(entry.fetched_at) <= ttl {
-            if entry.response.status == "sandbox_mock" && self.settings.api_key.is_some() {
+            if entry.response.status == "sandbox_mock"
+                && self.settings.api_key.is_some()
+                && entry
+                    .response
+                    .warnings
+                    .iter()
+                    .any(|w| w.starts_with("FRED_API_KEY is not configured"))
+            {
                 info!(
                     "Ignoring in-memory sandbox_mock cache because FRED_API_KEY is now configured"
                 );
@@ -180,7 +193,14 @@ impl FredService {
             return None;
         }
 
-        if entry.response.status == "sandbox_mock" && self.settings.api_key.is_some() {
+        if entry.response.status == "sandbox_mock"
+            && self.settings.api_key.is_some()
+            && entry
+                .response
+                .warnings
+                .iter()
+                .any(|w| w.starts_with("FRED_API_KEY is not configured"))
+        {
             info!("Ignoring sqlite sandbox_mock cache because FRED_API_KEY is now configured");
             return None;
         }
@@ -288,7 +308,7 @@ impl FredService {
                 sleep(request_delay).await;
             }
 
-            let series_data = self.fetch_series_with_retries(series, api_key).await?;
+            let series_data = self.fetch_series(series, api_key).await?;
 
             if series.id == "CPIAUCSL" {
                 cpi_series = Some(series_data);
@@ -354,70 +374,23 @@ impl FredService {
         })
     }
 
-    async fn fetch_series_with_retries(
-        &self,
-        series: &FredSeriesRequest,
-        api_key: &str,
-    ) -> anyhow::Result<FredSeriesData> {
-        for attempt in 0..=self.settings.max_retries {
-            match self.fetch_series(series, api_key).await {
-                Ok(series_data) => return Ok(series_data),
-                Err(error)
-                    if is_rate_limit_error(&error) && attempt < self.settings.max_retries =>
-                {
-                    let delay = self.retry_delay(attempt);
-                    warn!(
-                        series_id = series.id,
-                        attempt = attempt + 1,
-                        retry_in_ms = delay.as_millis(),
-                        "FRED API rate limited; retrying"
-                    );
-                    sleep(delay).await;
-                }
-                Err(error) => return Err(error),
-            }
-        }
-
-        bail!("FRED API retry loop exited unexpectedly for {}", series.id)
-    }
-
     async fn fetch_series(
         &self,
         series: &FredSeriesRequest,
         api_key: &str,
     ) -> anyhow::Result<FredSeriesData> {
-        let response = self
-            .client
-            .get("https://api.stlouisfed.org/fred/series/observations")
-            .query(&[
-                ("series_id", series.id),
-                ("api_key", api_key),
-                ("file_type", "json"),
-                ("observation_start", series.observation_start),
-            ])
-            .send()
+        let response: FredApiResponse = self
+            .access
+            .json("api.stlouisfed.org", series.id, |client| {
+                client.get(&self.endpoint).query(&[
+                    ("series_id", series.id),
+                    ("api_key", api_key),
+                    ("file_type", "json"),
+                    ("observation_start", series.observation_start),
+                ])
+            })
             .await
-            .with_context(|| format!("failed to request FRED series {}", series.id))?;
-
-        let status = response.status();
-        if status == StatusCode::TOO_MANY_REQUESTS {
-            bail!(
-                "FRED API returned 429 Too Many Requests while fetching {}",
-                series.id
-            );
-        }
-
-        if !status.is_success() {
-            bail!(
-                "FRED API returned HTTP {status} while fetching {}",
-                series.id
-            );
-        }
-
-        let response = response
-            .json::<FredApiResponse>()
-            .await
-            .with_context(|| format!("failed to decode FRED series {}", series.id))?;
+            .with_context(|| format!("failed to fetch FRED series {}", series.id))?;
 
         let mut observations = Vec::new();
         for obs in response.observations {
@@ -436,13 +409,6 @@ impl FredService {
             frequency: series.frequency.to_owned(),
             observations,
         })
-    }
-
-    fn retry_delay(&self, attempt: u32) -> Duration {
-        let multiplier = 1_u64.checked_shl(attempt).unwrap_or(u64::MAX);
-        let millis = self.settings.retry_base_delay_ms.saturating_mul(multiplier);
-
-        Duration::from_millis(millis)
     }
 
     fn generate_mock_data(&self, warnings: Vec<String>) -> FredMacroDataResponse {
@@ -821,10 +787,6 @@ impl FredService {
     }
 }
 
-fn is_rate_limit_error(error: &anyhow::Error) -> bool {
-    error.to_string().contains("429 Too Many Requests")
-}
-
 fn redact_api_key(message: &str) -> String {
     let Some(key_start) = message.find("api_key=") else {
         return message.to_owned();
@@ -871,7 +833,82 @@ fn get_12_months_prior(date_str: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{get_12_months_prior, redact_api_key};
+    use super::*;
+    use crate::{
+        infrastructure::db::sqlite_fred_macro_data_cache::SqliteFredMacroDataCache,
+        services::provider_test_support::{MockHttp, database},
+    };
+
+    async fn service(server: &MockHttp) -> anyhow::Result<(FredService, sqlx::SqlitePool)> {
+        let pool = database().await?;
+        let mut service = FredService::new(
+            FredSettings {
+                api_key: Some("test-secret".into()),
+                cache_ttl_seconds: 86400,
+                fallback_cache_ttl_seconds: 600,
+                request_delay_ms: 0,
+            },
+            Arc::new(SqliteFredMacroDataCache::new(pool.clone())),
+            ProviderAccess::from_pool(pool.clone(), 0.0).await?,
+        );
+        service.endpoint = server.url.clone();
+        Ok((service, pool))
+    }
+
+    #[tokio::test]
+    async fn configured_key_failure_is_cached_and_does_not_retry_during_cooldown()
+    -> anyhow::Result<()> {
+        let server = MockHttp::start(429, "{}", Some("7200")).await?;
+        let (service, pool) = service(&server).await?;
+        let mut calls = tokio::task::JoinSet::new();
+        for _ in 0..6 {
+            let service = service.clone();
+            calls.spawn(async move { service.get_macro_data().await });
+        }
+        while let Some(result) = calls.join_next().await {
+            let response = result?;
+            assert_eq!(response.status, "sandbox_mock");
+            assert!(!serde_json::to_string(&response)?.contains("test-secret"));
+        }
+        assert_eq!(server.hits(), 1);
+        // Recreate the service and expire the failure-cache TTL: the durable
+        // access guard must still prevent a fresh HTTP request.
+        let mut expired = service
+            .persistent_cache
+            .get_latest()
+            .await?
+            .context("failure cache")?;
+        expired.fetched_at = Utc::now() - chrono::Duration::hours(1);
+        service.persistent_cache.store(&expired).await?;
+        let mut restarted = FredService::new(
+            FredSettings {
+                fallback_cache_ttl_seconds: 0,
+                ..service.settings.clone()
+            },
+            service.persistent_cache.clone(),
+            ProviderAccess::from_pool(pool, 0.0).await?,
+        );
+        restarted.endpoint = server.url.clone();
+        restarted.get_macro_data().await;
+        assert_eq!(server.hits(), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn adding_credentials_invalidates_only_the_missing_key_mock() -> anyhow::Result<()> {
+        let server = MockHttp::start(200, "{\"observations\":[]}", None).await?;
+        let (mut service, _) = service(&server).await?;
+        service.settings.api_key = None;
+        assert_eq!(service.get_macro_data().await.status, "sandbox_mock");
+        assert_eq!(server.hits(), 0);
+        service.settings.api_key = Some("new-test-key".into());
+        assert_eq!(service.get_macro_data().await.status, "live");
+        let hits = server.hits();
+        assert!(hits > 0);
+        assert_eq!(service.get_macro_data().await.status, "live");
+        assert_eq!(server.hits(), hits);
+        Ok(())
+    }
 
     #[test]
     fn redacts_fred_api_key_from_error_url() {

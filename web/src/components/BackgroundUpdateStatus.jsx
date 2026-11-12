@@ -6,7 +6,7 @@ import SyncRoundedIcon from '@mui/icons-material/SyncRounded'
 import { usePortfolioMonitorStatus } from '../hooks/usePortfolioMonitor.js'
 import { useStructuredProductsRefreshStatus } from '../hooks/useStructuredProductsRefreshStatus.js'
 import { dateTime, number } from '../utils/formatters.js'
-import { backgroundUpdateState, monitorUpdateState, productUpdateState, validTimestamp } from '../utils/backgroundUpdateStatus.js'
+import { backgroundUpdateState, lastMonitorCheck, monitorUpdateState, productUpdateState, providerAccessLabel, providerUpdateState, validTimestamp } from '../utils/backgroundUpdateStatus.js'
 import PortfolioDataMonitor from './PortfolioDataMonitor.jsx'
 
 const time = value => validTimestamp(value) ? dateTime(value) : '暂无记录'
@@ -38,13 +38,15 @@ export default function BackgroundUpdateStatus() {
   const refresh = products.data
   const monitorState = monitorUpdateState(monitor.data, monitor.error, now)
   const productState = productUpdateState(refresh, products.error, snapshot?.productMarketOpen)
-  const state = backgroundUpdateState(monitorState, productState)
+  const providerState = providerUpdateState(refresh, products.error)
+  const state = backgroundUpdateState(monitorState, productState, providerState)
   const progress = Number.isFinite(refresh?.progressPercent) ? Math.max(0, Math.min(100, refresh.progressPercent)) : null
   const quoteInterval = monitor.data?.intervalSeconds
   const productInterval = refresh?.intervalMinutes
   const nextQuote = snapshot?.nextQuoteAttemptAt
   const nextOpen = snapshot?.usSession?.nextOpen
   const coverage = snapshot?.usableUnderlyingCoveragePct
+  const checkedAt = lastMonitorCheck(monitor.data)
   const fetching = monitor.isFetching || products.isFetching
 
   return <>
@@ -78,7 +80,10 @@ export default function BackgroundUpdateStatus() {
           <IconButton size="small" aria-label="关闭后台更新状态" onClick={() => setAnchor(null)}><CloseRoundedIcon fontSize="small" /></IconButton>
         </Stack>
         <JobStatus title="标的报价与风险计算" state={monitorState}>
-          <Typography variant="body2">最近检查：{time(snapshot?.evaluatedAt)}</Typography>
+          <Typography variant="body2">最近检查：{checkedAt == null ? '暂无记录' : dateTime(checkedAt)}</Typography>
+          {monitor.data?.runtime?.lastCycle === 'unchanged' && <Typography variant="caption" color="text.secondary">
+            输入没有变化，沿用 {time(snapshot?.evaluatedAt)} 的计算结果{Number.isFinite(monitor.data.unchangedRecalcMinutes) && `；最长 ${number.format(monitor.data.unchangedRecalcMinutes)} 分钟重算一次`}。
+          </Typography>}
           <Typography variant="body2" color="text.secondary">最近请求报价：{time(snapshot?.provider?.checkedAt)}</Typography>
           <Typography variant="caption" color="text.secondary">
             {snapshot?.usSession?.state === 'closed' ? `美股休市，保留最近交易时段行情。${validTimestamp(nextOpen) ? ` 下次开盘：${time(nextOpen)}。` : ''}` : snapshot?.usSession?.state === 'open' ? '美股交易中。' : '美股交易日历待确认。'}
@@ -101,6 +106,33 @@ export default function BackgroundUpdateStatus() {
             {Number.isFinite(refresh?.marketOpenHourBerlin) && Number.isFinite(refresh?.marketCloseHourBerlin) && ` 交易日 ${refresh.marketOpenHourBerlin}:00–${refresh.marketCloseHourBerlin}:00（柏林时间）。`}
           </Typography>
           {!refresh?.lastFinishedAt && <Typography variant="caption" color="text.secondary">服务启动后尚无完成记录，页面可能仍使用已有缓存。</Typography>}
+          {typeof refresh?.tier2Enabled === 'boolean' && <Typography variant="caption" color="text.secondary">
+            {refresh.tier2Enabled ? `先更新 Tier 1；Tier 2 每 ${number.format(refresh.tier2IntervalMinutes || 120)} 分钟尝试一次，受来源额度限制。` : 'Tier 2 实时报价未启用，基础条款按日更新。'}
+          </Typography>}
+        </JobStatus>
+        <Divider />
+        <JobStatus title="数据源访问保护" state={providerState}>
+          {Array.isArray(refresh?.providers) && refresh.providers.map(provider => <Box key={provider.source} sx={{ bgcolor: 'action.hover', borderRadius: 1, p: 1 }}>
+            <Typography variant="caption" component="div" fontWeight={700}>
+              {provider.label || (provider.source === 'api.onvista.de' ? 'Onvista' : provider.source === 'api.boerse-frankfurt.de' ? 'Börse Frankfurt' : provider.source)}
+              {' · '}{providerAccessLabel(provider)}
+            </Typography>
+            {provider.coolingDown && <Typography variant="caption" color="text.secondary" component="div">
+              {provider.lastStatus ? `HTTP ${provider.lastStatus}` : '连接或响应异常'} · 最早重试：{time(provider.retryAt)}
+            </Typography>}
+            {provider.budget && <>
+              <Typography variant="caption" color="text.secondary" component="div">
+                最近 1 小时：{number.format(provider.budget.hour?.used ?? 0)} / {number.format(provider.budget.hour?.limit ?? 0)} 次；最近 24 小时：{number.format(provider.budget.day?.used ?? 0)} / {number.format(provider.budget.day?.limit ?? 0)} 次
+              </Typography>
+              {provider.budget.hour?.tier1Reserved > 0 && <Typography variant="caption" color="text.secondary" component="div">
+                Tier 1 保留额度：每小时 {number.format(provider.budget.hour.tier1Reserved)} 次 / 每 24 小时 {number.format(provider.budget.day?.tier1Reserved ?? 0)} 次
+              </Typography>}
+              {(provider.budget.limited || provider.budget.backgroundLimited) && <Typography variant="caption" color="text.secondary" component="div">
+                {provider.budget.limited ? '全部请求' : '后台请求'}最早恢复：{time(provider.budget.limited ? provider.budget.retryAt : provider.budget.backgroundRetryAt)}
+              </Typography>}
+            </>}
+            <Typography variant="caption" color="text.secondary" component="div">最近请求：{time(provider.lastCheckedAt)}</Typography>
+          </Box>)}
         </JobStatus>
         <Divider />
         <Typography variant="caption" color="text.secondary">以上是任务检查与抓取时间，不等于行情成交时间；数据缺失、过期和风险预警可在完整监控中查看。</Typography>

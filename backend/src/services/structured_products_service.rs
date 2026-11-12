@@ -8,6 +8,8 @@ use std::{
 };
 
 use anyhow::{Context, anyhow};
+use chrono::{DateTime, NaiveDate, Utc};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
@@ -28,6 +30,28 @@ use crate::{
 
 const STRUCTURED_PRODUCTS_PAYLOAD_KEY: &str = "structured_products_enrichment";
 const STRUCTURED_PRODUCTS_RISK_PAYLOAD_KEY: &str = "structured_products_risk";
+const REFRESH_SCHEDULE_KEY: &str = "structured_products_refresh_schedule";
+/// Preference for the kernel to reclaim the scraper before anything else.
+const GENERATOR_OOM_SCORE_ADJ: &str = "500";
+
+/// When the scheduler last started a refresh. Stored, so a restarted process
+/// resumes the schedule instead of scraping again at once: a refresh that
+/// brings the process down would otherwise repeat on every restart.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+struct RefreshSchedule {
+    last_attempt_at: Option<DateTime<Utc>>,
+    /// Berlin date of the last post-close snapshot.
+    post_close_date: Option<NaiveDate>,
+}
+
+impl RefreshSchedule {
+    /// Time left until the next interval refresh is due, if it is not due yet.
+    fn wait_before_refresh(&self, now: DateTime<Utc>, interval: Duration) -> Option<Duration> {
+        let elapsed = (now - self.last_attempt_at?).to_std().ok()?;
+        interval.checked_sub(elapsed).filter(|left| !left.is_zero())
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RefreshMode {
@@ -38,13 +62,13 @@ pub enum RefreshMode {
 #[derive(Clone)]
 pub struct StructuredProductsService {
     settings: StructuredProductsSettings,
+    calendar: market_calendar::MarketCalendar,
     market_data_repository: Arc<dyn MarketDataRepository>,
     output_json_path: PathBuf,
     risk_json_path: PathBuf,
     output_csv_path: PathBuf,
     output_db_path: PathBuf,
     uv_cache_path: PathBuf,
-    playwright_browsers_path: PathBuf,
     refresh_sender: UnboundedSender<RefreshRequest>,
     queued_requests: Arc<AtomicUsize>,
     status: Arc<RwLock<RefreshStatus>>,
@@ -83,13 +107,11 @@ impl StructuredProductsService {
     pub fn new(
         settings: StructuredProductsSettings,
         market_data_repository: Arc<dyn MarketDataRepository>,
+        calendar: market_calendar::MarketCalendar,
     ) -> anyhow::Result<Self> {
         let uv_cache_path = std::env::var("AGENT_FOUNDRY_UV_CACHE_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("data/uv-cache"));
-        let playwright_browsers_path = std::env::var("AGENT_FOUNDRY_PLAYWRIGHT_BROWSERS_PATH")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("data/playwright-browsers"));
 
         let (refresh_sender, refresh_receiver) = unbounded_channel();
         let service = Self {
@@ -98,8 +120,8 @@ impl StructuredProductsService {
             output_csv_path: absolute_path(&settings.output_csv_path)?,
             output_db_path: absolute_path(&settings.output_db_path)?,
             uv_cache_path: absolute_path(&uv_cache_path)?,
-            playwright_browsers_path: absolute_path(&playwright_browsers_path)?,
             settings,
+            calendar,
             market_data_repository,
             refresh_sender,
             queued_requests: Arc::new(AtomicUsize::new(0)),
@@ -161,6 +183,14 @@ impl StructuredProductsService {
     fn start_refresh_worker(&self, mut receiver: UnboundedReceiver<RefreshRequest>) {
         let service = self.clone();
         tokio::spawn(async move {
+            // Nothing is in flight yet, so every temporary file is a leftover.
+            let removed = remove_stale_temporary_files(&service.temporary_directories()).await;
+            if removed > 0 {
+                info!(
+                    removed,
+                    "removed structured products temporary files left by earlier runs"
+                );
+            }
             let mut retry_after = tokio::time::Instant::now();
             while let Some(mut request) = receiver.recv().await {
                 // Queue requests through a short cooldown, then coalesce to the newest summary.
@@ -229,22 +259,25 @@ impl StructuredProductsService {
             );
             service.set_auto_refresh_active(true);
 
-            let mut post_close_done = false;
+            let mut schedule = service.load_refresh_schedule().await;
+            service.set_last_scheduled_refresh_at(schedule.last_attempt_at);
 
             loop {
                 let today = market_calendar::berlin_now().date_naive();
                 let cet_hour = market_calendar::current_cet_hour();
 
-                if !market_calendar::is_xetra_trading_day(today).await {
+                if !service.calendar.is_xetra_trading_day(today).await {
                     // Weekend or public holiday — check back periodically.
-                    post_close_done = false;
                     tokio::time::sleep(sleep_off_hours).await;
                     continue;
                 }
 
                 if cet_hour >= market_open && cet_hour < market_close {
                     // ----- Market hours: refresh on the configured interval -----
-                    post_close_done = false;
+                    if let Some(wait) = schedule.wait_before_refresh(Utc::now(), interval) {
+                        tokio::time::sleep(wait).await;
+                        continue;
+                    }
                     let summary = match portfolio_service.summary().await {
                         Ok(s) => s,
                         Err(error) => {
@@ -253,12 +286,12 @@ impl StructuredProductsService {
                             continue;
                         }
                     };
-                    service.set_last_scheduled_refresh_at();
+                    schedule.last_attempt_at = Some(Utc::now());
+                    service.record_refresh_schedule(&schedule).await;
                     service.spawn_refresh(summary, "scheduled", RefreshMode::Live);
                     tokio::time::sleep(interval).await;
-                } else if cet_hour >= market_close && !post_close_done {
+                } else if cet_hour >= market_close && schedule.post_close_date != Some(today) {
                     // ----- Post-close: one snapshot, then wait for next open -----
-                    post_close_done = true;
                     let summary = match portfolio_service.summary().await {
                         Ok(s) => s,
                         Err(error) => {
@@ -268,7 +301,9 @@ impl StructuredProductsService {
                         }
                     };
                     info!("auto-refresh: taking post-close snapshot");
-                    service.set_last_scheduled_refresh_at();
+                    schedule.last_attempt_at = Some(Utc::now());
+                    schedule.post_close_date = Some(today);
+                    service.record_refresh_schedule(&schedule).await;
                     service.spawn_refresh(summary, "scheduled_close_snapshot", RefreshMode::Live);
                     tokio::time::sleep(sleep_off_hours).await;
                 } else {
@@ -283,6 +318,55 @@ impl StructuredProductsService {
                 }
             }
         });
+    }
+
+    async fn load_refresh_schedule(&self) -> RefreshSchedule {
+        match self
+            .market_data_repository
+            .load_payload(REFRESH_SCHEDULE_KEY)
+            .await
+        {
+            Ok(Some(content)) => serde_json::from_str(&content).unwrap_or_else(|error| {
+                warn!(%error, "ignoring unreadable structured products refresh schedule");
+                RefreshSchedule::default()
+            }),
+            Ok(None) => RefreshSchedule::default(),
+            Err(error) => {
+                warn!(%error, "failed to load structured products refresh schedule");
+                RefreshSchedule::default()
+            }
+        }
+    }
+
+    /// Stored before the refresh starts, so an attempt that never finishes
+    /// still counts.
+    async fn record_refresh_schedule(&self, schedule: &RefreshSchedule) {
+        self.set_last_scheduled_refresh_at(schedule.last_attempt_at);
+        let stored = match serde_json::to_string(schedule) {
+            Ok(content) => {
+                self.market_data_repository
+                    .store_payload(REFRESH_SCHEDULE_KEY, &content, &Utc::now().to_rfc3339())
+                    .await
+            }
+            Err(error) => Err(error.into()),
+        };
+        if let Err(error) = stored {
+            warn!(%error, "failed to store structured products refresh schedule");
+        }
+    }
+
+    fn temporary_directories(&self) -> Vec<PathBuf> {
+        let mut directories = Vec::new();
+        for path in [&self.output_json_path, &self.output_csv_path] {
+            let directory = path
+                .parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| PathBuf::from("."));
+            if !directories.contains(&directory) {
+                directories.push(directory);
+            }
+        }
+        directories
     }
 
     pub async fn read_persisted_payload(&self) -> Value {
@@ -347,6 +431,9 @@ impl StructuredProductsService {
                 "autoRefreshActive": status.auto_refresh_active,
                 "lastScheduledRefreshAt": status.last_scheduled_refresh_at,
                 "intervalMinutes": self.settings.auto_refresh_interval_mins,
+                "tier2Enabled": !self.settings.tier2_sources.is_empty(),
+                "tier2IntervalMinutes": self.settings.tier2_interval_mins,
+                "tier2Sources": self.settings.tier2_sources,
                 "marketOpenHourBerlin": self.settings.market_open_hour_cet,
                 "marketCloseHourBerlin": self.settings.market_close_hour_cet,
                 "liveEnabled": self.settings.enabled && !self.settings.no_live_enrichment,
@@ -359,7 +446,9 @@ impl StructuredProductsService {
     }
 
     pub async fn market_open(&self) -> bool {
-        market_calendar::is_xetra_trading_day(market_calendar::berlin_now().date_naive()).await
+        self.calendar
+            .is_xetra_trading_day(market_calendar::berlin_now().date_naive())
+            .await
             && market_calendar::current_cet_hour() >= self.settings.market_open_hour_cet
             && market_calendar::current_cet_hour() < self.settings.market_close_hour_cet
     }
@@ -476,7 +565,6 @@ impl StructuredProductsService {
             tokio::fs::create_dir_all(parent).await?;
         }
         tokio::fs::create_dir_all(&self.uv_cache_path).await?;
-        tokio::fs::create_dir_all(&self.playwright_browsers_path).await?;
 
         let command_path =
             resolve_command_path(&self.settings.command, &self.settings.working_dir)?;
@@ -485,7 +573,6 @@ impl StructuredProductsService {
         if command_uses_uv(&self.settings.command) {
             command
                 .env("UV_CACHE_DIR", &self.uv_cache_path)
-                .env("PLAYWRIGHT_BROWSERS_PATH", &self.playwright_browsers_path)
                 .arg("run")
                 .arg("agent-foundry-structured-products");
         }
@@ -500,7 +587,11 @@ impl StructuredProductsService {
             .arg("--risk-json")
             .arg(&output_paths.risk_json)
             .arg("--db")
-            .arg(&self.output_db_path);
+            .arg(&self.output_db_path)
+            .arg("--tier2-sources")
+            .arg(self.settings.tier2_sources.join(","))
+            .arg("--tier2-interval-minutes")
+            .arg(self.settings.tier2_interval_mins.to_string());
 
         if self.settings.no_live_enrichment || matches!(mode, RefreshMode::FallbackOnly) {
             command.arg("--no-live-enrichment");
@@ -524,6 +615,16 @@ impl StructuredProductsService {
                 self.settings.working_dir.display(),
             )
         })?;
+        // Under memory pressure the kernel should take the scraper and the
+        // browser it starts later, which inherits this, before the API.
+        // Best effort: the file only exists on Linux.
+        if let Some(pid) = child.id() {
+            let _ = tokio::fs::write(
+                format!("/proc/{pid}/oom_score_adj"),
+                GENERATOR_OOM_SCORE_ADJ,
+            )
+            .await;
+        }
 
         let stdout = child
             .stdout
@@ -689,9 +790,9 @@ impl StructuredProductsService {
         }
     }
 
-    fn set_last_scheduled_refresh_at(&self) {
+    fn set_last_scheduled_refresh_at(&self, at: Option<DateTime<Utc>>) {
         if let Ok(mut status) = self.status.write() {
-            status.last_scheduled_refresh_at = Some(chrono::Utc::now().to_rfc3339());
+            status.last_scheduled_refresh_at = at.map(|at| at.to_rfc3339());
         }
     }
 
@@ -781,6 +882,48 @@ fn resolve_command_path(command: &str, working_dir: &Path) -> anyhow::Result<Pat
     absolute_path(&working_dir.join(path))
 }
 
+/// Names this service gives the files that exist only while one refresh runs:
+/// a known prefix, the process id, a nanosecond timestamp, and the extension.
+fn is_temporary_file_name(name: &str) -> bool {
+    [
+        ".portfolio-summary-",
+        ".structured-products-enrichment-",
+        ".structured-products-risk-",
+    ]
+    .iter()
+    .filter_map(|prefix| name.strip_prefix(prefix))
+    .filter_map(|rest| {
+        rest.strip_suffix(".json")
+            .or_else(|| rest.strip_suffix(".csv"))
+    })
+    .filter_map(|stamp| stamp.split_once('-'))
+    .any(|(pid, nanos)| {
+        let digits = |part: &str| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit());
+        digits(pid) && digits(nanos)
+    })
+}
+
+/// A refresh removes its temporary files when it ends; a process that dies in
+/// the middle leaves them behind. Returns how many were removed.
+async fn remove_stale_temporary_files(directories: &[PathBuf]) -> usize {
+    let mut removed = 0;
+    for directory in directories {
+        let Ok(mut entries) = tokio::fs::read_dir(directory).await else {
+            continue;
+        };
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let is_temporary = entry
+                .file_name()
+                .to_str()
+                .is_some_and(is_temporary_file_name);
+            if is_temporary && tokio::fs::remove_file(entry.path()).await.is_ok() {
+                removed += 1;
+            }
+        }
+    }
+    removed
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -802,6 +945,96 @@ mod tests {
         assert_eq!(merged.summary.generated_at, "newer");
         assert_eq!(merged.reason, "upload_data_success");
         assert_eq!(merged.mode, RefreshMode::Live);
+    }
+
+    #[test]
+    fn a_restart_resumes_the_refresh_interval_instead_of_starting_over() -> anyhow::Result<()> {
+        let interval = Duration::from_secs(3600);
+        let now: DateTime<Utc> = "2026-11-10T15:00:00Z".parse()?;
+        let attempted = |time: &str| -> anyhow::Result<RefreshSchedule> {
+            Ok(RefreshSchedule {
+                last_attempt_at: Some(time.parse()?),
+                post_close_date: None,
+            })
+        };
+        // Never attempted, or last attempted a full interval ago: due now.
+        assert_eq!(
+            RefreshSchedule::default().wait_before_refresh(now, interval),
+            None
+        );
+        assert_eq!(
+            attempted("2026-11-10T14:00:00Z")?.wait_before_refresh(now, interval),
+            None
+        );
+        // Attempted a minute before the process restarted: wait out the rest.
+        assert_eq!(
+            attempted("2026-11-10T14:59:00Z")?.wait_before_refresh(now, interval),
+            Some(Duration::from_secs(3540))
+        );
+        // A timestamp from the future must not postpone the refresh.
+        assert_eq!(
+            attempted("2026-11-10T18:00:00Z")?.wait_before_refresh(now, interval),
+            None
+        );
+
+        let stored = serde_json::to_string(&RefreshSchedule {
+            last_attempt_at: Some(now),
+            post_close_date: NaiveDate::from_ymd_opt(2026, 11, 10),
+        })?;
+        let restored: RefreshSchedule = serde_json::from_str(&stored)?;
+        assert_eq!(restored.last_attempt_at, Some(now));
+        assert_eq!(
+            restored.post_close_date,
+            NaiveDate::from_ymd_opt(2026, 11, 10)
+        );
+        // Fields added later must not make an older record unreadable.
+        assert_eq!(
+            serde_json::from_str::<RefreshSchedule>("{}")?,
+            RefreshSchedule::default()
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn startup_removes_only_this_services_leftover_temporary_files() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let leftovers = [
+            ".portfolio-summary-2686869-1794351543892900989.json",
+            ".structured-products-enrichment-2263307-1794322839808587450.json",
+            ".structured-products-enrichment-2263307-1794322839808587450.csv",
+            ".structured-products-risk-2263307-1794322839808587450.json",
+        ];
+        let kept = [
+            "structured-products-enrichment.json",
+            "structured-products-enrichment.sqlite3",
+            "portfolio-transactions.csv",
+            ".portfolio-summary-notes.json",
+            ".portfolio-summary-12-.json",
+            ".portfolio-summary-12-34.json.bak",
+            "agent_foundry.db",
+        ];
+        for name in leftovers.iter().chain(&kept) {
+            tokio::fs::write(dir.path().join(name), b"x").await?;
+        }
+        let directory = dir.path().to_path_buf();
+        // The same directory listed twice is still cleaned once.
+        let removed = remove_stale_temporary_files(&[directory.clone(), directory]).await;
+        assert_eq!(removed, leftovers.len());
+        let mut remaining = Vec::new();
+        let mut entries = tokio::fs::read_dir(dir.path()).await?;
+        while let Some(entry) = entries.next_entry().await? {
+            remaining.push(entry.file_name().to_string_lossy().into_owned());
+        }
+        remaining.sort();
+        let mut expected: Vec<String> = kept.iter().map(|name| (*name).to_owned()).collect();
+        expected.sort();
+        assert_eq!(remaining, expected);
+        // A missing directory is not an error.
+        assert_eq!(
+            remove_stale_temporary_files(&[dir.path().join("absent")]).await,
+            0
+        );
+        Ok(())
     }
 
     fn empty_summary(generated_at: &str) -> PortfolioSummaryResponse {

@@ -1,3 +1,4 @@
+use super::provider_access::ProviderAccess;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -52,26 +53,28 @@ struct ApeWisdomApiTicker {
 
 #[derive(Clone)]
 pub struct ApeWisdomService {
-    client: reqwest::Client,
+    access: ProviderAccess,
+    endpoint: String,
+    cache_path: std::path::PathBuf,
+    refresh_lock: Arc<tokio::sync::Mutex<()>>,
     cache: Arc<RwLock<Option<RedditTrendingPayload>>>,
 }
 
 impl ApeWisdomService {
-    pub fn new() -> Self {
+    pub fn new(access: ProviderAccess) -> Self {
         Self {
-            client: reqwest::Client::builder()
-                .timeout(Duration::from_secs(15))
-                .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-                .build()
-                .unwrap_or_else(|_| reqwest::Client::new()),
+            access,
+            endpoint: "https://apewisdom.io/api/v1.0/filter".into(),
+            cache_path: REDDIT_TRENDS_PATH.into(),
+            refresh_lock: Arc::new(tokio::sync::Mutex::new(())),
             cache: Arc::new(RwLock::new(None)),
         }
     }
 
     /// Loads the cache from the local JSON file on startup to prevent initial delay.
     pub async fn load_cache_from_file(&self) -> Result<()> {
-        if tokio::fs::metadata(REDDIT_TRENDS_PATH).await.is_ok() {
-            let content = tokio::fs::read_to_string(REDDIT_TRENDS_PATH).await?;
+        if tokio::fs::metadata(&self.cache_path).await.is_ok() {
+            let content = tokio::fs::read_to_string(&self.cache_path).await?;
             let payload: RedditTrendingPayload = serde_json::from_str(&content)?;
             if let Ok(mut cache) = self.cache.write() {
                 *cache = Some(payload);
@@ -113,13 +116,19 @@ impl ApeWisdomService {
 
     /// Fetches live data from ApeWisdom for both subreddits and updates the cache & JSON file.
     pub async fn fetch_and_update_cache(&self) -> Result<RedditTrendingPayload> {
+        let _refresh = self.refresh_lock.lock().await;
+        if let Some(cached) = self.get_cached_trends() {
+            if chrono::DateTime::parse_from_rfc3339(&cached.updated_at).is_ok_and(|at| {
+                let age = chrono::Utc::now().signed_duration_since(at);
+                age.num_seconds() >= 0 && age.num_seconds() < 300
+            }) {
+                return Ok(cached);
+            }
+        }
         let stocks = self
             .fetch_subreddit("stocks")
             .await
             .context("failed to fetch r/stocks trends from ApeWisdom")?;
-
-        // Small delay to prevent hitting the API too aggressively
-        sleep(Duration::from_millis(500)).await;
 
         let wallstreetbets = self
             .fetch_subreddit("wallstreetbets")
@@ -156,18 +165,11 @@ impl ApeWisdomService {
     }
 
     async fn fetch_subreddit(&self, subreddit: &str) -> Result<Vec<RedditTicker>> {
-        let url = format!("https://apewisdom.io/api/v1.0/filter/{subreddit}");
-        let response = self.client.get(&url).send().await?;
-
-        if !response.status().is_success() {
-            anyhow::bail!(
-                "ApeWisdom returned HTTP {} for filter {}",
-                response.status(),
-                subreddit
-            );
-        }
-
-        let api_data: ApeWisdomApiResponse = response.json().await?;
+        let url = format!("{}/{subreddit}", self.endpoint);
+        let api_data: ApeWisdomApiResponse = self
+            .access
+            .json("apewisdom.io", subreddit, |client| client.get(url))
+            .await?;
 
         // Take top 10 tickers
         let mut tickers = Vec::new();
@@ -189,17 +191,11 @@ impl ApeWisdomService {
 
     async fn save_payload_to_file(&self, payload: &RedditTrendingPayload) -> Result<()> {
         let json_str = serde_json::to_string_pretty(payload)?;
-        if let Some(parent) = std::path::Path::new(REDDIT_TRENDS_PATH).parent() {
+        if let Some(parent) = self.cache_path.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
-        tokio::fs::write(REDDIT_TRENDS_PATH, json_str).await?;
+        tokio::fs::write(&self.cache_path, json_str).await?;
         Ok(())
-    }
-}
-
-impl Default for ApeWisdomService {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -215,7 +211,39 @@ fn mentions_change_pct(current_mentions: i32, mentions_24h_ago: Option<i32>) -> 
 
 #[cfg(test)]
 mod tests {
+    use super::ApeWisdomService;
     use super::{RedditTrendingPayload, mentions_change_pct};
+    use crate::services::{
+        provider_access::ProviderAccess,
+        provider_test_support::{MockHttp, database},
+    };
+
+    #[tokio::test]
+    async fn manual_and_background_callers_share_cache_and_cooldown() -> anyhow::Result<()> {
+        let server = MockHttp::start(200, "{\"results\":[]}", None).await?;
+        let access = ProviderAccess::from_pool(database().await?, 0.0).await?;
+        let mut service = ApeWisdomService::new(access.clone());
+        service.endpoint = server.url.clone();
+        let temp = tempfile::tempdir()?;
+        service.cache_path = temp.path().join("trends.json");
+        let (first, second) = tokio::join!(
+            service.fetch_and_update_cache(),
+            service.fetch_and_update_cache()
+        );
+        assert!(first.is_ok() && second.is_ok());
+        assert_eq!(server.hits(), 2);
+        // Use a fresh instance without a success cache to exercise refusal.
+        let mut restarted = ApeWisdomService::new(access);
+        restarted.endpoint = server.url.clone();
+        restarted.cache_path = temp.path().join("trends.json");
+        server
+            .status
+            .store(403, std::sync::atomic::Ordering::SeqCst);
+        assert!(restarted.fetch_and_update_cache().await.is_err());
+        assert!(restarted.fetch_and_update_cache().await.is_err());
+        assert_eq!(server.hits(), 3);
+        Ok(())
+    }
 
     #[test]
     fn calculates_positive_mentions_change_pct() {

@@ -1,0 +1,64 @@
+{
+ "searchValue": "tesla",
+ "list": [
+  {
+   "entityType": "STOCK",
+   "entityValue": "33837581",
+   "name": "Tesla",
+   "isin": "US88160R1014",
+   "wkn": "A1CX3T",
+   "symbol": "TL0",
+   "homeSymbol": "TSLA",
+   "urls": {
+    "NEWS": "https://www.onvista.de/news/aktien/Tesla-News-US88160R1014",
+    "WEBSITE": "https://www.onvista.de/aktien/Tesla-Aktie-US88160R1014"
+   }
+  },
+  {
+   "entityType": "STOCK",
+   "entityValue": "204675797",
+   "name": "Tesla (CDR)",
+   "isin": "CA88162R1091",
+   "wkn": "A3DAPU",
+   "symbol": "TL01",
+   "homeSymbol": "TSLA",
+   "urls": {
+    "NEWS": "https://www.onvista.de/news/aktien/Tesla-CDR-News-CA88162R1091",
+    "WEBSITE": "https://www.onvista.de/aktien/Tesla-CDR-Aktie-CA88162R1091"
+   }
+  },
+  {
+   "entityType": "FUTURE",
+   "entityValue": "320625232",
+   "name": "Tesla Inc. Future (TTSL) - EUX/202712",
+   "symbol": "TTSLZ27",
+   "urls": {
+    "WEBSITE": "https://www.onvista.de/futures/TESLA-INC-FUTURE-TTSL-EUX-202712-TTSLZ27-320625232"
+   }
+  },
+  {
+   "entityType": "STOCK",
+   "entityValue": "310472141",
+   "name": "TESLA INC. CDR O.N.",
+   "isin": "CA88167D1050",
+   "wkn": "A41MRN",
+   "symbol": "TL00",
+   "homeSymbol": "ZTSL",
+   "urls": {
+    "WEBSITE": "https://www.onvista.de/aktien/TESLA-INC-CDR-O-N-Aktie-CA88167D1050"
+   }
+  },
+  {
+   "entityType": "DERIVATIVE",
+   "entitySubType": "ETC_ETN_CERTIFICATE",
+   "entityValue": "194632029",
+   "name": "Leverage Shares 3x Long Tesla ETP Securities",
+   "isin": "XS2757381400",
+   "wkn": "A4AEJB",
+   "symbol": "3TSE",
+   "urls": {
+    "WEBSITE": "https://www.onvista.de/derivate/ETCs/194632029-A4AEJB-XS2757381400"
+   }
+  }
+ ]
+}
