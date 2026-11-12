@@ -1,6 +1,4 @@
-import { Accordion, AccordionDetails, AccordionSummary, Box, TableCell, Tooltip, Typography } from '@mui/material'
-import ExpandMoreRoundedIcon from '@mui/icons-material/ExpandMoreRounded'
-import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined'
+import { TableCell } from '@mui/material'
 import { compactCurrency, number } from '../../utils/formatters.js'
 
 export const reductionLabel = pct => (pct >= 100 ? '退出' : `减 ${pct}%`)
@@ -36,31 +34,4 @@ export const DEFINITIONS = {
   worstPnl: '该方案在所有情景中最低的盈亏，包括“各标的逆向”。',
 }
 
-export function InfoTip({ title }) {
-  return (
-    <Tooltip title={title} arrow enterTouchDelay={0}>
-      <Box component="span" tabIndex={0} aria-label={title} sx={{ display: 'inline-flex', verticalAlign: 'middle', ml: 0.25, color: 'text.disabled', cursor: 'help', '&:focus-visible': { outline: '2px solid', outlineColor: 'primary.main', borderRadius: '50%' } }}>
-        <InfoOutlinedIcon sx={{ fontSize: 15 }} />
-      </Box>
-    </Tooltip>
-  )
-}
-
-export function Label({ children, tip }) {
-  return <>{children}{tip ? <InfoTip title={tip} /> : null}</>
-}
-
-// A collapsed block whose content mounts only when opened.
-export function Section({ id, title, summary, defaultExpanded = false, children }) {
-  return (
-    <Accordion id={id} defaultExpanded={defaultExpanded} disableGutters variant="outlined" slotProps={{ transition: { unmountOnExit: true } }} sx={{ borderRadius: 2, '&:before': { display: 'none' }, overflow: 'hidden' }}>
-      <AccordionSummary expandIcon={<ExpandMoreRoundedIcon />} sx={{ minHeight: 48 }}>
-        <Box sx={{ minWidth: 0 }}>
-          <Typography variant="body2" fontWeight={800}>{title}</Typography>
-          {summary ? <Typography variant="caption" color="text.secondary" component="div">{summary}</Typography> : null}
-        </Box>
-      </AccordionSummary>
-      <AccordionDetails sx={{ pt: 0 }}>{children}</AccordionDetails>
-    </Accordion>
-  )
-}
+export { InfoTip, Label, Section } from '../shared/Disclosure.jsx'
