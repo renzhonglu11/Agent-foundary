@@ -517,12 +517,14 @@ function applyReductions(profiles, reductions = {}, totals) {
 
 // Compares the current holdings with `options.plans`
 // ([{ id, title, description, reductions }]).
-export function buildPortfolioStressReport(
+// Prices every product once for a horizon and scenario set. Reports for
+// different plans only rescale these results, so they can share one pricing
+// pass through `options.priced`.
+export function priceStressProfiles(
   entries,
   horizonDays = 30,
   scenarios = PORTFOLIO_STRESS_SCENARIOS,
   portfolioTotals = {},
-  options = {},
 ) {
   const horizon = PORTFOLIO_STRESS_HORIZONS.includes(Number(horizonDays)) ? Number(horizonDays) : 30
   const totals = {
@@ -563,6 +565,18 @@ export function buildPortfolioStressReport(
       groupName: profile.groupName,
       daysToExpiry: profile.daysToExpiry,
     }))
+  return { horizon, totals, profiles, coveredValue, coverage, rollOpportunities }
+}
+
+export function buildPortfolioStressReport(
+  entries,
+  horizonDays = 30,
+  scenarios = PORTFOLIO_STRESS_SCENARIOS,
+  portfolioTotals = {},
+  options = {},
+) {
+  const { horizon, totals, profiles, coveredValue, coverage, rollOpportunities } = options.priced
+    ?? priceStressProfiles(entries, horizonDays, scenarios, portfolioTotals)
 
   if (!profiles.length) {
     return {

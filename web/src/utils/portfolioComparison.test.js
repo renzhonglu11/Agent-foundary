@@ -66,3 +66,23 @@ test('shock targets list only the underlyings held by the selected portfolio', (
   assert.deepEqual(planTargets, [{ key: 'amd', name: 'AMD' }, { key: 'nvda', name: 'NVIDIA' }])
   assert.deepEqual(buildShockTargets(null), [])
 })
+
+test('plan summary reports relief, forgone upside, efficiency and cash', async () => {
+  const { summarizePlan } = await import('./portfolioComparison.js')
+  assert.deepEqual(summarizePlan(baseline, { ...candidate, cashValue: 450 }), {
+    worstImprovement: 120, upsideGivenUp: 110, efficiency: 1.09, free: false, cashValue: 450,
+  })
+  const free = { ...candidate, cashValue: 100, scenarioResults: [{ id: 'down', movePct: -20, pnl: -80 }, { id: 'up', movePct: 20, pnl: 250 }] }
+  assert.equal(summarizePlan(baseline, free).free, true)
+  assert.equal(summarizePlan(baseline, free).efficiency, null)
+  assert.equal(summarizePlan(null, candidate), null)
+})
+
+test('row reductions read and write the custom plan per product', async () => {
+  const { rowReduction, withRowReduction } = await import('./portfolioComparison.js')
+  assert.equal(rowReduction({ a: 50, b: 50 }, ['a', 'b']), 50)
+  assert.equal(rowReduction({ a: 50 }, ['a', 'b']), null)
+  assert.equal(rowReduction({}, ['a']), 0)
+  assert.deepEqual(withRowReduction({ a: 50, c: 25 }, ['a', 'b'], 100), { a: 100, b: 100, c: 25 })
+  assert.deepEqual(withRowReduction({ a: 50, c: 25 }, ['a'], 0), { c: 25 })
+})

@@ -55,3 +55,36 @@ export function comparePortfolioStress(baseline, plan) {
     upPnlDifference: baselineUp && planUp ? round(planUp.pnl - baselineUp.pnl) : null,
   }
 }
+
+// The four numbers shown for a plan: worst-case relief, the upside given up
+// in the same largest upward scenario, their ratio, and the cash released.
+export function summarizePlan(baseline, plan) {
+  const delta = comparePortfolioStress(baseline, plan)
+  if (!delta) return null
+  const upsideGivenUp = delta.upPnlDifference == null ? null : round(Math.max(0, -delta.upPnlDifference))
+  const worstImprovement = delta.worstPnlImprovement
+  const cent = 0.005
+  return {
+    worstImprovement,
+    upsideGivenUp,
+    efficiency: worstImprovement > cent && upsideGivenUp > cent ? round(worstImprovement / upsideGivenUp) : null,
+    free: worstImprovement > cent && upsideGivenUp != null && upsideGivenUp <= cent,
+    cashValue: round(plan.cashValue ?? 0),
+  }
+}
+
+// Reduction a ranking row currently has in the custom plan: one shared
+// percentage, or null when its products are reduced by different amounts.
+export function rowReduction(reductions, productIds) {
+  const values = new Set(productIds.map(id => reductions[id] || 0))
+  return values.size === 1 ? [...values][0] : null
+}
+
+export function withRowReduction(reductions, productIds, pct) {
+  const next = { ...reductions }
+  for (const id of productIds) {
+    if (pct > 0) next[id] = pct
+    else delete next[id]
+  }
+  return next
+}

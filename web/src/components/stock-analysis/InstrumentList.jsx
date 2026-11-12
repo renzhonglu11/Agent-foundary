@@ -31,8 +31,8 @@ export default function InstrumentList({ title, rows, emptyText, riskGroup, grou
   }), [riskGroup, rows])
 
   return (
-    <Box sx={{ border: '1px solid #e5eaef', borderRadius: 2, overflow: 'hidden', backgroundColor: '#fff' }}>
-      <Box sx={{ px: 1.5, py: 1, backgroundColor: '#f8fafc', borderBottom: '1px solid #e5eaef' }}>
+    <Box sx={{ border: '1px solid #d9e2ec', borderRadius: 2, overflow: 'hidden', backgroundColor: '#fff' }}>
+      <Box sx={{ px: 1.5, py: 1, backgroundColor: '#f8fafc', borderBottom: '1px solid #d9e2ec' }}>
         <Typography variant="body2" fontWeight={800}>{title} · {rows.length}</Typography>
       </Box>
       {sortedRows.length ? sortedRows.map((item) => {

@@ -47,7 +47,7 @@ export default function SidebarNav({ activeTab, onChange, collapsed, onToggle })
           overflowX: 'hidden',
           whiteSpace: 'nowrap',
           boxSizing: 'border-box',
-          borderRight: '1px solid #e5eaef',
+          borderRight: '1px solid #d9e2ec',
           background: '#ffffff',
           boxShadow: '6px 0 24px rgba(42, 53, 71, 0.04)',
           transition: (theme) => theme.transitions.create('width', {

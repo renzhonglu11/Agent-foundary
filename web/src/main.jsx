@@ -14,49 +14,89 @@ const queryClient = new QueryClient({
   },
 });
 
+// Palette from the Positions report preview: a muted ink-blue accent,
+// blue-grey neutrals, and status colours that tint chips instead of filling
+// them with saturated colour.
+const tokens = {
+  bg: '#f6f8fb',
+  surface: '#ffffff',
+  surface2: '#eef3f9',
+  ink: '#142233',
+  ink2: '#4a5a6c',
+  ink3: '#748396',
+  line: '#d9e2ec',
+}
+
 const theme = createTheme({
   palette: {
     mode: 'light',
-    background: { default: '#f6f9fc', paper: '#ffffff' },
-    primary: { main: '#5d87ff', light: '#ecf2ff', dark: '#4570ea' },
-    secondary: { main: '#635bff', light: '#ede7ff' },
-    success: { main: '#13deb9', light: '#e6fffa' },
-    error: { main: '#fa896b', light: '#fdede8' },
-    warning: { main: '#ffae1f', light: '#fef5e5' },
-    info: { main: '#49beff', light: '#e8f7ff' },
-    text: { primary: '#2a3547', secondary: '#7c8fac' },
-    divider: '#e5eaef',
+    background: { default: tokens.bg, paper: tokens.surface },
+    primary: { main: '#2a6fc0', light: '#e6f0fc', dark: '#1f5fa8', contrastText: '#ffffff' },
+    secondary: { main: '#66789b', light: '#eef1f7', dark: '#4b5a78' },
+    success: { main: '#1d9a4c', light: '#e7f6ed', dark: '#157a3b', contrastText: '#ffffff' },
+    error: { main: '#d6453d', light: '#fdeceb', dark: '#ad322c', contrastText: '#ffffff' },
+    warning: { main: '#c97c00', light: '#fff4df', dark: '#9a5f00', contrastText: '#ffffff' },
+    info: { main: '#3584d6', light: '#e8f2fc', dark: '#2a6fc0', contrastText: '#ffffff' },
+    text: { primary: tokens.ink, secondary: tokens.ink2, disabled: tokens.ink3 },
+    divider: tokens.line,
   },
-  shape: { borderRadius: 12 },
+  shape: { borderRadius: 10 },
   typography: {
-    fontFamily: ['Plus Jakarta Sans', 'Inter', 'system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'sans-serif'].join(','),
-    h3: { fontWeight: 800, letterSpacing: '-0.035em', color: '#2a3547' },
-    h4: { fontWeight: 800, letterSpacing: '-0.025em' },
-    h5: { fontWeight: 750 },
-    h6: { fontWeight: 700 },
+    fontFamily: ['"Noto Sans SC"', 'Inter', '"PingFang SC"', '"Microsoft YaHei"', 'system-ui', 'sans-serif'].join(','),
+    h3: { fontFamily: '"Space Grotesk", "Noto Sans SC", sans-serif', fontWeight: 700, letterSpacing: '-0.02em', color: tokens.ink },
+    h4: { fontFamily: '"Space Grotesk", "Noto Sans SC", sans-serif', fontWeight: 700, letterSpacing: '-0.015em' },
+    h5: { fontFamily: '"Space Grotesk", "Noto Sans SC", sans-serif', fontWeight: 700 },
+    h6: { fontFamily: '"Space Grotesk", "Noto Sans SC", sans-serif', fontWeight: 700 },
+    subtitle1: { fontFamily: '"Space Grotesk", "Noto Sans SC", sans-serif' },
   },
   components: {
     MuiCssBaseline: {
       styleOverrides: {
-        body: {
-          backgroundColor: '#f6f9fc',
-        },
+        body: { backgroundColor: tokens.bg },
       },
     },
     MuiCard: {
       styleOverrides: {
         root: {
           backgroundImage: 'none',
-          border: '1px solid #e5eaef',
-          boxShadow: '0 2px 6px rgba(37, 83, 185, 0.04), 0 12px 28px rgba(42, 53, 71, 0.06)',
+          border: `1px solid ${tokens.line}`,
+          boxShadow: 'none',
         },
+      },
+    },
+    MuiPaper: {
+      styleOverrides: {
+        outlined: { borderColor: tokens.line },
       },
     },
     MuiChip: {
       styleOverrides: {
-        root: {
+        // Filled status chips become soft tints with dark text.
+        root: ({ ownerState, theme: current }) => ({
           fontWeight: 700,
-        },
+          ...(ownerState.variant !== 'outlined' && ownerState.color && ownerState.color !== 'default' && current.palette[ownerState.color] ? {
+            backgroundColor: current.palette[ownerState.color].light,
+            color: current.palette[ownerState.color].dark,
+            '& .MuiChip-icon': { color: current.palette[ownerState.color].dark },
+            '&.MuiChip-clickable:hover': { backgroundColor: current.palette[ownerState.color].light, filter: 'brightness(0.97)' },
+          } : {}),
+        }),
+      },
+    },
+    MuiTableCell: {
+      styleOverrides: {
+        head: { color: tokens.ink2, backgroundColor: tokens.surface2 },
+      },
+    },
+    MuiButton: {
+      styleOverrides: {
+        root: { textTransform: 'none', fontWeight: 700, boxShadow: 'none', '&:hover': { boxShadow: 'none' } },
+      },
+    },
+    MuiAlert: {
+      styleOverrides: {
+        standardInfo: { backgroundColor: '#e6f0fc', color: tokens.ink },
+        standardWarning: { backgroundColor: '#fff4df', color: tokens.ink },
       },
     },
     MuiButtonBase: {

@@ -78,7 +78,7 @@ const describeArc = (cx, cy, r, startAngle, endAngle) => {
 
 const profitGaugeColors = {
     unrealized: '#EEF2F6',
-    realized: '#5D87FF',
+    realized: '#2a6fc0',
     income: '#EB7900',
 }
 
@@ -99,7 +99,7 @@ function GaugeLegend({ label, color, active = false, dimmed = false, onMouseEnte
                 transition: 'opacity 160ms ease, transform 160ms ease',
             }}
         >
-            <Box sx={{ width: active ? 10 : 8, height: active ? 10 : 8, borderRadius: '50%', bgcolor: color, border: '1px solid #E5EAEF', flexShrink: 0, transition: 'width 160ms ease, height 160ms ease' }} />
+            <Box sx={{ width: active ? 10 : 8, height: active ? 10 : 8, borderRadius: '50%', bgcolor: color, border: '1px solid #d9e2ec', flexShrink: 0, transition: 'width 160ms ease, height 160ms ease' }} />
             <Typography variant="caption" color="text.secondary" fontWeight={active ? 800 : 400} noWrap>{label}</Typography>
         </Stack>
     )
@@ -185,7 +185,7 @@ function HalfMoonProfitChart({ summary, totalPnl }) {
                             minWidth: 168,
                             borderRadius: 3,
                             bgcolor: '#FFFFFF',
-                            border: '1px solid #E5EAEF',
+                            border: '1px solid #d9e2ec',
                             boxShadow: '0 14px 32px rgba(42, 53, 71, 0.14)',
                             textAlign: 'center',
                             pointerEvents: 'none',

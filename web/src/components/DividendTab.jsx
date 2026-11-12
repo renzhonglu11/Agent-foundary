@@ -9,9 +9,9 @@ import { compactCurrency, number, preciseCurrency, pnlColor } from '../utils/for
 import MeasuredChart from './MeasuredChart.jsx';
 
 const MONTHLY_CHART_COLORS = {
-  net: '#13deb9',
-  tax: '#fa896b',
-  cumulative: '#5d87ff',
+  net: '#1d9a4c',
+  tax: '#d6453d',
+  cumulative: '#2a6fc0',
 };
 
 function MetricCard({ title, value, sub, icon: Icon, color }) {
@@ -98,9 +98,9 @@ function DividendCharts({ monthly, topSymbols }) {
               <MeasuredChart minHeight={280}>
                 {({ width, height }) => (
                   <ComposedChart width={width} height={height} data={recentMonthly} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                    <CartesianGrid stroke="#e5eaef" vertical={false} />
-                    <XAxis dataKey="month" tick={{ fill: '#7c8fac', fontSize: 12 }} axisLine={false} tickLine={false} />
-                    <YAxis yAxisId="monthly" tickFormatter={compactCurrency} tick={{ fill: '#7c8fac', fontSize: 12 }} axisLine={false} tickLine={false} width={70} />
+                    <CartesianGrid stroke="#d9e2ec" vertical={false} />
+                    <XAxis dataKey="month" tick={{ fill: '#748396', fontSize: 12 }} axisLine={false} tickLine={false} />
+                    <YAxis yAxisId="monthly" tickFormatter={compactCurrency} tick={{ fill: '#748396', fontSize: 12 }} axisLine={false} tickLine={false} width={70} />
                     <YAxis yAxisId="cumulative" orientation="right" tickFormatter={compactCurrency} tick={{ fill: MONTHLY_CHART_COLORS.cumulative, fontSize: 12 }} axisLine={false} tickLine={false} width={72} />
                     <Tooltip content={<ChartTooltip />} />
                     <Area yAxisId="monthly" name="税后收入" type="monotone" dataKey="netAmount" stroke={MONTHLY_CHART_COLORS.net} fill={`${MONTHLY_CHART_COLORS.net}55`} strokeWidth={2} />
@@ -121,11 +121,11 @@ function DividendCharts({ monthly, topSymbols }) {
               <MeasuredChart minHeight={280}>
                 {({ width, height }) => (
                   <BarChart width={width} height={height} data={topTen} layout="vertical" margin={{ left: 16, right: 16 }}>
-                    <CartesianGrid stroke="#e5eaef" horizontal={false} />
-                    <XAxis type="number" tickFormatter={compactCurrency} tick={{ fill: '#7c8fac', fontSize: 12 }} axisLine={false} tickLine={false} />
-                    <YAxis dataKey="shortName" type="category" tick={{ fill: '#7c8fac', fontSize: 12 }} axisLine={false} tickLine={false} width={150} />
+                    <CartesianGrid stroke="#d9e2ec" horizontal={false} />
+                    <XAxis type="number" tickFormatter={compactCurrency} tick={{ fill: '#748396', fontSize: 12 }} axisLine={false} tickLine={false} />
+                    <YAxis dataKey="shortName" type="category" tick={{ fill: '#748396', fontSize: 12 }} axisLine={false} tickLine={false} width={150} />
                     <Tooltip content={<ChartTooltip />} />
-                    <Bar name="税后收入" dataKey="netAmount" fill="#5d87ff" radius={[0, 6, 6, 0]} />
+                    <Bar name="税后收入" dataKey="netAmount" fill="#2a6fc0" radius={[0, 6, 6, 0]} />
                   </BarChart>
                 )}
               </MeasuredChart>

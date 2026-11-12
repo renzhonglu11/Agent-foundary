@@ -21,6 +21,7 @@ export default function NumberField({
   step = 0.1,
   smallStep = 0.1,
   largeStep = 1,
+  compact = false,
 }) {
   return (
     <BaseNumberField.Root
@@ -71,7 +72,7 @@ export default function NumberField({
                 <Box
                   sx={{
                     alignSelf: 'stretch',
-                    display: 'flex',
+                    display: compact ? 'none' : 'flex',
                     flexDirection: 'column',
                     borderLeft: '1px solid',
                     borderColor: 'divider',

@@ -13,7 +13,7 @@ export default function Pill({ label, meta }) {
         borderRadius: '6px',
         border: `1px solid ${meta.border}`,
         backgroundColor: meta.bg,
-        color: '#2a3547',
+        color: '#142233',
         fontSize: 13,
         fontWeight: 700,
         lineHeight: 1.35,

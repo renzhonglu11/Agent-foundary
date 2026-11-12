@@ -150,15 +150,15 @@ export default function EventsTab() {
         if (!Number.isFinite(value)) {
             return {
                 label: '新上榜',
-                bgcolor: '#f1f5f9',
-                color: '#64748b'
+                bgcolor: '#dfe6ee',
+                color: '#748396'
             }
         }
 
         return {
             label: value >= 0 ? `+${value.toFixed(1)}%` : `${value.toFixed(1)}%`,
-            bgcolor: value >= 0 ? '#dcfce7' : '#fee2e2',
-            color: value >= 0 ? '#15803d' : '#b91c1c'
+            bgcolor: value >= 0 ? '#e7f6ed' : '#fdeceb',
+            color: value >= 0 ? '#157a3b' : '#ad322c'
         }
     }
 
@@ -258,14 +258,14 @@ export default function EventsTab() {
     const sectors = aiCommentaryAvailable && Array.isArray(analysisData?.sectors) ? analysisData.sectors : []
 
     const getImpactColor = (impact) => {
-        if (!impact) return { bgcolor: '#f1f5f9', color: '#475569' }
+        if (!impact) return { bgcolor: '#dfe6ee', color: '#4a5a6c' }
         if (impact.includes("正面") || impact.includes("超配") || impact.includes("多配") || impact.includes("买入")) {
-            return { bgcolor: '#dcfce7', color: '#16a34a' }
+            return { bgcolor: '#e7f6ed', color: '#1d9a4c' }
         }
         if (impact.includes("负面") || impact.includes("低配") || impact.includes("避险") || impact.includes("减配")) {
-            return { bgcolor: '#fee2e2', color: '#ef4444' }
+            return { bgcolor: '#fdeceb', color: '#d6453d' }
         }
-        return { bgcolor: '#f1f5f9', color: '#475569' }
+        return { bgcolor: '#dfe6ee', color: '#4a5a6c' }
     }
 
     return (
@@ -288,10 +288,10 @@ export default function EventsTab() {
                         severity="warning"
                         variant="outlined"
                         sx={{
-                            bgcolor: 'rgba(217, 119, 6, 0.1)',
-                            borderColor: 'rgba(217, 119, 6, 0.3)',
-                            color: '#fbbf24',
-                            '& .MuiAlert-icon': { color: '#fbbf24' }
+                            bgcolor: 'rgba(201, 124, 0, 0.1)',
+                            borderColor: 'rgba(201, 124, 0, 0.3)',
+                            color: '#c97c00',
+                            '& .MuiAlert-icon': { color: '#c97c00' }
                         }}
                     >
                         <strong>沙盒模拟模式 (Sandbox Mode)</strong>：当前正使用离线高拟真宏观数据（2023-2026年真实走势）。要连接美联储官方 FRED 获取实时更新，请在根目录 <code>.env</code> 文件中配置 <code>FRED_API_KEY</code> 并重启服务。
@@ -301,10 +301,10 @@ export default function EventsTab() {
                         severity="success"
                         variant="outlined"
                         sx={{
-                            bgcolor: 'rgba(16, 185, 129, 0.1)',
-                            borderColor: 'rgba(16, 185, 129, 0.3)',
-                            color: '#26b37fff',
-                            '& .MuiAlert-icon': { color: '#34d399' }
+                            bgcolor: 'rgba(29, 154, 76, 0.1)',
+                            borderColor: 'rgba(29, 154, 76, 0.3)',
+                            color: '#157a3b',
+                            '& .MuiAlert-icon': { color: '#1d9a4c' }
                         }}
                     >
                         <strong>联接实时 FRED API 成功</strong>：所有宏观经济指标均已同步美联储官方最新公布的观测数据。
@@ -315,44 +315,33 @@ export default function EventsTab() {
 
             {/* AI Macro Commentary Card */}
             {hasAiCommentary && (
-                <Card
-                    sx={{
-                        borderRadius: 4,
-                        boxShadow: '0 4px 25px rgba(0,0,0,0.02)',
-                        border: '1px solid #e2e8f0',
-                        background: 'linear-gradient(135deg, #f8fafc 0%, #ffffff 100%)',
-                        position: 'relative',
-                        overflow: 'hidden'
-                    }}
-                >
-                    <CardContent sx={{ p: 3 }}>
-                        <Stack spacing={2}>
-                            <Stack direction={{ xs: 'column', sm: 'row' }} sx={{ justifyContent: 'space-between', alignItems: { xs: 'flex-start', sm: 'center' }, gap: 2 }}>
-                                <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center' }}>
-                                    <Box sx={{ p: 1, borderRadius: 2, bgcolor: '#eff6ff', color: '#3b82f6', display: 'flex' }}>
+                <Card sx={{ borderRadius: 3, border: '1px solid #d9e2ec', boxShadow: 'none', backgroundColor: '#ffffff' }}>
+                    <CardContent sx={{ p: { xs: 2, md: 2.5 } }}>
+                        <Stack spacing={1.5}>
+                            <Stack direction={{ xs: 'column', sm: 'row' }} sx={{ justifyContent: 'space-between', alignItems: { xs: 'flex-start', sm: 'center' }, gap: 1.5 }}>
+                                <Stack direction="row" spacing={1.25} sx={{ alignItems: 'center' }}>
+                                    <Box sx={{ p: 0.75, borderRadius: 1.5, bgcolor: 'primary.light', color: 'primary.main', display: 'flex' }}>
                                         <WhatshotRoundedIcon fontSize="small" />
                                     </Box>
-                                    <Typography variant="h6" sx={{ fontWeight: 700, color: '#1e293b' }}>
-                                        🤖 AI 宏观经济深度点评 (AI Macro Commentary)
-                                    </Typography>
+                                    <Box>
+                                        <Typography variant="subtitle1" sx={{ fontWeight: 700, lineHeight: 1.3 }}>AI 宏观点评</Typography>
+                                        <Typography variant="caption" color="text.secondary">
+                                            模型生成，基于下方 FRED 指标 · 更新于 {analysisData.analysis_date ? new Date(analysisData.analysis_date).toLocaleString('zh-CN') : '未知'}
+                                        </Typography>
+                                    </Box>
                                 </Stack>
-                                <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center', alignSelf: { xs: 'flex-end', sm: 'auto' } }}>
-                                    <Typography variant="caption" color="text.secondary">
-                                        更新于: {analysisData.analysis_date ? new Date(analysisData.analysis_date).toLocaleString('zh-CN') : 'N/A'}
-                                    </Typography>
-                                    <Button
-                                        size="small"
-                                        variant="outlined"
-                                        startIcon={analysisRefreshing ? <CircularProgress size={14} /> : <AutorenewRoundedIcon />}
-                                        onClick={refreshAnalysis}
-                                        disabled={analysisRefreshing}
-                                        sx={{ borderRadius: 2, textTransform: 'none', px: 1.5 }}
-                                    >
-                                        {analysisRefreshing ? '正在诊断...' : '实时AI诊断'}
-                                    </Button>
-                                </Stack>
+                                <Button
+                                    size="small"
+                                    variant="outlined"
+                                    startIcon={analysisRefreshing ? <CircularProgress size={14} /> : <AutorenewRoundedIcon />}
+                                    onClick={refreshAnalysis}
+                                    disabled={analysisRefreshing}
+                                    sx={{ alignSelf: { xs: 'flex-end', sm: 'auto' }, px: 1.5 }}
+                                >
+                                    {analysisRefreshing ? '正在生成…' : '重新生成点评'}
+                                </Button>
                             </Stack>
-                            <Typography variant="body2" sx={{ color: '#334155', lineHeight: 1.8, fontSize: '0.95rem', fontWeight: 550 }}>
+                            <Typography variant="body2" sx={{ color: 'text.primary', lineHeight: 1.85, fontSize: '0.95rem', maxWidth: '72ch', whiteSpace: 'pre-line' }}>
                                 {analysisData.summary_commentary}
                             </Typography>
                         </Stack>
@@ -365,14 +354,14 @@ export default function EventsTab() {
 
                 {/* 1. Fed Funds Rate */}
                 <Grid item xs={12} sm={6} md={4}>
-                    <Card sx={{ borderRadius: 3, boxShadow: '0 4px 20px rgba(0,0,0,0.02)', border: '1px solid #f1f5f9', position: 'relative', overflow: 'visible', '&:hover': { transform: 'translateY(-4px)', transition: 'all 0.2s ease-in-out', boxShadow: '0 8px 30px rgba(0,0,0,0.06)' } }}>
+                    <Card sx={{ borderRadius: 3, boxShadow: 'none', border: '1px solid #dfe6ee', position: 'relative', overflow: 'visible', '&:hover': { borderColor: '#c5d1de' } }}>
                         <CardContent sx={{ p: 2.5 }}>
                             <Stack spacing={1}>
                                 <Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'center' }}>
                                     <Typography variant="subtitle2" color="text.secondary" sx={{ fontWeight: 600 }}>
                                         美联储政策利率 (Fed Funds)
                                     </Typography>
-                                    <Box sx={{ p: 1, borderRadius: 2, bgcolor: '#eff6ff', color: '#2563eb' }}>
+                                    <Box sx={{ p: 1, borderRadius: 2, bgcolor: '#e6f0fc', color: '#2a6fc0' }}>
                                         <AccountBalanceRoundedIcon fontSize="small" />
                                     </Box>
                                 </Stack>
@@ -381,7 +370,7 @@ export default function EventsTab() {
                                         {fedfunds ? `${fedfunds.value}%` : 'N/A'}
                                     </Typography>
                                     {fedfundsChange && (
-                                        <Stack direction="row" sx={{ alignItems: 'center', color: parseFloat(fedfundsChange) >= 0 ? '#ef4444' : '#10b981' }}>
+                                        <Stack direction="row" sx={{ alignItems: 'center', color: parseFloat(fedfundsChange) >= 0 ? '#d6453d' : '#1d9a4c' }}>
                                             {parseFloat(fedfundsChange) >= 0 ? <TrendingUpRoundedIcon fontSize="small" /> : <TrendingDownRoundedIcon fontSize="small" />}
                                             <Typography variant="caption" sx={{ fontWeight: 600 }}>
                                                 {fedfundsChange > 0 ? `+${fedfundsChange}` : fedfundsChange}%
@@ -394,7 +383,7 @@ export default function EventsTab() {
                                     <Typography variant="caption" color="text.secondary">
                                         数据公布周期: 每月
                                     </Typography>
-                                    <Box sx={{ px: 1, py: 0.3, borderRadius: 1, bgcolor: fedfunds && fedfunds.value > 4.0 ? '#fee2e2' : '#dcfce7', color: fedfunds && fedfunds.value > 4.0 ? '#ef4444' : '#15803d' }}>
+                                    <Box sx={{ px: 1, py: 0.3, borderRadius: 1, bgcolor: fedfunds && fedfunds.value > 4.0 ? '#fdeceb' : '#e7f6ed', color: fedfunds && fedfunds.value > 4.0 ? '#d6453d' : '#157a3b' }}>
                                         <Typography variant="caption" sx={{ fontWeight: 600 }}>
                                             {fedfunds && fedfunds.value > 4.0 ? '紧缩/限制性利率' : '宽松/低息环境'}
                                         </Typography>
@@ -407,23 +396,23 @@ export default function EventsTab() {
 
                 {/* 2. 10Y-2Y Treasury Yield Spread */}
                 <Grid item xs={12} sm={6} md={4}>
-                    <Card sx={{ borderRadius: 3, boxShadow: '0 4px 20px rgba(0,0,0,0.02)', border: '1px solid #f1f5f9', '&:hover': { transform: 'translateY(-4px)', transition: 'all 0.2s ease-in-out', boxShadow: '0 8px 30px rgba(0,0,0,0.06)' } }}>
+                    <Card sx={{ borderRadius: 3, boxShadow: 'none', border: '1px solid #dfe6ee', '&:hover': { borderColor: '#c5d1de' } }}>
                         <CardContent sx={{ p: 2.5 }}>
                             <Stack spacing={1}>
                                 <Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'center' }}>
                                     <Typography variant="subtitle2" color="text.secondary" sx={{ fontWeight: 600 }}>
                                         美债 10Y-2Y 期限利差
                                     </Typography>
-                                    <Box sx={{ p: 1, borderRadius: 2, bgcolor: t10y2y && t10y2y.value < 0 ? '#fef2f2' : '#f0fdf4', color: t10y2y && t10y2y.value < 0 ? '#ef4444' : '#10b981' }}>
+                                    <Box sx={{ p: 1, borderRadius: 2, bgcolor: t10y2y && t10y2y.value < 0 ? '#fdeceb' : '#e7f6ed', color: t10y2y && t10y2y.value < 0 ? '#d6453d' : '#1d9a4c' }}>
                                         <QueryStatsRoundedIcon fontSize="small" />
                                     </Box>
                                 </Stack>
                                 <Stack direction="row" sx={{ alignItems: 'baseline', gap: 1 }}>
-                                    <Typography variant="h4" sx={{ fontWeight: 700, color: t10y2y && t10y2y.value < 0 ? '#ef4444' : 'text.primary' }}>
+                                    <Typography variant="h4" sx={{ fontWeight: 700, color: t10y2y && t10y2y.value < 0 ? '#d6453d' : 'text.primary' }}>
                                         {t10y2y ? `${t10y2y.value}%` : 'N/A'}
                                     </Typography>
                                     {t10y2yChange && (
-                                        <Stack direction="row" sx={{ alignItems: 'center', color: parseFloat(t10y2yChange) >= 0 ? '#10b981' : '#ef4444' }}>
+                                        <Stack direction="row" sx={{ alignItems: 'center', color: parseFloat(t10y2yChange) >= 0 ? '#1d9a4c' : '#d6453d' }}>
                                             {parseFloat(t10y2yChange) >= 0 ? <TrendingUpRoundedIcon fontSize="small" /> : <TrendingDownRoundedIcon fontSize="small" />}
                                             <Typography variant="caption" sx={{ fontWeight: 600 }}>
                                                 {t10y2yChange > 0 ? `+${t10y2yChange}` : t10y2yChange}%
@@ -436,7 +425,7 @@ export default function EventsTab() {
                                     <Typography variant="caption" color="text.secondary">
                                         衰退预警器 (前瞻12M)
                                     </Typography>
-                                    <Box sx={{ px: 1, py: 0.3, borderRadius: 1, bgcolor: t10y2y && t10y2y.value < 0 ? '#fee2e2' : '#dcfce7', color: t10y2y && t10y2y.value < 0 ? '#ef4444' : '#15803d' }}>
+                                    <Box sx={{ px: 1, py: 0.3, borderRadius: 1, bgcolor: t10y2y && t10y2y.value < 0 ? '#fdeceb' : '#e7f6ed', color: t10y2y && t10y2y.value < 0 ? '#d6453d' : '#157a3b' }}>
                                         <Typography variant="caption" sx={{ fontWeight: 600 }}>
                                             {t10y2y && t10y2y.value < 0 ? '收益率曲线倒挂' : '收益率正常/走平'}
                                         </Typography>
@@ -449,14 +438,14 @@ export default function EventsTab() {
 
                 {/* 3. CPI YoY Inflation */}
                 <Grid item xs={12} sm={6} md={4}>
-                    <Card sx={{ borderRadius: 3, boxShadow: '0 4px 20px rgba(0,0,0,0.02)', border: '1px solid #f1f5f9', '&:hover': { transform: 'translateY(-4px)', transition: 'all 0.2s ease-in-out', boxShadow: '0 8px 30px rgba(0,0,0,0.06)' } }}>
+                    <Card sx={{ borderRadius: 3, boxShadow: 'none', border: '1px solid #dfe6ee', '&:hover': { borderColor: '#c5d1de' } }}>
                         <CardContent sx={{ p: 2.5 }}>
                             <Stack spacing={1}>
                                 <Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'center' }}>
                                     <Typography variant="subtitle2" color="text.secondary" sx={{ fontWeight: 600 }}>
                                         美国 CPI 通胀年率 (YoY)
                                     </Typography>
-                                    <Box sx={{ p: 1, borderRadius: 2, bgcolor: '#fef3c7', color: '#d97706' }}>
+                                    <Box sx={{ p: 1, borderRadius: 2, bgcolor: '#fff4df', color: '#c97c00' }}>
                                         <ShowChartRoundedIcon fontSize="small" />
                                     </Box>
                                 </Stack>
@@ -465,7 +454,7 @@ export default function EventsTab() {
                                         {cpiYoY ? `${cpiYoY.value}%` : 'N/A'}
                                     </Typography>
                                     {cpiChange && (
-                                        <Stack direction="row" sx={{ alignItems: 'center', color: parseFloat(cpiChange) >= 0 ? '#ef4444' : '#10b981' }}>
+                                        <Stack direction="row" sx={{ alignItems: 'center', color: parseFloat(cpiChange) >= 0 ? '#d6453d' : '#1d9a4c' }}>
                                             {parseFloat(cpiChange) >= 0 ? <TrendingUpRoundedIcon fontSize="small" /> : <TrendingDownRoundedIcon fontSize="small" />}
                                             <Typography variant="caption" sx={{ fontWeight: 600 }}>
                                                 {cpiChange > 0 ? `+${cpiChange}` : cpiChange}%
@@ -478,7 +467,7 @@ export default function EventsTab() {
                                     <Typography variant="caption" color="text.secondary">
                                         美联储政策锚定目标: 2.0%
                                     </Typography>
-                                    <Box sx={{ px: 1, py: 0.3, borderRadius: 1, bgcolor: cpiYoY && cpiYoY.value > 3.0 ? '#fee2e2' : '#dcfce7', color: cpiYoY && cpiYoY.value > 3.0 ? '#ef4444' : '#15803d' }}>
+                                    <Box sx={{ px: 1, py: 0.3, borderRadius: 1, bgcolor: cpiYoY && cpiYoY.value > 3.0 ? '#fdeceb' : '#e7f6ed', color: cpiYoY && cpiYoY.value > 3.0 ? '#d6453d' : '#157a3b' }}>
                                         <Typography variant="caption" sx={{ fontWeight: 600 }}>
                                             {cpiYoY && cpiYoY.value > 3.0 ? '高通胀警戒' : '通胀符合预期'}
                                         </Typography>
@@ -491,14 +480,14 @@ export default function EventsTab() {
 
                 {/* 4. 10-Year Treasury Yield */}
                 <Grid item xs={12} sm={6} md={4}>
-                    <Card sx={{ borderRadius: 3, boxShadow: '0 4px 20px rgba(0,0,0,0.02)', border: '1px solid #f1f5f9', '&:hover': { transform: 'translateY(-4px)', transition: 'all 0.2s ease-in-out', boxShadow: '0 8px 30px rgba(0,0,0,0.06)' } }}>
+                    <Card sx={{ borderRadius: 3, boxShadow: 'none', border: '1px solid #dfe6ee', '&:hover': { borderColor: '#c5d1de' } }}>
                         <CardContent sx={{ p: 2.5 }}>
                             <Stack spacing={1}>
                                 <Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'center' }}>
                                     <Typography variant="subtitle2" color="text.secondary" sx={{ fontWeight: 600 }}>
                                         美债 10Y 收益率 (无风险利率)
                                     </Typography>
-                                    <Box sx={{ p: 1, borderRadius: 2, bgcolor: '#f5f3ff', color: '#7c3aed' }}>
+                                    <Box sx={{ p: 1, borderRadius: 2, bgcolor: '#efedfc', color: '#6250d6' }}>
                                         <BarChartRoundedIcon fontSize="small" />
                                     </Box>
                                 </Stack>
@@ -507,7 +496,7 @@ export default function EventsTab() {
                                         {dgs10 ? `${dgs10.value}%` : 'N/A'}
                                     </Typography>
                                     {dgs10Change && (
-                                        <Stack direction="row" sx={{ alignItems: 'center', color: parseFloat(dgs10Change) >= 0 ? '#ef4444' : '#10b981' }}>
+                                        <Stack direction="row" sx={{ alignItems: 'center', color: parseFloat(dgs10Change) >= 0 ? '#d6453d' : '#1d9a4c' }}>
                                             {parseFloat(dgs10Change) >= 0 ? <TrendingUpRoundedIcon fontSize="small" /> : <TrendingDownRoundedIcon fontSize="small" />}
                                             <Typography variant="caption" sx={{ fontWeight: 600 }}>
                                                 {dgs10Change > 0 ? `+${dgs10Change}` : dgs10Change}%
@@ -520,7 +509,7 @@ export default function EventsTab() {
                                     <Typography variant="caption" color="text.secondary">
                                         全球风险资产之锚/折现率
                                     </Typography>
-                                    <Box sx={{ px: 1, py: 0.3, borderRadius: 1, bgcolor: '#f1f5f9', color: '#475569' }}>
+                                    <Box sx={{ px: 1, py: 0.3, borderRadius: 1, bgcolor: '#dfe6ee', color: '#4a5a6c' }}>
                                         <Typography variant="caption" sx={{ fontWeight: 600 }}>
                                             资产定价基石
                                         </Typography>
@@ -533,14 +522,14 @@ export default function EventsTab() {
 
                 {/* 5. Unemployment Rate */}
                 <Grid item xs={12} sm={6} md={4}>
-                    <Card sx={{ borderRadius: 3, boxShadow: '0 4px 20px rgba(0,0,0,0.02)', border: '1px solid #f1f5f9', '&:hover': { transform: 'translateY(-4px)', transition: 'all 0.2s ease-in-out', boxShadow: '0 8px 30px rgba(0,0,0,0.06)' } }}>
+                    <Card sx={{ borderRadius: 3, boxShadow: 'none', border: '1px solid #dfe6ee', '&:hover': { borderColor: '#c5d1de' } }}>
                         <CardContent sx={{ p: 2.5 }}>
                             <Stack spacing={1}>
                                 <Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'center' }}>
                                     <Typography variant="subtitle2" color="text.secondary" sx={{ fontWeight: 600 }}>
                                         美国失业率 (Unrate)
                                     </Typography>
-                                    <Box sx={{ p: 1, borderRadius: 2, bgcolor: '#f0fdfa', color: '#0d9488' }}>
+                                    <Box sx={{ p: 1, borderRadius: 2, bgcolor: '#e7f6ed', color: '#1d9a4c' }}>
                                         <PublicRoundedIcon fontSize="small" />
                                     </Box>
                                 </Stack>
@@ -549,7 +538,7 @@ export default function EventsTab() {
                                         {unrate ? `${unrate.value}%` : 'N/A'}
                                     </Typography>
                                     {unrateChange && (
-                                        <Stack direction="row" sx={{ alignItems: 'center', color: parseFloat(unrateChange) >= 0 ? '#ef4444' : '#10b981' }}>
+                                        <Stack direction="row" sx={{ alignItems: 'center', color: parseFloat(unrateChange) >= 0 ? '#d6453d' : '#1d9a4c' }}>
                                             {parseFloat(unrateChange) >= 0 ? <TrendingUpRoundedIcon fontSize="small" /> : <TrendingDownRoundedIcon fontSize="small" />}
                                             <Typography variant="caption" sx={{ fontWeight: 600 }}>
                                                 {unrateChange > 0 ? `+${unrateChange}` : unrateChange}%
@@ -562,7 +551,7 @@ export default function EventsTab() {
                                     <Typography variant="caption" color="text.secondary">
                                         充分就业区间: 3.5% - 4.5%
                                     </Typography>
-                                    <Box sx={{ px: 1, py: 0.3, borderRadius: 1, bgcolor: unrate && unrate.value > 4.5 ? '#fee2e2' : '#dcfce7', color: unrate && unrate.value > 4.5 ? '#ef4444' : '#15803d' }}>
+                                    <Box sx={{ px: 1, py: 0.3, borderRadius: 1, bgcolor: unrate && unrate.value > 4.5 ? '#fdeceb' : '#e7f6ed', color: unrate && unrate.value > 4.5 ? '#d6453d' : '#157a3b' }}>
                                         <Typography variant="caption" sx={{ fontWeight: 600 }}>
                                             {unrate && unrate.value > 4.5 ? '就业市场走弱' : '劳动力稳固'}
                                         </Typography>
@@ -575,14 +564,14 @@ export default function EventsTab() {
 
                 {/* 5b. Nonfarm Payrolls */}
                 <Grid item xs={12} sm={6} md={4}>
-                    <Card sx={{ borderRadius: 3, boxShadow: '0 4px 20px rgba(0,0,0,0.02)', border: '1px solid #f1f5f9', '&:hover': { transform: 'translateY(-4px)', transition: 'all 0.2s ease-in-out', boxShadow: '0 8px 30px rgba(0,0,0,0.06)' } }}>
+                    <Card sx={{ borderRadius: 3, boxShadow: 'none', border: '1px solid #dfe6ee', '&:hover': { borderColor: '#c5d1de' } }}>
                         <CardContent sx={{ p: 2.5 }}>
                             <Stack spacing={1}>
                                 <Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'center' }}>
                                     <Typography variant="subtitle2" color="text.secondary" sx={{ fontWeight: 600 }}>
                                         美国非农就业人数 (PAYEMS)
                                     </Typography>
-                                    <Box sx={{ p: 1, borderRadius: 2, bgcolor: '#eff6ff', color: '#3b82f6' }}>
+                                    <Box sx={{ p: 1, borderRadius: 2, bgcolor: '#e6f0fc', color: '#3584d6' }}>
                                         <WorkOutlineRoundedIcon fontSize="small" />
                                     </Box>
                                 </Stack>
@@ -591,7 +580,7 @@ export default function EventsTab() {
                                         {payems ? `${(payems.value / 1000).toFixed(2)}M` : 'N/A'}
                                     </Typography>
                                     {payemsChange && (
-                                        <Stack direction="row" sx={{ alignItems: 'center', color: parseFloat(payemsChange) >= 0 ? '#10b981' : '#ef4444' }}>
+                                        <Stack direction="row" sx={{ alignItems: 'center', color: parseFloat(payemsChange) >= 0 ? '#1d9a4c' : '#d6453d' }}>
                                             {parseFloat(payemsChange) >= 0 ? <TrendingUpRoundedIcon fontSize="small" /> : <TrendingDownRoundedIcon fontSize="small" />}
                                             <Typography variant="caption" sx={{ fontWeight: 600 }}>
                                                 {parseFloat(payemsChange) > 0 ? `+${Math.round(parseFloat(payemsChange))}` : Math.round(parseFloat(payemsChange))}K
@@ -608,8 +597,8 @@ export default function EventsTab() {
                                         px: 1,
                                         py: 0.3,
                                         borderRadius: 1,
-                                        bgcolor: payemsChange && parseFloat(payemsChange) >= 150 ? '#dcfce7' : (payemsChange && parseFloat(payemsChange) > 0 ? '#eff6ff' : '#fee2e2'),
-                                        color: payemsChange && parseFloat(payemsChange) >= 150 ? '#15803d' : (payemsChange && parseFloat(payemsChange) > 0 ? '#2563eb' : '#ef4444')
+                                        bgcolor: payemsChange && parseFloat(payemsChange) >= 150 ? '#e7f6ed' : (payemsChange && parseFloat(payemsChange) > 0 ? '#e6f0fc' : '#fdeceb'),
+                                        color: payemsChange && parseFloat(payemsChange) >= 150 ? '#157a3b' : (payemsChange && parseFloat(payemsChange) > 0 ? '#2a6fc0' : '#d6453d')
                                     }}>
                                         <Typography variant="caption" sx={{ fontWeight: 600 }}>
                                             {payemsChange && parseFloat(payemsChange) >= 150 ? '新增就业强劲' : (payemsChange && parseFloat(payemsChange) > 0 ? '新增就业温和' : '就业人数收缩')}
@@ -623,14 +612,14 @@ export default function EventsTab() {
 
                 {/* 6. Real GDP */}
                 <Grid item xs={12} sm={6} md={4}>
-                    <Card sx={{ borderRadius: 3, boxShadow: '0 4px 20px rgba(0,0,0,0.02)', border: '1px solid #f1f5f9', '&:hover': { transform: 'translateY(-4px)', transition: 'all 0.2s ease-in-out', boxShadow: '0 8px 30px rgba(0,0,0,0.06)' } }}>
+                    <Card sx={{ borderRadius: 3, boxShadow: 'none', border: '1px solid #dfe6ee', '&:hover': { borderColor: '#c5d1de' } }}>
                         <CardContent sx={{ p: 2.5 }}>
                             <Stack spacing={1}>
                                 <Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'center' }}>
                                     <Typography variant="subtitle2" color="text.secondary" sx={{ fontWeight: 600 }}>
                                         美国实际 GDP 年化
                                     </Typography>
-                                    <Box sx={{ p: 1, borderRadius: 2, bgcolor: '#fdf2f8', color: '#db2777' }}>
+                                    <Box sx={{ p: 1, borderRadius: 2, bgcolor: '#fbeef4', color: '#c04d82' }}>
                                         <TrendingUpRoundedIcon fontSize="small" />
                                     </Box>
                                 </Stack>
@@ -647,7 +636,7 @@ export default function EventsTab() {
                                     <Typography variant="caption" color="text.secondary">
                                         数据公布周期: 每季度
                                     </Typography>
-                                    <Box sx={{ px: 1, py: 0.3, borderRadius: 1, bgcolor: '#f0fdf4', color: '#16a34a' }}>
+                                    <Box sx={{ px: 1, py: 0.3, borderRadius: 1, bgcolor: '#e7f6ed', color: '#1d9a4c' }}>
                                         <Typography variant="caption" sx={{ fontWeight: 600 }}>
                                             经济稳健扩张
                                         </Typography>
@@ -661,8 +650,8 @@ export default function EventsTab() {
             </Grid>
 
             {/* Interactive Recharts Panel */}
-            <Card sx={{ borderRadius: 4, boxShadow: '0 6px 25px rgba(0,0,0,0.03)', border: '1px solid #f1f5f9', overflow: 'hidden' }}>
-                <Box sx={{ borderBottom: 1, borderColor: 'divider', bgcolor: '#f8fafc', px: 2 }}>
+            <Card sx={{ borderRadius: 4, boxShadow: 'none', border: '1px solid #dfe6ee', overflow: 'hidden' }}>
+                <Box sx={{ borderBottom: 1, borderColor: 'divider', bgcolor: '#f6f8fb', px: 2 }}>
                     <Tabs
                         value={activeChartTab}
                         onChange={(e, val) => setActiveChartTab(val)}
@@ -687,24 +676,24 @@ export default function EventsTab() {
                                 <ComposedChart data={getOverlayData()}>
                                     <defs>
                                         <linearGradient id="colorFed" x1="0" y1="0" x2="0" y2="1">
-                                            <stop offset="5%" stopColor="#2563eb" stopOpacity={0.2} />
-                                            <stop offset="95%" stopColor="#2563eb" stopOpacity={0.01} />
+                                            <stop offset="5%" stopColor="#2a6fc0" stopOpacity={0.2} />
+                                            <stop offset="95%" stopColor="#2a6fc0" stopOpacity={0.01} />
                                         </linearGradient>
                                         <linearGradient id="colorTreasury" x1="0" y1="0" x2="0" y2="1">
-                                            <stop offset="5%" stopColor="#7c3aed" stopOpacity={0.2} />
-                                            <stop offset="95%" stopColor="#7c3aed" stopOpacity={0.01} />
+                                            <stop offset="5%" stopColor="#6250d6" stopOpacity={0.2} />
+                                            <stop offset="95%" stopColor="#6250d6" stopOpacity={0.01} />
                                         </linearGradient>
                                     </defs>
-                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                                    <XAxis dataKey="date" stroke="#94a3b8" fontSize={12} tickLine={false} />
-                                    <YAxis unit="%" stroke="#94a3b8" fontSize={12} domain={['auto', 'auto']} tickLine={false} axisLine={false} />
+                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#dfe6ee" />
+                                    <XAxis dataKey="date" stroke="#8a99ab" fontSize={12} tickLine={false} />
+                                    <YAxis unit="%" stroke="#8a99ab" fontSize={12} domain={['auto', 'auto']} tickLine={false} axisLine={false} />
                                     <Tooltip
-                                        contentStyle={{ border: 'none', borderRadius: 12, boxShadow: '0 8px 30px rgba(0,0,0,0.08)' }}
+                                        contentStyle={{ border: 'none', borderRadius: 12, boxShadow: 'none' }}
                                         formatter={(value) => [`${value}%`]}
                                     />
                                     <Legend verticalAlign="top" height={36} />
-                                    <Area type="monotone" dataKey="联邦基金利率 (Fed Funds)" stroke="#2563eb" strokeWidth={3} fillOpacity={1} fill="url(#colorFed)" connectNulls={true} />
-                                    <Line type="monotone" dataKey="10年期国债收益率 (10Y Yield)" stroke="#7c3aed" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} connectNulls={true} />
+                                    <Area type="monotone" dataKey="联邦基金利率 (Fed Funds)" stroke="#2a6fc0" strokeWidth={3} fillOpacity={1} fill="url(#colorFed)" connectNulls={true} />
+                                    <Line type="monotone" dataKey="10年期国债收益率 (10Y Yield)" stroke="#6250d6" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} connectNulls={true} />
                                 </ComposedChart>
                             </ResponsiveContainer>
                         )}
@@ -715,20 +704,20 @@ export default function EventsTab() {
                                 <AreaChart data={seriesMap['CPI_YOY']?.observations.slice(-24) || []}>
                                     <defs>
                                         <linearGradient id="colorCpi" x1="0" y1="0" x2="0" y2="1">
-                                            <stop offset="5%" stopColor="#d97706" stopOpacity={0.25} />
-                                            <stop offset="95%" stopColor="#d97706" stopOpacity={0.01} />
+                                            <stop offset="5%" stopColor="#c97c00" stopOpacity={0.25} />
+                                            <stop offset="95%" stopColor="#c97c00" stopOpacity={0.01} />
                                         </linearGradient>
                                     </defs>
-                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                                    <XAxis dataKey="date" stroke="#94a3b8" fontSize={11} tickLine={false} tickFormatter={d => d.substring(0, 7)} />
-                                    <YAxis unit="%" stroke="#94a3b8" fontSize={12} domain={['auto', 'auto']} tickLine={false} axisLine={false} />
+                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#dfe6ee" />
+                                    <XAxis dataKey="date" stroke="#8a99ab" fontSize={11} tickLine={false} tickFormatter={d => d.substring(0, 7)} />
+                                    <YAxis unit="%" stroke="#8a99ab" fontSize={12} domain={['auto', 'auto']} tickLine={false} axisLine={false} />
                                     <Tooltip
-                                        contentStyle={{ border: 'none', borderRadius: 12, boxShadow: '0 8px 30px rgba(0,0,0,0.08)' }}
+                                        contentStyle={{ border: 'none', borderRadius: 12, boxShadow: 'none' }}
                                         formatter={(value) => [`${value}%`, '通胀率 (YoY)']}
                                     />
                                     <Legend verticalAlign="top" height={36} />
-                                    <ReferenceLine y={2.0} stroke="#10b981" strokeWidth={2} strokeDasharray="5 5" label={{ value: "美联储目标通胀: 2.0%", fill: "#10b981", position: "top", fontSize: 11 }} />
-                                    <Area type="monotone" name="美国 CPI 通胀年率 (YoY)" dataKey="value" stroke="#d97706" strokeWidth={3} fillOpacity={1} fill="url(#colorCpi)" connectNulls={true} />
+                                    <ReferenceLine y={2.0} stroke="#1d9a4c" strokeWidth={2} strokeDasharray="5 5" label={{ value: "美联储目标通胀: 2.0%", fill: "#1d9a4c", position: "top", fontSize: 11 }} />
+                                    <Area type="monotone" name="美国 CPI 通胀年率 (YoY)" dataKey="value" stroke="#c97c00" strokeWidth={3} fillOpacity={1} fill="url(#colorCpi)" connectNulls={true} />
                                 </AreaChart>
                             </ResponsiveContainer>
                         )}
@@ -739,20 +728,20 @@ export default function EventsTab() {
                                 <AreaChart data={seriesMap['T10Y2Y']?.observations || []}>
                                     <defs>
                                         <linearGradient id="colorSpread" x1="0" y1="0" x2="0" y2="1">
-                                            <stop offset="5%" stopColor="#ef4444" stopOpacity={0.25} />
-                                            <stop offset="95%" stopColor="#ef4444" stopOpacity={0.01} />
+                                            <stop offset="5%" stopColor="#d6453d" stopOpacity={0.25} />
+                                            <stop offset="95%" stopColor="#d6453d" stopOpacity={0.01} />
                                         </linearGradient>
                                     </defs>
-                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                                    <XAxis dataKey="date" stroke="#94a3b8" fontSize={11} tickLine={false} />
-                                    <YAxis unit="%" stroke="#94a3b8" fontSize={12} tickLine={false} axisLine={false} />
+                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#dfe6ee" />
+                                    <XAxis dataKey="date" stroke="#8a99ab" fontSize={11} tickLine={false} />
+                                    <YAxis unit="%" stroke="#8a99ab" fontSize={12} tickLine={false} axisLine={false} />
                                     <Tooltip
-                                        contentStyle={{ border: 'none', borderRadius: 12, boxShadow: '0 8px 30px rgba(0,0,0,0.08)' }}
+                                        contentStyle={{ border: 'none', borderRadius: 12, boxShadow: 'none' }}
                                         formatter={(value) => [`${value}%`, '10Y-2Y 期限利差']}
                                     />
                                     <Legend verticalAlign="top" height={36} />
-                                    <ReferenceLine y={0} stroke="#475569" strokeWidth={2} label={{ value: "倒挂分界线 (0%)", fill: "#475569", position: "top", fontSize: 11 }} />
-                                    <Area type="monotone" name="10Y-2Y 利差" dataKey="value" stroke="#ef4444" strokeWidth={3} fillOpacity={1} fill="url(#colorSpread)" connectNulls={true} />
+                                    <ReferenceLine y={0} stroke="#4a5a6c" strokeWidth={2} label={{ value: "倒挂分界线 (0%)", fill: "#4a5a6c", position: "top", fontSize: 11 }} />
+                                    <Area type="monotone" name="10Y-2Y 利差" dataKey="value" stroke="#d6453d" strokeWidth={3} fillOpacity={1} fill="url(#colorSpread)" connectNulls={true} />
                                 </AreaChart>
                             </ResponsiveContainer>
                         )}
@@ -763,16 +752,16 @@ export default function EventsTab() {
                                 <ComposedChart data={getLaborEconomyData()}>
                                     <defs>
                                         <linearGradient id="colorUnrate" x1="0" y1="0" x2="0" y2="1">
-                                            <stop offset="5%" stopColor="#2563eb" stopOpacity={0.2} />
-                                            <stop offset="95%" stopColor="#2563eb" stopOpacity={0.01} />
+                                            <stop offset="5%" stopColor="#2a6fc0" stopOpacity={0.2} />
+                                            <stop offset="95%" stopColor="#2a6fc0" stopOpacity={0.01} />
                                         </linearGradient>
                                     </defs>
-                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                                    <XAxis dataKey="date" stroke="#94a3b8" fontSize={11} tickLine={false} />
-                                    <YAxis yAxisId="left" unit="%" stroke="#2563eb" fontSize={12} domain={['auto', 'auto']} tickLine={false} axisLine={false} />
-                                    <YAxis yAxisId="right" orientation="right" stroke="#16a34a" fontSize={12} domain={['auto', 'auto']} tickLine={false} axisLine={false} tickFormatter={(value) => `${Math.round(value / 1000)}T`} />
+                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#dfe6ee" />
+                                    <XAxis dataKey="date" stroke="#8a99ab" fontSize={11} tickLine={false} />
+                                    <YAxis yAxisId="left" unit="%" stroke="#2a6fc0" fontSize={12} domain={['auto', 'auto']} tickLine={false} axisLine={false} />
+                                    <YAxis yAxisId="right" orientation="right" stroke="#1d9a4c" fontSize={12} domain={['auto', 'auto']} tickLine={false} axisLine={false} tickFormatter={(value) => `${Math.round(value / 1000)}T`} />
                                     <Tooltip
-                                        contentStyle={{ border: 'none', borderRadius: 12, boxShadow: '0 8px 30px rgba(0,0,0,0.08)' }}
+                                        contentStyle={{ border: 'none', borderRadius: 12, boxShadow: 'none' }}
                                         formatter={(value, name) => {
                                             if (name === '实际GDP (Real GDP)') {
                                                 return [`$${Math.round(value).toLocaleString()}B`, name]
@@ -781,8 +770,8 @@ export default function EventsTab() {
                                         }}
                                     />
                                     <Legend verticalAlign="top" height={36} />
-                                    <Area yAxisId="left" type="monotone" name="失业率 (Unemployment Rate)" dataKey="失业率 (Unemployment Rate)" stroke="#2563eb" strokeWidth={3} fillOpacity={1} fill="url(#colorUnrate)" connectNulls={true} />
-                                    <Line yAxisId="right" type="monotone" name="实际GDP (Real GDP)" dataKey="实际GDP (Real GDP)" stroke="#16a34a" strokeWidth={3} dot={{ r: 3 }} activeDot={{ r: 6 }} connectNulls={true} />
+                                    <Area yAxisId="left" type="monotone" name="失业率 (Unemployment Rate)" dataKey="失业率 (Unemployment Rate)" stroke="#2a6fc0" strokeWidth={3} fillOpacity={1} fill="url(#colorUnrate)" connectNulls={true} />
+                                    <Line yAxisId="right" type="monotone" name="实际GDP (Real GDP)" dataKey="实际GDP (Real GDP)" stroke="#1d9a4c" strokeWidth={3} dot={{ r: 3 }} activeDot={{ r: 6 }} connectNulls={true} />
                                 </ComposedChart>
                             </ResponsiveContainer>
                         )}
@@ -809,13 +798,13 @@ export default function EventsTab() {
                                     <Card
                                         sx={{
                                             borderRadius: 3.5,
-                                            boxShadow: '0 4px 20px rgba(0,0,0,0.01)',
-                                            border: '1px solid #f1f5f9',
+                                            boxShadow: 'none',
+                                            border: '1px solid #dfe6ee',
                                             height: '100%',
                                             display: 'flex',
                                             flexDirection: 'column',
                                             '&:hover': {
-                                                boxShadow: '0 10px 30px rgba(0,0,0,0.04)',
+                                                boxShadow: 'none',
                                                 borderColor: 'primary.light'
                                             }
                                         }}
@@ -838,14 +827,14 @@ export default function EventsTab() {
                                                 sx={{
                                                     p: 1.5,
                                                     borderRadius: 2,
-                                                    bgcolor: '#f8fafc',
-                                                    borderLeft: '3px solid #3b82f6',
+                                                    bgcolor: '#f6f8fb',
+                                                    borderLeft: '3px solid #3584d6',
                                                     mt: 1
                                                 }}
                                             >
                                                 <Stack direction="row" spacing={1} sx={{ alignItems: 'flex-start' }}>
-                                                    <HelpOutlineRoundedIcon sx={{ fontSize: 16, color: '#3b82f6', mt: 0.2 }} />
-                                                    <Typography variant="caption" sx={{ color: '#475569', lineHeight: 1.5, fontWeight: 550 }}>
+                                                    <HelpOutlineRoundedIcon sx={{ fontSize: 16, color: '#3584d6', mt: 0.2 }} />
+                                                    <Typography variant="caption" sx={{ color: '#4a5a6c', lineHeight: 1.5, fontWeight: 550 }}>
                                                         <strong>配置建议:</strong> {item.suggestion}
                                                     </Typography>
                                                 </Stack>
@@ -875,9 +864,9 @@ export default function EventsTab() {
                     <Grid container spacing={3}>
                         {/* r/stocks */}
                         <Grid item xs={12} md={6}>
-                            <Card sx={{ borderRadius: 3.5, border: '1px solid #f1f5f9', boxShadow: '0 4px 20px rgba(0,0,0,0.01)' }}>
-                                <Box sx={{ p: 2, bgcolor: '#f8fafc', borderBottom: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                    <Typography variant="subtitle2" sx={{ fontWeight: 700, color: '#334155' }}>
+                            <Card sx={{ borderRadius: 3.5, border: '1px solid #dfe6ee', boxShadow: 'none' }}>
+                                <Box sx={{ p: 2, bgcolor: '#f6f8fb', borderBottom: '1px solid #dfe6ee', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <Typography variant="subtitle2" sx={{ fontWeight: 700, color: '#2d3b4d' }}>
                                         📈 r/stocks 热门讨论标的
                                     </Typography>
                                     <Typography variant="caption" color="text.secondary">
@@ -891,13 +880,13 @@ export default function EventsTab() {
                                                 const cleaned = cleanName(item.name);
                                                 const isLong = cleaned.length > 15;
                                                 return (
-                                                    <Box key={idx} sx={{ px: 2.5, py: 1.5, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) max-content', columnGap: 3, alignItems: 'center', '&:hover': { bgcolor: '#f8fafc' } }}>
+                                                    <Box key={idx} sx={{ px: 2.5, py: 1.5, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) max-content', columnGap: 3, alignItems: 'center', '&:hover': { bgcolor: '#f6f8fb' } }}>
                                                         <Stack direction="row" spacing={2} sx={{ alignItems: 'center', minWidth: 0 }}>
                                                             <Typography variant="body2" sx={{ fontWeight: 700, color: 'text.secondary', width: 20, flexShrink: 0 }}>
                                                                 {idx + 1}
                                                             </Typography>
-                                                            <Box sx={{ px: 1.2, py: 0.4, borderRadius: 1.5, bgcolor: '#eff6ff', border: '1px solid #dbeafe', flexShrink: 0 }}>
-                                                                <Typography variant="body2" sx={{ fontWeight: 700, color: '#1d4ed8' }}>
+                                                            <Box sx={{ px: 1.2, py: 0.4, borderRadius: 1.5, bgcolor: '#e6f0fc', border: '1px solid #e6f0fc', flexShrink: 0 }}>
+                                                                <Typography variant="body2" sx={{ fontWeight: 700, color: '#1f5fa8' }}>
                                                                     {item.ticker}
                                                                 </Typography>
                                                             </Box>
@@ -934,9 +923,9 @@ export default function EventsTab() {
 
                         {/* r/wallstreetbets */}
                         <Grid item xs={12} md={6}>
-                            <Card sx={{ borderRadius: 3.5, border: '1px solid #f1f5f9', boxShadow: '0 4px 20px rgba(0,0,0,0.01)' }}>
-                                <Box sx={{ p: 2, bgcolor: '#f8fafc', borderBottom: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                    <Typography variant="subtitle2" sx={{ fontWeight: 700, color: '#334155' }}>
+                            <Card sx={{ borderRadius: 3.5, border: '1px solid #dfe6ee', boxShadow: 'none' }}>
+                                <Box sx={{ p: 2, bgcolor: '#f6f8fb', borderBottom: '1px solid #dfe6ee', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <Typography variant="subtitle2" sx={{ fontWeight: 700, color: '#2d3b4d' }}>
                                         🦍 r/wallstreetbets 热门讨论标的
                                     </Typography>
                                     <Typography variant="caption" color="text.secondary">
@@ -950,13 +939,13 @@ export default function EventsTab() {
                                                 const cleaned = cleanName(item.name);
                                                 const isLong = cleaned.length > 15;
                                                 return (
-                                                    <Box key={idx} sx={{ px: 2.5, py: 1.5, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) max-content', columnGap: 3, alignItems: 'center', '&:hover': { bgcolor: '#f8fafc' } }}>
+                                                    <Box key={idx} sx={{ px: 2.5, py: 1.5, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) max-content', columnGap: 3, alignItems: 'center', '&:hover': { bgcolor: '#f6f8fb' } }}>
                                                         <Stack direction="row" spacing={2} sx={{ alignItems: 'center', minWidth: 0 }}>
                                                             <Typography variant="body2" sx={{ fontWeight: 700, color: 'text.secondary', width: 20, flexShrink: 0 }}>
                                                                 {idx + 1}
                                                             </Typography>
-                                                            <Box sx={{ px: 1.2, py: 0.4, borderRadius: 1.5, bgcolor: '#fdf2f8', border: '1px solid #fce7f3', flexShrink: 0 }}>
-                                                                <Typography variant="body2" sx={{ fontWeight: 700, color: '#be185d' }}>
+                                                            <Box sx={{ px: 1.2, py: 0.4, borderRadius: 1.5, bgcolor: '#fbeef4', border: '1px solid #fbeef4', flexShrink: 0 }}>
+                                                                <Typography variant="body2" sx={{ fontWeight: 700, color: '#a03b6b' }}>
                                                                     {item.ticker}
                                                                 </Typography>
                                                             </Box>

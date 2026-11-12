@@ -119,7 +119,7 @@ export default function WatchlistTable({ tier, rows, search, attentionFilter, ri
 
         <TableContainer
           sx={{
-            border: '1px solid #e5eaef',
+            border: '1px solid #d9e2ec',
             borderRadius: 2,
             overflowX: 'auto',
           }}
