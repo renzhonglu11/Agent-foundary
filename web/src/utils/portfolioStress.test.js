@@ -531,3 +531,19 @@ test('the adverse scenario moves every underlying against the portfolio so oppos
     assert.ok(portfolio.products.every(p => p.scenarioMethods.length === portfolio.scenarios.length))
   }
 })
+
+test('a shared pricing pass gives the same report as pricing per report', async () => {
+  const { priceStressProfiles } = await import('./portfolioStress.js')
+  const entries = [
+    { item: { symbol: 'T1', instrument: 'Turbo', productType: 'open_end_turbo', optionType: 'call', price: 1, quantity: 1000, costBasis: 800, underlyingSpot: 100, strikePrice: 90, knockoutPrice: 90, ratio: 0.1, currency: 'EUR' }, group: { key: 'a', groupName: 'A' } },
+  ]
+  const scenarios = buildStressScenarios(20, null, true, { adverse: true })
+  const totals = { totalMarketValue: 2000 }
+  const plans = [{ id: 'half', title: 'Half', reductions: { T1: 50 } }]
+  const priced = priceStressProfiles(entries, 30, scenarios, totals)
+  assert.equal(priced.profiles.length, 1)
+  assert.deepEqual(
+    buildPortfolioStressReport(entries, 30, scenarios, totals, { plans, priced }),
+    buildPortfolioStressReport(entries, 30, scenarios, totals, { plans }),
+  )
+})

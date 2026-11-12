@@ -7,20 +7,49 @@ import { PnlCell, pnlColor, signedMoney, signedPercent } from './shared.jsx'
 const adjustmentLabels = { exit: '模拟退出', reduce: '减仓' }
 const selectionFlagLabels = { MODEL_FALLBACK: '模型兜底估算' }
 
-function ContributionList({ title, rows, empty }) {
+const SHOWN_PER_SIDE = 5
+
+// Losses grow left from the centre line and offsets grow right, on one scale,
+// so the largest drivers of the scenario stand out at a glance.
+function DivergingContributions({ contributions }) {
+  const losses = contributions.filter(row => row.pnl < 0)
+  const offsets = contributions.filter(row => row.pnl > 0)
+  const shown = [...losses.slice(0, SHOWN_PER_SIDE), ...offsets.slice(-SHOWN_PER_SIDE)]
+  const hidden = contributions.filter(row => row.pnl && !shown.includes(row))
+  const hiddenTotal = hidden.reduce((sum, row) => sum + row.pnl, 0)
+  const scale = Math.max(...shown.map(row => Math.abs(row.pnl)), 1)
+  const total = rows => rows.reduce((sum, row) => sum + row.pnl, 0)
+  if (!shown.length) return <Typography variant="body2" color="text.secondary">该情景下各产品盈亏都为零或无法计算。</Typography>
   return (
-    <Box sx={{ minWidth: 0 }}>
-      <Typography variant="body2" fontWeight={700}>{title}</Typography>
-      {rows.length === 0 ? <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>{empty}</Typography> : <>
-        <Typography variant="caption" color="text.secondary">合计 {signedMoney(rows.reduce((sum, row) => sum + row.pnl, 0))} · 展示前 {Math.min(5, rows.length)} 个</Typography>
-        <TableContainer><Table size="small" aria-label={title}><TableBody>{rows.slice(0, 5).map(row => (
-          <TableRow key={row.id}>
-            <TableCell>{row.name}<Typography variant="caption" component="div" color="text.secondary">{row.groupName}{row.movePct ? ` · 标的 ${signedPercent(row.movePct)}` : ''}</Typography></TableCell>
-            <PnlCell value={row.pnl} />
-          </TableRow>
-        ))}</TableBody></Table></TableContainer>
-      </>}
-    </Box>
+    <Stack spacing={0.5}>
+      <Typography variant="caption" color="text.secondary">
+        亏损合计 {signedMoney(total(losses))}（{losses.length} 个）· 抵消合计 {signedMoney(total(offsets))}（{offsets.length} 个）
+        {hidden.length ? ` · 未列出的 ${hidden.length} 个合计 ${signedMoney(hiddenTotal)}` : ''}
+      </Typography>
+      <Box role="list" aria-label="压力来源" sx={{ display: 'grid', gap: 0.5 }}>
+        {shown.map(row => {
+          const width = `${Math.abs(row.pnl) / scale * 50}%`
+          const negative = row.pnl < 0
+          return (
+            <Box role="listitem" key={row.id} sx={{ display: 'grid', gridTemplateColumns: { xs: 'minmax(0, 1fr)', sm: 'minmax(0, 0.9fr) minmax(0, 1.4fr) 84px' }, gap: { xs: 0.25, sm: 1 }, alignItems: 'center' }}>
+              <Box sx={{ minWidth: 0 }}>
+                <Typography variant="body2" noWrap title={row.name}>{row.name}</Typography>
+                <Typography variant="caption" color="text.secondary" component="div" noWrap>{row.groupName}{row.movePct ? ` · 标的 ${signedPercent(row.movePct)}` : ''}</Typography>
+              </Box>
+              <Box sx={{ position: 'relative', height: 14, backgroundColor: '#f1f5f9', borderRadius: 1 }}>
+                <Box sx={{ position: 'absolute', left: '50%', top: -2, bottom: -2, width: '1px', backgroundColor: '#94a3b8' }} />
+                <Box sx={{
+                  position: 'absolute', top: 2, bottom: 2, width, borderRadius: 1,
+                  backgroundColor: negative ? 'error.main' : 'success.main',
+                  ...(negative ? { right: '50%' } : { left: '50%' }),
+                }} />
+              </Box>
+              <Typography variant="body2" sx={{ color: pnlColor(row.pnl), textAlign: { sm: 'right' }, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{signedMoney(row.pnl)}</Typography>
+            </Box>
+          )
+        })}
+      </Box>
+    </Stack>
   )
 }
 
@@ -56,9 +85,7 @@ export function PlanAdjustments({ baseline, plan }) {
 export function PressureSources({ plan, scenarioId, onScenario, horizonDays, otherShocks }) {
   const scenario = plan.scenarioResults.find(row => row.id === scenarioId)
     || plan.scenarioResults.reduce((worst, row) => !worst || row.pnl < worst.pnl ? row : worst, null)
-  const contributions = buildScenarioContributions(plan, scenario?.id)
-  const losses = contributions.filter(row => row.pnl < 0)
-  const offsets = contributions.filter(row => row.pnl > 0).reverse()
+  const contributions = buildScenarioContributions(plan, scenario?.id).filter(row => row.pnl != null)
   return (
     <Stack spacing={1.25}>
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} sx={{ justifyContent: 'space-between', alignItems: { sm: 'center' } }}>
@@ -75,10 +102,7 @@ export function PressureSources({ plan, scenarioId, onScenario, horizonDays, oth
           {horizonDays === 0 ? (otherShocks ? '即时盈亏只来自所选的 IV 与汇率冲击。' : '即时盈亏不变，组合市值并未归零。') : '当前期限仍计入时间损耗或到期支付影响。'}
         </Alert>
       ) : null}
-      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 2 }}>
-        <ContributionList title="主要亏损来源" rows={losses} empty="该情景没有亏损产品" />
-        <ContributionList title="收益抵消来源" rows={offsets} empty="该情景没有盈利产品" />
-      </Box>
+      <DivergingContributions contributions={contributions} />
       <Typography variant="body2" fontWeight={700}>全部情景</Typography>
       <TableContainer component={Paper} variant="outlined">
         <Table size="small" aria-label="全部情景结果" sx={{ minWidth: 540 }}>

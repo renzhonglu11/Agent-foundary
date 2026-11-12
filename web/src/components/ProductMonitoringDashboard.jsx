@@ -185,7 +185,8 @@ function formatStrikeDisplay(value, item) {
 
 // ========================================================
 
-export default function ProductMonitoringDashboard({ item, riskLeg, onClose, onAddPnlRecord }) {
+// `summary` renders under the product header, e.g. the Positions plan strip.
+export default function ProductMonitoringDashboard({ item, riskLeg, onClose, onAddPnlRecord, summary = null }) {
   const [activeTab, setActiveTab] = useState(() => (
     item?.productType === 'factor_certificate' ? 'drawdown' : 'expiry'
   ))
@@ -221,6 +222,7 @@ export default function ProductMonitoringDashboard({ item, riskLeg, onClose, onA
 
       {/* Context bar */}
       <DashboardContextBar item={item} riskLeg={riskLeg} direction={direction} />
+      {summary}
 
       {/* Toggle buttons */}
       <Box sx={{ px: 1.5, pt: 1, pb: 0.5 }}>

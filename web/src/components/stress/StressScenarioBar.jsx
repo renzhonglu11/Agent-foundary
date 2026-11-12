@@ -4,6 +4,7 @@ import TuneRoundedIcon from '@mui/icons-material/TuneRounded'
 import { compactCurrency, number } from '../../utils/formatters.js'
 import { PORTFOLIO_STRESS_HORIZONS } from '../../utils/portfolioStress.js'
 import { signedPercent } from './shared.jsx'
+import CoverageTip from '../shared/CoverageTip.jsx'
 
 const SHOCK_PRESETS = [
   { value: 10, label: '温和', range: '±10%' },
@@ -67,7 +68,7 @@ export default function StressScenarioBar({ settings, onChange, shockTargets, gr
       </Collapse>
 
       <Typography variant="caption" color="text.secondary">
-        可测本金 {compactCurrency(coverage.coveredValue)}，占持仓市值 {coverage.coveragePct}%；未覆盖的 {compactCurrency(coverage.outsideValue)} 不视为零风险。
+        可测本金 {compactCurrency(coverage.coveredValue)}<CoverageTip current="testable" />，占持仓市值 {coverage.coveragePct}%；未覆盖的 {compactCurrency(coverage.outsideValue)} 不视为零风险。
         {horizonDays === 0 ? ' 即时冲击不含时间损耗，价外权证会显得划算，建议用 30 天判断。' : ''}
         {target ? ' 只冲击一个标的时，没有“各标的逆向”情景，也不能请求 Hermes 解读。' : ''}
         {volScaled ? ` 按波动率缩放：±${shock}% 是 IV 处于中位数（${groupShock.referenceVolatilityPct ?? '—'}%）的标的的幅度，其余标的按自身 IV 在 0.4–2.5 倍内缩放${groupShock.unknownCount ? `，${groupShock.unknownCount} 个没有权证 IV 的标的按 ±${shock}%` : ''}。` : ''}

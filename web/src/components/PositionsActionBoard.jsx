@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   Alert,
   Box,
@@ -27,6 +27,7 @@ import { buildExitSignals } from '../utils/exitSignals.js'
 import { RISK_SIGNAL_LABELS, confidenceLabel } from '../utils/labels.js'
 import { buildOpportunityScreen } from '../utils/opportunityScreen.js'
 import { buildPositionsCoverage } from '../utils/positionsCoverage.js'
+import CoverageTip from './shared/CoverageTip.jsx'
 import { withRowReduction } from '../utils/portfolioComparison.js'
 import { EXIT_LEVEL_META } from '../utils/labels.js'
 import { buildGroupShockScales } from '../utils/portfolioStress.js'
@@ -86,6 +87,27 @@ function storeSubTab(value) {
   }
 }
 
+const PLAN_STORAGE_KEY = 'positions.customPlan'
+
+// The custom plan survives a reload within this browser session only.
+function storedPlan() {
+  try {
+    const value = JSON.parse(window.sessionStorage.getItem(PLAN_STORAGE_KEY))
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+    return Object.fromEntries(Object.entries(value).filter(([, pct]) => [25, 50, 100].includes(pct)))
+  } catch {
+    return {}
+  }
+}
+
+function storePlan(value) {
+  try {
+    window.sessionStorage.setItem(PLAN_STORAGE_KEY, JSON.stringify(value))
+  } catch {
+    // Storage can be blocked; the plan then lasts until reload.
+  }
+}
+
 const rowClickedPulse = keyframes`
   0% { background-color: rgba(19, 222, 185, 0.28); }
   70% { background-color: rgba(19, 222, 185, 0.14); }
@@ -131,7 +153,8 @@ export default function PositionsActionBoard({ data, riskData, riskLoading, risk
   const [visitedTabs, setVisitedTabs] = useState(() => new Set([subTab]))
   const [healthOpen, setHealthOpen] = useState(false)
   // Shared by the holdings, exit signal and plan tabs: product id → % sold.
-  const [customReductions, setCustomReductions] = useState({})
+  const [customReductions, setCustomReductions] = useState(storedPlan)
+  useEffect(() => storePlan(customReductions), [customReductions])
   const [planFocus, setPlanFocus] = useState(0)
   const dataHealth = useDataHealth()
   const totalMarketValue = Number(data?.summary?.totalMarketValue) || 0
@@ -310,15 +333,15 @@ export default function PositionsActionBoard({ data, riskData, riskLoading, risk
                   minWidth: 0,
                 }}
               >
-                {selectedProduct ? (
-                  <ProductPlanStrip
-                    signal={exitSignalById.get(String(selectedProduct.item?.symbol))}
-                    reduction={customReductions[String(selectedProduct.item?.symbol)] || 0}
-                    onReduce={pct => setPlanReduction(String(selectedProduct.item?.symbol), pct)}
-                    onShowPlan={showPlan}
-                  />
-                ) : null}
                 <ProductMonitoringDashboard
+                  summary={selectedProduct ? (
+                    <ProductPlanStrip
+                      signal={exitSignalById.get(String(selectedProduct.item?.symbol))}
+                      reduction={customReductions[String(selectedProduct.item?.symbol)] || 0}
+                      onReduce={pct => setPlanReduction(String(selectedProduct.item?.symbol), pct)}
+                      onShowPlan={showPlan}
+                    />
+                  ) : null}
                   item={selectedProduct?.item ?? null}
                   riskLeg={selectedProduct?.riskLeg ?? null}
                   onClose={() => setSelectedProduct(null)}
@@ -409,15 +432,15 @@ export default function PositionsActionBoard({ data, riskData, riskLoading, risk
             },
           }}
         >
-          {selectedProduct ? (
-            <ProductPlanStrip
-              signal={exitSignalById.get(String(selectedProduct.item?.symbol))}
-              reduction={customReductions[String(selectedProduct.item?.symbol)] || 0}
-              onReduce={pct => setPlanReduction(String(selectedProduct.item?.symbol), pct)}
-              onShowPlan={() => { setSelectedProduct(null); showPlan() }}
-            />
-          ) : null}
           <ProductMonitoringDashboard
+            summary={selectedProduct ? (
+              <ProductPlanStrip
+                signal={exitSignalById.get(String(selectedProduct.item?.symbol))}
+                reduction={customReductions[String(selectedProduct.item?.symbol)] || 0}
+                onReduce={pct => setPlanReduction(String(selectedProduct.item?.symbol), pct)}
+                onShowPlan={() => { setSelectedProduct(null); showPlan() }}
+              />
+            ) : null}
             item={selectedProduct?.item ?? null}
             riskLeg={selectedProduct?.riskLeg ?? null}
             onClose={() => setSelectedProduct(null)}
@@ -518,7 +541,7 @@ function CoverageNotice({ coverage, loading }) {
       ) : null}
     >
       <Typography variant="body2">
-        本表显示 <b>{coverage.shownCount} / {coverage.heldCount}</b> 个持仓，占持仓市值 <b>{number.format(coverage.shownValuePct)}%</b>
+        持仓表覆盖 <b>{number.format(coverage.shownValuePct)}%</b><CoverageTip current="table" />：显示 <b>{coverage.shownCount} / {coverage.heldCount}</b> 个持仓
         {hiddenCount > 0 ? `；未显示 ${hiddenCount} 个：${parts.join('；')}。` : '，全部持仓都已显示。'}
       </Typography>
       {open ? (

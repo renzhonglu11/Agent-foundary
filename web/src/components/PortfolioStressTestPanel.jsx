@@ -7,6 +7,7 @@ import {
   buildHermesStressReviewPayload,
   buildPortfolioStressReport,
   buildStressScenarios,
+  priceStressProfiles,
   buildDirectPriceStress,
   buildGroupShockScales,
 } from '../utils/portfolioStress.js'
@@ -44,10 +45,15 @@ export default function PortfolioStressTestPanel({ entries, positions = [], exit
   }), [shock, target, horizonDays, volScaled, groupShock, ivMove, fxMove])
   const direct = useMemo(() => buildDirectPriceStress(positions, entries), [positions, entries])
   const totals = useMemo(() => ({ totalMarketValue, totalCostBasis, positions }), [totalMarketValue, totalCostBasis, positions])
-  // The presets are derived from the current holdings, so those are priced first.
-  const holdingsReport = useMemo(
-    () => buildPortfolioStressReport(entries, horizonDays, scenarios, totals, { plans: [] }),
+  // Every product is priced once; the holdings report and the plan report
+  // both reuse that pass. The presets come from the holdings report.
+  const priced = useMemo(
+    () => priceStressProfiles(entries, horizonDays, scenarios, totals),
     [entries, horizonDays, scenarios, totals],
+  )
+  const holdingsReport = useMemo(
+    () => buildPortfolioStressReport(entries, horizonDays, scenarios, totals, { plans: [], priced }),
+    [entries, horizonDays, scenarios, totals, priced],
   )
   const plans = useMemo(() => {
     const holdings = holdingsReport.portfolios[0] || null
@@ -56,8 +62,8 @@ export default function PortfolioStressTestPanel({ entries, positions = [], exit
     return [...buildPresetPlans(holdings, exitSignals), custom].filter(Boolean)
   }, [holdingsReport, exitSignals, customReductions])
   const report = useMemo(
-    () => (plans.length ? buildPortfolioStressReport(entries, horizonDays, scenarios, totals, { plans }) : holdingsReport),
-    [entries, horizonDays, scenarios, totals, plans, holdingsReport],
+    () => (plans.length ? buildPortfolioStressReport(entries, horizonDays, scenarios, totals, { plans, priced }) : holdingsReport),
+    [entries, horizonDays, scenarios, totals, plans, holdingsReport, priced],
   )
 
   // A Hermes review stays valid while the question is the same: the scenario

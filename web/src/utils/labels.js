@@ -63,3 +63,11 @@ export const DATA_ISSUE_LABELS = {
 }
 
 export const dataIssueLabel = code => DATA_ISSUE_LABELS[code] || code
+
+// The Positions page reports coverage three ways. Each place names its own
+// measure and can show all three, so the numbers are never compared blindly.
+export const COVERAGE_TERMS = [
+  { id: 'table', name: '持仓表覆盖', text: '持仓表里显示的 Tier 1 衍生品，占全部持仓市值的比例。Tier 2 / 3 持仓、Tier 1 股票和缺少风险数据的产品不在表内。' },
+  { id: 'testable', name: '可测本金', text: '浏览器里的方案对比能定价的持仓市值。方案对比和减仓排序只覆盖这一部分。' },
+  { id: 'model', name: '后台模型覆盖', text: '后台风险监控能定价的持仓，占全部持仓绝对市值。预警、损失限额和日终复盘用的是这个口径。' },
+]

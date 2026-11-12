@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Box, Button, Chip, Collapse, Dialog, DialogContent, DialogTitle, IconButton, Stack, Typography } from '@mui/material'
+import { Alert, Box, Button, Chip, Collapse, Dialog, DialogContent, DialogTitle, IconButton, Stack, TextField, Typography } from '@mui/material'
 import CloseRoundedIcon from '@mui/icons-material/CloseRounded'
-import { usePortfolioMonitorStatus } from '../hooks/usePortfolioMonitor.js'
+import { useMonitorActions, usePortfolioMonitorStatus } from '../hooks/usePortfolioMonitor.js'
 import { buildDataHealth } from '../utils/dataHealth.js'
 import { number } from '../utils/formatters.js'
 import PortfolioDataMonitor from './PortfolioDataMonitor.jsx'
+import CoverageTip from './shared/CoverageTip.jsx'
 
 const chipColors = { error: 'error', warning: 'warning', ok: 'success', loading: 'default' }
 export const DATA_HEALTH_PANEL_ID = 'positions-data-health'
@@ -17,13 +18,13 @@ export function useDataHealth() {
     const timer = window.setInterval(() => setNow(Date.now()), 15_000)
     return () => window.clearInterval(timer)
   }, [])
-  return useMemo(() => buildDataHealth(query.data, query.error, now), [query.data, query.error, now])
+  return useMemo(() => ({ ...buildDataHealth(query.data, query.error, now), configuration: query.data?.configuration ?? null }), [query.data, query.error, now])
 }
 
 const percent = value => `${number.format(Math.round(value * 10) / 10)}%`
 
 function chipLabel(health) {
-  const coverage = health.coveragePct != null ? `模型覆盖 ${percent(health.coveragePct)}` : null
+  const coverage = health.coveragePct != null ? `后台模型覆盖 ${percent(health.coveragePct)}` : null
   if (health.level === 'loading') return '数据状态读取中'
   if (health.level === 'error') {
     if (health.monitor.color === 'error') return `数据：${health.monitor.label}`
@@ -52,7 +53,38 @@ export function DataHealthChip({ health, open, onToggle }) {
   )
 }
 
-function Section({ title, note, rows, empty, extra }) {
+// Sets only the minimum model coverage, keeping every other monitor setting.
+function CoverageThresholdForm({ configuration, coveragePct }) {
+  const { save } = useMonitorActions()
+  const [value, setValue] = useState(() => String(coveragePct != null ? Math.max(0, Math.floor(coveragePct)) : 30))
+  const numeric = Number(value)
+  const valid = value !== '' && Number.isFinite(numeric) && numeric >= 0 && numeric <= 100
+  return (
+    <Box component="form" sx={{ mt: 1 }} onSubmit={(event) => {
+      event.preventDefault()
+      if (!valid) return
+      save.mutate({ ...configuration, settings: { ...configuration.settings, minModelCoveragePct: numeric } })
+    }}>
+      <Stack direction="row" spacing={1} sx={{ alignItems: 'flex-start' }}>
+        <TextField
+          size="small"
+          type="number"
+          label="最低模型覆盖率 %"
+          value={value}
+          onChange={event => setValue(event.target.value)}
+          error={!valid}
+          helperText={coveragePct != null ? `当前 ${percent(coveragePct)}，低于设置值时预警` : '低于设置值时预警'}
+          slotProps={{ htmlInput: { min: 0, max: 100, step: 'any' } }}
+          sx={{ width: 170 }}
+        />
+        <Button type="submit" size="small" variant="contained" disabled={!valid || save.isPending} sx={{ mt: 0.5 }}>保存</Button>
+      </Stack>
+      {save.error ? <Alert severity="error" sx={{ mt: 0.5 }}>{save.error.message}。重新打开面板可载入最新设置。</Alert> : null}
+    </Box>
+  )
+}
+
+function Section({ title, note, rows, empty, extra, footer }) {
   return (
     <Box sx={{ border: '1px solid #e5eaef', borderRadius: 1.5, p: 1.25, backgroundColor: '#ffffff', minWidth: 0 }}>
       <Typography variant="body2" fontWeight={800}>{title}</Typography>
@@ -67,6 +99,7 @@ function Section({ title, note, rows, empty, extra }) {
           ))}
         </Box>
       ) : !extra ? <Typography variant="body2" color="text.secondary">{empty}</Typography> : null}
+      {footer}
     </Box>
   )
 }
@@ -97,12 +130,15 @@ export function DataHealthPanel({ health, open }) {
               note="不报警，但可以逐项补上，补齐后模型覆盖率会提高。"
               rows={health.gaps}
               empty="没有。"
+              footer={health.minCoveragePct == null && health.configuration?.settings
+                ? <CoverageThresholdForm configuration={health.configuration} coveragePct={health.coveragePct} />
+                : null}
             />
           </Box>
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ mt: 1.25, alignItems: { sm: 'center' }, justifyContent: 'space-between' }}>
             <Typography variant="caption" color="text.secondary">
               后台监控共 {health.positionCount} 个持仓
-              {health.coveragePct != null ? `；模型覆盖 ${percent(health.coveragePct)}（后台风险模型能定价的持仓，占全部持仓绝对市值）` : ''}
+              {health.coveragePct != null ? <>；后台模型覆盖 {percent(health.coveragePct)}<CoverageTip current="model" /></> : ''}
               {health.minCoveragePct != null ? `；最低覆盖率阈值 ${percent(health.minCoveragePct)}` : ''}。
             </Typography>
             <Button size="small" variant="outlined" onClick={() => setDetailsOpen(true)}>完整数据监控</Button>

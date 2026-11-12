@@ -213,6 +213,7 @@ export default function OpportunitiesPanel({ screen = [], rolls = [], loading, s
               summary={`${rollFrom ? `正在为 ${rollFrom} 查找替代品 · ` : ''}观察列表 ${unheldCount} 只未持有`}
               expanded={searchOpen}
               onChange={setSearchOpen}
+              keepMounted
             >
               <ProductCandidatesPanel {...{ watchlist, entries, rolls, heldIsins, rollFrom, ivHistory }} onRollFromChange={setRollFrom} />
             </Section>
