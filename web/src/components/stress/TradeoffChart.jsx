@@ -1,10 +1,12 @@
-import { useState } from 'react'
-import { Box, Stack, ToggleButton, ToggleButtonGroup, Typography } from '@mui/material'
+import { useEffect, useRef, useState } from 'react'
+import { Box, Button, Stack, Typography } from '@mui/material'
+import ZoomOutMapRoundedIcon from '@mui/icons-material/ZoomOutMapRounded'
 import { ScatterChart } from '@mui/x-charts/ScatterChart'
-import { useXScale, useYScale } from '@mui/x-charts/hooks'
+import { ChartsBrushOverlay } from '@mui/x-charts/ChartsBrushOverlay'
+import { useBrush, useXScale, useYScale } from '@mui/x-charts/hooks'
 import { compactCurrency, number } from '../../utils/formatters.js'
 import { rowReduction } from '../../utils/portfolioComparison.js'
-import { displayPoint, tradeoffDomain } from '../../utils/tradeoffChart.js'
+import { fullView, inView, viewFromBox } from '../../utils/tradeoffChart.js'
 
 const KINDS = [
   { id: 'tradeoff', label: '取舍', color: '#1f6fd1' },
@@ -34,51 +36,45 @@ function EfficiencyLine() {
   )
 }
 
-// Short labels: whole euros below 1,000, compact above.
-const axisMoney = value => (Math.abs(value) >= 1000 ? compactCurrency(value) : `${Math.round(value)} €`)
 // Tick numbers carry no unit (the axis titles say €) and use a Latin font:
 // measured in the CJK body font, the x-axis dropped every label as too wide.
 const tickNumber = value => (Math.abs(value) >= 1000 ? `${number.format(Math.round(value / 100) / 10)}K` : String(Math.round(value)))
 const TICK_STYLE = { fontFamily: 'Inter, "Segoe UI", system-ui, sans-serif', fontSize: 11 }
-const MAX_PINNED_LABELS = 3
 
-// Points beyond the focused range: a dashed ring where they are pinned and
-// their real numbers beside it.
-function PinnedMarks({ points }) {
+// The free chart package draws a selection box but does not zoom; when a drag
+// ends, this turns the box into the next view.
+function BrushToZoom({ view, onZoom }) {
+  const brush = useBrush()
   const xScale = useXScale()
   const yScale = useYScale()
-  return (
-    <g pointerEvents="none">
-      {points.map((point, index) => {
-        const cx = xScale(point.shown.x)
-        const cy = yScale(point.shown.y)
-        const left = cx > (xScale.range()[0] + xScale.range()[1]) / 2
-        return (
-          <g key={point.id}>
-            <circle cx={cx} cy={cy} r={9} fill="none" stroke="#4a5a6c" strokeWidth={1.2} strokeDasharray="3 2" />
-            {index < MAX_PINNED_LABELS ? (
-              <text x={left ? cx - 13 : cx + 13} y={cy + 4} textAnchor={left ? 'end' : 'start'} fontSize={11} fill="#4a5a6c">
-                实际 {axisMoney(point.x)} / {axisMoney(point.y)}
-              </text>
-            ) : null}
-          </g>
-        )
-      })}
-    </g>
-  )
+  const last = useRef(null)
+  useEffect(() => {
+    if (brush) {
+      last.current = brush
+      return
+    }
+    const done = last.current
+    last.current = null
+    if (!done) return
+    const toData = point => ({ x: xScale.invert(point.x), y: yScale.invert(point.y) })
+    const next = viewFromBox(toData(done.start), toData(done.current), view)
+    if (next) onZoom(next)
+  }, [brush, xScale, yScale, view, onZoom])
+  return null
 }
 
 export default function TradeoffChart({ rows, reductions, reductionPct, onToggle }) {
-  const [focus, setFocus] = useState(true)
-  const raw = rows.map(row => ({ id: row.id, x: row.upGivenUp, y: row.worstImprovement }))
-  const domain = tradeoffDomain(raw, { focus })
-  const shownById = new Map(raw.map(point => [point.id, displayPoint(point, domain)]))
-  const pinned = raw.filter(point => shownById.get(point.id).clipped)
-    .map(point => ({ ...point, shown: shownById.get(point.id) }))
-    .sort((left, right) => Math.max(right.x, right.y) - Math.max(left.x, left.y))
+  // A stack of views: each drag pushes one, "back" pops one.
+  const [zoomStack, setZoomStack] = useState([])
+  const points = rows.map(row => ({ id: row.id, x: row.upGivenUp, y: row.worstImprovement }))
+  const full = fullView(points)
+  const view = zoomStack.at(-1) ?? full
+  const zoomed = zoomStack.length > 0
+  const visibleIds = new Set(points.filter(point => inView(point, view)).map(point => point.id))
+  const visibleRows = rows.filter(row => visibleIds.has(row.id))
 
   const pointsBySeries = new Map([...KINDS, SELECTED].map(kind => [kind.id, []]))
-  for (const row of rows) {
+  for (const row of visibleRows) {
     const inPlan = rowReduction(reductions, row.productIds) !== 0
     pointsBySeries.get(inPlan ? SELECTED.id : row.kind)?.push(row)
   }
@@ -89,42 +85,41 @@ export default function TradeoffChart({ rows, reductions, reductionPct, onToggle
       label: kind.label,
       color: kind.color,
       markerSize: kind.id === SELECTED.id ? 7 : 5,
-      data: pointsBySeries.get(kind.id).map(row => ({ id: row.id, ...shownById.get(row.id) })),
+      data: pointsBySeries.get(kind.id).map(row => ({ id: row.id, x: row.upGivenUp, y: row.worstImprovement })),
       valueFormatter: (_value, { dataIndex }) => {
         const row = pointsBySeries.get(kind.id)[dataIndex]
         if (!row) return ''
         const ratio = row.kind === 'tradeoff' ? `效率 ${number.format(row.efficiency)}` : kind.id === SELECTED.id ? '已在方案中' : kind.label
-        const pinnedNote = shownById.get(row.id)?.clipped ? '（超出范围，按同一效率缩到边缘）' : ''
-        return `${row.name}：最差改善 ${compactCurrency(row.worstImprovement)} · 放弃上涨 ${compactCurrency(row.upGivenUp)} · ${ratio}${pinnedNote}`
+        return `${row.name}：最差改善 ${compactCurrency(row.worstImprovement)} · 放弃上涨 ${compactCurrency(row.upGivenUp)} · ${ratio}`
       },
     }))
 
   if (!rows.length) return null
-  // Both axes share one range so equal euros are equal distances.
-  const axis = { min: domain.min, max: domain.max, valueFormatter: tickNumber, tickLabelStyle: TICK_STYLE }
+  const axisFor = range => ({ min: range[0], max: range[1], valueFormatter: tickNumber, tickLabelStyle: TICK_STYLE })
   return (
     <Box sx={{ border: '1px solid #d9e2ec', borderRadius: 2, backgroundColor: '#ffffff', p: 1, minWidth: 0 }}>
       <Stack direction="row" spacing={1} sx={{ px: 0.5, alignItems: 'flex-start', justifyContent: 'space-between' }}>
         <Box sx={{ minWidth: 0 }}>
           <Typography variant="body2" fontWeight={800}>减仓取舍图</Typography>
           <Typography variant="caption" color="text.secondary" component="div">
-            每个点是把一个仓位减 {reductionPct}% 的效果。虚线上方的点保护多于代价；点击可加入或移出自定义方案。
+            每个点是把一个仓位减 {reductionPct}% 的效果。虚线上方的点保护多于代价；点击加入或移出自定义方案，拖动框选可放大。
           </Typography>
         </Box>
-        {domain.canFocus ? (
-          <ToggleButtonGroup size="small" exclusive value={focus ? 'focus' : 'all'} onChange={(_event, value) => value && setFocus(value === 'focus')} aria-label="显示范围" sx={{ flexShrink: 0 }}>
-            <ToggleButton value="focus" sx={{ px: 1, py: 0.25, fontSize: 12 }}>聚焦主体</ToggleButton>
-            <ToggleButton value="all" sx={{ px: 1, py: 0.25, fontSize: 12 }}>显示全部</ToggleButton>
-          </ToggleButtonGroup>
+        {zoomed ? (
+          <Stack direction="row" spacing={0.5} sx={{ flexShrink: 0 }}>
+            {zoomStack.length > 1 ? <Button size="small" onClick={() => setZoomStack(current => current.slice(0, -1))}>上一步</Button> : null}
+            <Button size="small" variant="outlined" startIcon={<ZoomOutMapRoundedIcon />} onClick={() => setZoomStack([])}>全部</Button>
+          </Stack>
         ) : null}
       </Stack>
       <ScatterChart
         height={300}
         series={series}
-        xAxis={[{ ...axis, label: '放弃的上涨（€）', tickLabelMinGap: 2, height: 52 }]}
-        yAxis={[{ ...axis, label: '最差情景改善（€）', width: 64 }]}
+        xAxis={[{ ...axisFor(view.x), label: '放弃的上涨（€）', tickLabelMinGap: 2, height: 52 }]}
+        yAxis={[{ ...axisFor(view.y), label: '最差情景改善（€）', width: 64 }]}
         grid={{ horizontal: true, vertical: true }}
         margin={{ left: 8, right: 16, top: 8, bottom: 8 }}
+        brushConfig={{ enabled: true }}
         slotProps={{ legend: { direction: 'horizontal', position: { vertical: 'top', horizontal: 'start' } } }}
         onItemClick={(_event, item) => {
           const row = pointsBySeries.get(item?.seriesId)?.[item?.dataIndex]
@@ -132,11 +127,12 @@ export default function TradeoffChart({ rows, reductions, reductionPct, onToggle
         }}
       >
         <EfficiencyLine />
-        <PinnedMarks points={pinned} />
+        <ChartsBrushOverlay />
+        <BrushToZoom view={view} onZoom={next => setZoomStack(current => [...current, next])} />
       </ScatterChart>
-      {pinned.length ? (
+      {zoomed ? (
         <Typography variant="caption" color="text.secondary" component="div" sx={{ px: 0.5 }}>
-          {pinned.length} 个仓位离得太远，沿原点连线缩到边缘显示（虚线圈），在效率线哪一侧不变{pinned.length > MAX_PINNED_LABELS ? `；最大的 ${MAX_PINNED_LABELS} 个标出实际数值` : '；旁边是实际数值'}。悬停可看全部数字。
+          已放大：显示 {visibleRows.length} / {rows.length} 个仓位；两轴刻度可能不同，以虚线判断效率。
         </Typography>
       ) : null}
     </Box>

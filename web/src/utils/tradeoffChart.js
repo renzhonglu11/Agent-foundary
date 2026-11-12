@@ -1,18 +1,7 @@
-// Axis range for the reduction trade-off scatter. One large position can
-// stretch the axes so far that every other point collapses into a corner.
-// The few largest points (at most three) that stand clearly apart from the
-// rest, more than 1.5x the next point's size, are left out of the focused
-// range and pinned to its edge. Both axes share one range, which keeps
-// "efficiency = 1" on the diagonal of equal units.
-
-const GAP = 1.5
-const MAX_PINNED = 3
-// With few points nothing is crowded; never pin more than 5% of them.
-const MIN_POINTS = 8
-const PINNED_SHARE = 0.05
-const HEADROOM = 1.1
-// Pinned points stop just inside the edge so the plot does not clip them.
-const EDGE = 0.97
+// View helpers for the reduction trade-off scatter. The full view fits every
+// point with both axes on one range, so equal euros are equal distances and
+// "efficiency = 1" is a true diagonal. Zooming is the reader's choice: a
+// dragged box becomes the view, and only points inside it are drawn.
 
 const niceStep = (span) => {
   const raw = span / 8
@@ -28,30 +17,29 @@ const roundUp = (value) => {
 
 const roundDown = (value) => (value >= 0 ? 0 : -roundUp(-value))
 
-export function tradeoffDomain(points, { focus = true } = {}) {
+export function fullView(points) {
   const valid = points.filter(point => Number.isFinite(point.x) && Number.isFinite(point.y))
-  const reach = point => Math.max(point.x, point.y)
-  const fullMax = roundUp(Math.max(0, ...valid.map(reach))) || 1
+  const max = roundUp(Math.max(0, ...valid.map(point => Math.max(point.x, point.y)))) || 1
   const min = roundDown(Math.min(0, ...valid.map(point => Math.min(point.x, point.y))))
-  const largest = valid.map(reach).filter(value => value > 0).sort((left, right) => right - left)
-  let cut = 0
-  const limit = largest.length >= MIN_POINTS ? Math.min(MAX_PINNED, Math.ceil(largest.length * PINNED_SHARE)) : 0
-  for (let k = 1; k <= limit && k < largest.length; k += 1) {
-    if (largest[k - 1] > GAP * largest[k]) cut = k
-  }
-  const canFocus = cut > 0
-  const useFocus = focus && canFocus
-  const max = useFocus ? roundUp(largest[cut] * HEADROOM) : fullMax
-  const clipped = useFocus ? valid.filter(point => reach(point) > max).map(point => point.id) : []
-  return { min, max, fullMax, focused: useFocus, clipped, canFocus }
+  return { x: [min, max], y: [min, max] }
 }
 
-// Where a point is drawn. A point beyond the range slides toward the origin
-// along its own line until it reaches the edge, so its ratio (efficiency) and
-// its side of the diagonal stay true; only its distance is shortened.
-export function displayPoint(point, domain) {
-  const reach = Math.max(point.x, point.y)
-  if (!(reach > domain.max)) return { x: point.x, y: point.y, clipped: false }
-  const scale = (domain.max * EDGE) / reach
-  return { x: point.x * scale, y: point.y * scale, clipped: true }
+// A dragged box in data units, ordered and with a minimum size so a slip of
+// the mouse does not zoom into nothing. Returns null for a box too small.
+export function viewFromBox(a, b, current, minShare = 0.02) {
+  const x = [Math.min(a.x, b.x), Math.max(a.x, b.x)]
+  const y = [Math.min(a.y, b.y), Math.max(a.y, b.y)]
+  const spanX = current.x[1] - current.x[0]
+  const spanY = current.y[1] - current.y[0]
+  if (x[1] - x[0] < spanX * minShare || y[1] - y[0] < spanY * minShare) return null
+  // A little room around the box so points on its edge are not cut in half.
+  const pad = (range, share = 0.04) => {
+    const extra = (range[1] - range[0]) * share
+    return [range[0] - extra, range[1] + extra]
+  }
+  return { x: pad(x), y: pad(y) }
+}
+
+export function inView(point, view) {
+  return point.x >= view.x[0] && point.x <= view.x[1] && point.y >= view.y[0] && point.y <= view.y[1]
 }
