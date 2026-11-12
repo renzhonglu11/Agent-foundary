@@ -59,7 +59,7 @@ export default function TradeoffChart({ rows, reductions, reductionPct, onToggle
 
   if (!rows.length) return null
   return (
-    <Box sx={{ border: '1px solid #e5eaef', borderRadius: 2, backgroundColor: '#ffffff', p: 1, minWidth: 0 }}>
+    <Box sx={{ border: '1px solid #d9e2ec', borderRadius: 2, backgroundColor: '#ffffff', p: 1, minWidth: 0 }}>
       <Typography variant="body2" fontWeight={800} sx={{ px: 0.5 }}>减仓取舍图</Typography>
       <Typography variant="caption" color="text.secondary" component="div" sx={{ px: 0.5 }}>
         每个点是把一个仓位减 {reductionPct}% 的效果。虚线上方的点保护多于代价；点击可加入或移出自定义方案。

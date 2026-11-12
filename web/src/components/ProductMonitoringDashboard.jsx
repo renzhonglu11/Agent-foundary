@@ -73,8 +73,8 @@ const fxRateNumber = new Intl.NumberFormat('de-DE', {
 
 const FALLBACK_USD_EUR_RATE = 0.92
 const rowAddedPulse = keyframes`
-  0% { background-color: rgba(19, 222, 185, 0.28); }
-  70% { background-color: rgba(19, 222, 185, 0.14); }
+  0% { background-color: rgba(31, 95, 168, 0.28); }
+  70% { background-color: rgba(31, 95, 168, 0.14); }
   100% { background-color: transparent; }
 `
 
@@ -215,7 +215,7 @@ export default function ProductMonitoringDashboard({ item, riskLeg, onClose, onA
   }
 
   return (
-    <Box sx={{ border: '1px solid #e5eaef', borderRadius: 2, overflow: 'hidden', backgroundColor: '#ffffff' }}>
+    <Box sx={{ border: '1px solid #d9e2ec', borderRadius: 2, overflow: 'hidden', backgroundColor: '#ffffff' }}>
       {/* Header */}
       <DashboardHeader item={item} direction={direction} onClose={onClose} />
 
@@ -299,7 +299,7 @@ export default function ProductMonitoringDashboard({ item, riskLeg, onClose, onA
         ContentProps={{
           sx: {
             fontWeight: 800,
-            bgcolor: '#2a3547',
+            bgcolor: '#142233',
             boxShadow: '0 10px 28px rgba(42, 53, 71, 0.22)',
           },
         }}
@@ -314,7 +314,7 @@ function DashboardHeader({ item, direction, onClose }) {
 
   if (!item) {
     return (
-      <Box sx={{ px: 1.5, py: 1, backgroundColor: '#f8fafc', borderBottom: '1px solid #e5eaef' }}>
+      <Box sx={{ px: 1.5, py: 1, backgroundColor: '#f8fafc', borderBottom: '1px solid #d9e2ec' }}>
         <Stack direction="row" spacing={1} sx={{ alignItems: 'center', justifyContent: 'space-between' }}>
           <Typography variant="body2" fontWeight={800} color="text.secondary">
             实时监控
@@ -331,7 +331,7 @@ function DashboardHeader({ item, direction, onClose }) {
     : direction === 'call' ? 'CALL' : 'PUT'
 
   return (
-    <Box sx={{ px: 1.5, py: 1, backgroundColor: '#f8fafc', borderBottom: '1px solid #e5eaef' }}>
+    <Box sx={{ px: 1.5, py: 1, backgroundColor: '#f8fafc', borderBottom: '1px solid #d9e2ec' }}>
       <Stack direction="row" spacing={1} sx={{ alignItems: 'center', justifyContent: 'space-between', minWidth: 0 }}>
         <Stack direction="row" spacing={0.75} sx={{ alignItems: 'center', minWidth: 0, flex: 1 }}>
           <Typography variant="body2" fontWeight={800} noWrap sx={{ maxWidth: 320 }}>
@@ -371,7 +371,7 @@ function DashboardHeader({ item, direction, onClose }) {
 function DashboardContextBar({ item, riskLeg, direction }) {
   if (!item) {
     return (
-      <Box sx={{ px: 1.5, py: 0.75, borderBottom: '1px solid #e5eaef', backgroundColor: '#fafbfc' }}>
+      <Box sx={{ px: 1.5, py: 0.75, borderBottom: '1px solid #d9e2ec', backgroundColor: '#fafbfc' }}>
         <Typography variant="caption" color="text.disabled">选中产品后显示关键指标</Typography>
       </Box>
     )
@@ -417,7 +417,7 @@ function DashboardContextBar({ item, riskLeg, direction }) {
 
   // Six numbers people look for first, then the contract terms in one line.
   return (
-    <Box sx={{ px: 1.5, pt: 1.25, pb: 1, borderBottom: '1px solid #e5eaef' }}>
+    <Box sx={{ px: 1.5, pt: 1.25, pb: 1, borderBottom: '1px solid #d9e2ec' }}>
       <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 0.75 }}>
         {tiles.map(tile => (
           <Box key={tile.label} sx={{ backgroundColor: '#f4f7fa', borderRadius: 1.5, px: 1, py: 0.75, minWidth: 0 }}>
@@ -570,7 +570,7 @@ function ExpiryPnlTable({ item, direction, hasSpot, onAddPnlRecord }) {
 
   return (
     <Stack spacing={1.5}>
-      <TableContainer sx={{ border: '1px solid #e5eaef', borderRadius: 1, overflowX: 'auto' }}>
+      <TableContainer sx={{ border: '1px solid #d9e2ec', borderRadius: 1, overflowX: 'auto' }}>
         <Table size="small" sx={{ tableLayout: 'fixed', minWidth: 380 }}>
           <colgroup><col style={{ width: '28%' }} /><col style={{ width: '24%' }} /><col style={{ width: '20%' }} /><col style={{ width: '28%' }} /></colgroup>
           <TableHead>
@@ -675,7 +675,7 @@ function TimeDecayTable({ item, riskLeg, direction, hasStrike, hasRatio }) {
 
   return (
     <Stack spacing={1.5}>
-      <TableContainer sx={{ border: '1px solid #e5eaef', borderRadius: 1, overflowX: 'auto' }}>
+      <TableContainer sx={{ border: '1px solid #d9e2ec', borderRadius: 1, overflowX: 'auto' }}>
         <Table size="small" sx={{ tableLayout: 'fixed', minWidth: 360 }}>
           <colgroup><col style={{ width: '26%' }} /><col style={{ width: '28%' }} /><col style={{ width: '26%' }} /><col style={{ width: '20%' }} /></colgroup>
           <TableHead>
@@ -783,7 +783,7 @@ function DrawdownTable({ item, onAddPnlRecord }) {
 
   return (
     <Stack spacing={1.5}>
-      <TableContainer sx={{ border: '1px solid #e5eaef', borderRadius: 1, overflowX: 'auto' }}>
+      <TableContainer sx={{ border: '1px solid #d9e2ec', borderRadius: 1, overflowX: 'auto' }}>
         <Table size="small" sx={{ tableLayout: 'fixed', minWidth: 380 }}>
           <colgroup><col style={{ width: '27%' }} /><col style={{ width: '27%' }} /><col style={{ width: '27%' }} /><col style={{ width: '19%' }} /></colgroup>
           <TableHead>
@@ -920,7 +920,7 @@ const thSx = {
   fontSize: '0.7rem',
   fontWeight: 800,
   color: 'text.secondary',
-  borderBottom: '1px solid #e5eaef',
+  borderBottom: '1px solid #d9e2ec',
   backgroundColor: '#f8fafc',
 }
 

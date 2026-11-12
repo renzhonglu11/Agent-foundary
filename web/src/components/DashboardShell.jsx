@@ -23,8 +23,11 @@ export default function DashboardShell({ source, generatedAt, activeTab, onTabCh
         onClick={handleDrawerClickAway}
         sx={{
           zIndex: (theme) => theme.zIndex.drawer + 1,
-          bgcolor: 'primary.main',
-          boxShadow: '0 2px 10px rgba(42, 53, 71, 0.12)',
+          bgcolor: 'background.paper',
+          color: 'text.primary',
+          boxShadow: 'none',
+          borderBottom: '1px solid',
+          borderColor: 'divider',
           transition: (theme) => theme.transitions.create(['width', 'margin'], {
             easing: theme.transitions.easing.sharp,
             duration: drawerOpen

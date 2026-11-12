@@ -109,8 +109,8 @@ function storePlan(value) {
 }
 
 const rowClickedPulse = keyframes`
-  0% { background-color: rgba(19, 222, 185, 0.28); }
-  70% { background-color: rgba(19, 222, 185, 0.14); }
+  0% { background-color: rgba(31, 95, 168, 0.28); }
+  70% { background-color: rgba(31, 95, 168, 0.14); }
   100% { background-color: transparent; }
 `
 
@@ -241,9 +241,9 @@ export default function PositionsActionBoard({ data, riskData, riskLoading, risk
   }
 
   return (
-    <Box sx={{ border: '1px solid #e5eaef', borderRadius: 2, backgroundColor: '#ffffff' }}>
+    <Box sx={{ border: '1px solid #d9e2ec', borderRadius: 2, backgroundColor: '#ffffff' }}>
       {/* header */}
-      <Box sx={{ px: { xs: 2, md: 2.5 }, py: 1.5, borderBottom: '1px solid #e5eaef', backgroundColor: '#fbfdff' }}>
+      <Box sx={{ px: { xs: 2, md: 2.5 }, py: 1.5, borderBottom: '1px solid #d9e2ec', backgroundColor: '#fbfdff' }}>
         <Stack direction={{ xs: 'column', md: 'row' }} spacing={1} sx={{ justifyContent: 'space-between', alignItems: { xs: 'flex-start', md: 'center' } }}>
           <Box>
             <Typography variant="h6" fontSize="1rem">Tier 1 仓位监控</Typography>
@@ -268,7 +268,7 @@ export default function PositionsActionBoard({ data, riskData, riskLoading, risk
         sx={{
           px: { xs: 1, md: 1.5 },
           minHeight: 44,
-          borderBottom: '1px solid #e5eaef',
+          borderBottom: '1px solid #d9e2ec',
           '& .MuiTab-root': { minHeight: 44, textTransform: 'none', fontWeight: 700 },
         }}
       >
@@ -301,7 +301,7 @@ export default function PositionsActionBoard({ data, riskData, riskLoading, risk
                 activeActionId={resolvedActiveActionId}
                 onChange={handleActionChange}
               />
-              <Box sx={{ border: '1px solid #e5eaef', borderRadius: 2, overflow: 'hidden' }}>
+              <Box sx={{ border: '1px solid #d9e2ec', borderRadius: 2, overflow: 'hidden' }}>
                 {activeSection.entries.length ? (
                   <ProductActionTable
                     entries={activeSection.entries}
@@ -460,7 +460,7 @@ function ProductPlanStrip({ signal, reduction, onReduce, onShowPlan }) {
   const flagged = signal && (signal.level === 'urgent' || signal.level === 'warn')
   const meta = signal ? EXIT_LEVEL_META[signal.level] : null
   return (
-    <Box sx={{ px: 1.5, py: 1, borderBottom: '1px solid #e5eaef', backgroundColor: flagged ? '#fff8ef' : '#f8fafc' }}>
+    <Box sx={{ px: 1.5, py: 1, borderBottom: '1px solid #d9e2ec', backgroundColor: flagged ? '#fff8ef' : '#f8fafc' }}>
       <Stack direction="row" spacing={1} useFlexGap sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
         {meta ? <Chip size="small" color={meta.color} variant={flagged ? 'filled' : 'outlined'} label={`退场信号：${meta.label}`} /> : <Chip size="small" variant="outlined" label="无退场信号数据" />}
         {signal?.decay?.return30dPct != null ? (
@@ -564,7 +564,7 @@ function CoverageNotice({ coverage, loading }) {
 
 function ActionFilterBar({ sections, activeActionId, onChange }) {
   return (
-    <Box sx={{ border: '1px solid #e5eaef', borderRadius: 2, backgroundColor: '#f8fafc', overflow: 'hidden' }}>
+    <Box sx={{ border: '1px solid #d9e2ec', borderRadius: 2, backgroundColor: '#f8fafc', overflow: 'hidden' }}>
       <Stack
         direction="row"
         spacing={0.75}
@@ -911,7 +911,7 @@ function ProductActionTable({ entries, onRowClick, clickedRowId }) {
           }),
         }}
       />
-      <Box sx={{ px: 1, py: 0.5, borderTop: '1px solid #e5eaef' }}>
+      <Box sx={{ px: 1, py: 0.5, borderTop: '1px solid #d9e2ec' }}>
         <Button size="small" onClick={toggleMore} aria-pressed={showingMore} sx={{ textTransform: 'none' }}>
           {showingMore ? '收起 Delta、Omega、杠杆、IV、数量' : '+ 更多列：Delta、Omega、杠杆、IV、数量'}
         </Button>

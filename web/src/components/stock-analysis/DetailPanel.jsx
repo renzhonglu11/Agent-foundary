@@ -11,7 +11,7 @@ export default function DetailPanel({ row }) {
         px: 2,
         py: 2,
         borderRadius: 2,
-        border: '1px solid #e5eaef',
+        border: '1px solid #d9e2ec',
         backgroundColor: '#fbfdff',
       }}
     >
@@ -66,7 +66,7 @@ export default function DetailPanel({ row }) {
           </>
         ) : null}
 
-        <Accordion disableGutters elevation={0} sx={{ border: '1px solid #e5eaef', borderRadius: 1.5, '&:before': { display: 'none' } }}>
+        <Accordion disableGutters elevation={0} sx={{ border: '1px solid #d9e2ec', borderRadius: 1.5, '&:before': { display: 'none' } }}>
           <AccordionSummary expandIcon={<ExpandMoreRoundedIcon />} sx={{ minHeight: 36, px: 1.5, '& .MuiAccordionSummary-content': { my: 0.75 } }}>
             <Typography variant="body2" fontWeight={800}>数据来源与诊断</Typography>
           </AccordionSummary>
@@ -96,7 +96,7 @@ export default function DetailPanel({ row }) {
 
 function DetailAccordion({ title, items }) {
   return (
-    <Accordion disableGutters elevation={0} sx={{ border: '1px solid #e5eaef', borderRadius: 1.5, '&:before': { display: 'none' } }}>
+    <Accordion disableGutters elevation={0} sx={{ border: '1px solid #d9e2ec', borderRadius: 1.5, '&:before': { display: 'none' } }}>
       <AccordionSummary expandIcon={<ExpandMoreRoundedIcon />} sx={{ minHeight: 36, px: 1.5, '& .MuiAccordionSummary-content': { my: 0.75 } }}>
         <Typography variant="body2" fontWeight={800}>{title}</Typography>
       </AccordionSummary>

@@ -9,7 +9,7 @@ export default function GroupDetailPanel({ group, riskGroup }) {
   const action = riskActionMeta(riskGroup?.groupActionLabel)
 
   return (
-    <Box sx={{ px: 2, py: 2, borderRadius: 2, border: '1px solid #e5eaef', backgroundColor: '#fbfdff' }}>
+    <Box sx={{ px: 2, py: 2, borderRadius: 2, border: '1px solid #d9e2ec', backgroundColor: '#fbfdff' }}>
       <Stack spacing={1.5}>
         <Box sx={{ px: 1.5, py: 1.25, borderRadius: 1.5, backgroundColor: action.color === 'error' ? '#fff1ee' : action.color === 'warning' ? '#fff8e6' : '#f5f7fa' }}>
           <Typography variant="body2" fontWeight={800}>风险摘要</Typography>

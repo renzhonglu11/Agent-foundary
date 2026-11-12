@@ -164,7 +164,7 @@ export default function OpportunitiesPanel({ screen = [], rolls = [], loading, s
   const unheldCount = watchlist ? watchlist.items.filter(item => !heldIsins?.has(item.isin)).length : 0
 
   return (
-    <Box sx={{ border: '1px solid #dfe6ee', borderRadius: 2, overflow: 'hidden', backgroundColor: '#fbfdff' }}>
+    <Box sx={{ border: '1px solid #d9e2ec', borderRadius: 2, overflow: 'hidden', backgroundColor: '#fbfdff' }}>
       <Stack spacing={0.5} sx={{ p: { xs: 1.5, md: 2 } }}>
         <Typography variant="subtitle1" fontWeight={900}>机会与换仓</Typography>
         <Typography variant="body2" color="text.secondary">筛出值得研究的标的，并测算把走弱的权证换成更长期限会改变什么。标签只说明今天满足了哪些规则，不是预测，也不是买入建议。</Typography>

@@ -170,7 +170,7 @@ export default function PortfolioStressTestPanel({ entries, positions = [], exit
   const review = { ...hermesReview, stale: Boolean(hermesReview.data && hermesReview.report !== report) }
 
   return (
-    <Box sx={{ border: '1px solid #dfe6ee', borderRadius: 2, backgroundColor: '#fbfdff' }}>
+    <Box sx={{ border: '1px solid #d9e2ec', borderRadius: 2, backgroundColor: '#fbfdff' }}>
       <Stack spacing={1.25} sx={{ p: { xs: 1.5, md: 2 } }}>
         <Box>
           <Typography variant="subtitle1" fontWeight={900}>方案对比</Typography>

@@ -352,7 +352,7 @@ export default function DataImportSpeedDial({ pnlRecords = [], onRemovePnlRecord
             {files.length ? (
               <Box>
                 <Typography variant="subtitle2" fontWeight={800} sx={{ mb: 1 }}>待上传文件</Typography>
-                <List dense sx={{ border: '1px solid #e5eaef', borderRadius: 2 }}>
+                <List dense sx={{ border: '1px solid #d9e2ec', borderRadius: 2 }}>
                   {files.map((file) => {
                     const allowed = isAllowedFile(file);
                     return (
@@ -475,7 +475,7 @@ function PnlSnapshotHistoryPanel({ snapshots, loading, error, deletingSnapshotId
   return (
     <Box
       sx={{
-        border: '1px solid #e5eaef',
+        border: '1px solid #d9e2ec',
         borderRadius: 2,
         overflow: 'hidden',
         height: '100%',
@@ -507,7 +507,7 @@ function PnlSnapshotHistoryPanel({ snapshots, loading, error, deletingSnapshotId
         {snapshots.map((snapshot) => {
           const expanded = expandedSnapshotId === snapshot.id;
           return (
-            <Box key={snapshot.id} sx={{ border: '1px solid #e5eaef', borderRadius: 1.5, overflow: 'hidden', flexShrink: 0 }}>
+            <Box key={snapshot.id} sx={{ border: '1px solid #d9e2ec', borderRadius: 1.5, overflow: 'hidden', flexShrink: 0 }}>
               <Box
                 role="button"
                 tabIndex={0}
@@ -523,7 +523,7 @@ function PnlSnapshotHistoryPanel({ snapshots, loading, error, deletingSnapshotId
                   py: 0.85,
                   cursor: 'pointer',
                   backgroundColor: expanded ? '#f8fafc' : '#fbfdff',
-                  borderBottom: expanded ? '1px solid #e5eaef' : 0,
+                  borderBottom: expanded ? '1px solid #d9e2ec' : 0,
                   '&:hover': { backgroundColor: '#f8fafc' },
                 }}
               >
@@ -624,8 +624,8 @@ function PnlSimulatorPanel({ records, onRemoveRecord }) {
   return (
     <Stack spacing={2}>
       {sections.map((section) => (
-        <Box key={section.type} sx={{ border: '1px solid #e5eaef', borderRadius: 2, overflow: 'hidden' }}>
-          <Box sx={{ px: 1.5, py: 1, backgroundColor: '#f8fafc', borderBottom: '1px solid #e5eaef' }}>
+        <Box key={section.type} sx={{ border: '1px solid #d9e2ec', borderRadius: 2, overflow: 'hidden' }}>
+          <Box sx={{ px: 1.5, py: 1, backgroundColor: '#f8fafc', borderBottom: '1px solid #d9e2ec' }}>
             <Stack direction="row" spacing={1} sx={{ alignItems: 'center', justifyContent: 'space-between' }}>
               <Typography variant="subtitle2" fontWeight={900}>
                 {section.title} · {section.rows.length} 行
@@ -715,7 +715,7 @@ const pnlThSx = {
   fontSize: '0.72rem',
   fontWeight: 800,
   color: 'text.secondary',
-  borderBottom: '1px solid #e5eaef',
+  borderBottom: '1px solid #d9e2ec',
 };
 
 const pnlTdSx = {

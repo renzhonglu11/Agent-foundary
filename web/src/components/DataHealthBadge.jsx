@@ -86,7 +86,7 @@ function CoverageThresholdForm({ configuration, coveragePct }) {
 
 function Section({ title, note, rows, empty, extra, footer }) {
   return (
-    <Box sx={{ border: '1px solid #e5eaef', borderRadius: 1.5, p: 1.25, backgroundColor: '#ffffff', minWidth: 0 }}>
+    <Box sx={{ border: '1px solid #d9e2ec', borderRadius: 1.5, p: 1.25, backgroundColor: '#ffffff', minWidth: 0 }}>
       <Typography variant="body2" fontWeight={800}>{title}</Typography>
       <Typography variant="caption" color="text.secondary" component="div" sx={{ mb: 0.75 }}>{note}</Typography>
       {extra}
@@ -110,7 +110,7 @@ export function DataHealthPanel({ health, open }) {
   return (
     <>
       <Collapse in={open} unmountOnExit>
-        <Box id={DATA_HEALTH_PANEL_ID} sx={{ px: { xs: 1.5, md: 2 }, py: 1.5, borderBottom: '1px solid #e5eaef', backgroundColor: '#f8fafc' }}>
+        <Box id={DATA_HEALTH_PANEL_ID} sx={{ px: { xs: 1.5, md: 2 }, py: 1.5, borderBottom: '1px solid #d9e2ec', backgroundColor: '#f8fafc' }}>
           <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(3, minmax(0, 1fr))' }, gap: 1.25 }}>
             <Section
               title="故障"

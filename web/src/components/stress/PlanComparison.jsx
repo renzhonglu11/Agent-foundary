@@ -5,7 +5,7 @@ import { DEFINITIONS, Label, PnlCell, pnlColor, signedMoney } from './shared.jsx
 
 function Tile({ label, tip, value, color }) {
   return (
-    <Box sx={{ border: '1px solid #e5eaef', borderRadius: 2, px: 1.5, py: 1, backgroundColor: '#ffffff', minWidth: 0 }}>
+    <Box sx={{ border: '1px solid #d9e2ec', borderRadius: 2, px: 1.5, py: 1, backgroundColor: '#ffffff', minWidth: 0 }}>
       <Typography variant="caption" color="text.secondary" component="div" noWrap><Label tip={tip}>{label}</Label></Typography>
       <Typography sx={{ fontSize: 20, fontWeight: 800, fontVariantNumeric: 'tabular-nums', color: color || 'text.primary' }}>{value}</Typography>
     </Box>

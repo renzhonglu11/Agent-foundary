@@ -31,15 +31,15 @@ function statusPillMeta(row) {
     const label = row.statusLabel || 'Scheduled'
 
     if (row.statusGroup === 'failed' || row.statusGroup === 'delivery_failed') {
-        return { label, color: '#fa896b', bg: '#fff1ee', border: '#ffc9bd' }
+        return { label, color: '#c23a33', bg: '#fff1ee', border: '#ffc9bd' }
     }
     if (row.statusGroup === 'paused') {
-        return { label, color: '#ffae1f', bg: '#fff9df', border: '#ffe18a' }
+        return { label, color: '#b26b00', bg: '#fff9df', border: '#ffe18a' }
     }
     if (row.statusGroup === 'pending') {
-        return { label, color: '#49beff', bg: '#edf8ff', border: '#a9dcff' }
+        return { label, color: '#2b72c2', bg: '#edf8ff', border: '#a9dcff' }
     }
-    return { label, color: '#13deb9', bg: '#e9fff9', border: '#9bf3df' }
+    return { label, color: '#17803d', bg: '#e9fff9', border: '#9bf3df' }
 }
 
 function StatusPill({ row }) {
@@ -56,7 +56,7 @@ function StatusPill({ row }) {
                 borderRadius: '6px',
                 border: `1px solid ${meta.border}`,
                 backgroundColor: meta.bg,
-                color: '#2a3547',
+                color: '#142233',
                 fontSize: 13,
                 fontWeight: 600,
                 lineHeight: 1.35,
@@ -224,23 +224,23 @@ function JobsGrid({ jobs }) {
 // Systemd unit status section
 // ---------------------------------------------------------------------------
 const UNIT_STATE_COLORS = {
-    active: '#13deb9',
-    inactive: '#ffae1f',
-    failed: '#fa896b',
-    activating: '#49beff',
-    deactivating: '#49beff',
+    active: '#17803d',
+    inactive: '#b26b00',
+    failed: '#c23a33',
+    activating: '#2b72c2',
+    deactivating: '#2b72c2',
     'not-found': '#8b8b8b',
-    error: '#fa896b',
+    error: '#c23a33',
     unknown: '#8b8b8b',
 }
 
 const UNIT_ENABLED_COLORS = {
-    enabled: '#13deb9',
-    disabled: '#ffae1f',
-    static: '#49beff',
-    indirect: '#13deb9',
+    enabled: '#17803d',
+    disabled: '#b26b00',
+    static: '#2b72c2',
+    indirect: '#17803d',
     'not-found': '#8b8b8b',
-    error: '#fa896b',
+    error: '#c23a33',
     unknown: '#8b8b8b',
 }
 

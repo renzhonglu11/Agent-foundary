@@ -7,7 +7,7 @@ export default function HermesReview({ status, review, selectedPortfolioId, disa
   const selected = (review.data?.reviews || []).find(item => item.portfolioId === selectedPortfolioId)
   const unavailable = !status.available
   return (
-    <Box sx={{ border: '1px solid #e5eaef', borderRadius: 2, p: 1.25, backgroundColor: '#ffffff' }}>
+    <Box sx={{ border: '1px solid #d9e2ec', borderRadius: 2, p: 1.25, backgroundColor: '#ffffff' }}>
       <Stack direction="row" spacing={1} useFlexGap sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
         <Button size="small" variant="outlined" startIcon={review.loading ? <CircularProgress size={14} /> : <AutoAwesomeRoundedIcon />}
           disabled={unavailable || review.loading || Boolean(disabledReason)} onClick={onRequest} sx={{ textTransform: 'none' }}>

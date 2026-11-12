@@ -136,7 +136,7 @@ export default function ExitSignalsPanel({ report, dailyStats, dailyStatsLoading
   const columnCount = onPlanReduction ? 6 : 5
 
   return (
-    <Box sx={{ border: '1px solid #dfe6ee', borderRadius: 2, overflow: 'hidden', backgroundColor: '#fbfdff' }}>
+    <Box sx={{ border: '1px solid #d9e2ec', borderRadius: 2, overflow: 'hidden', backgroundColor: '#fbfdff' }}>
       <Stack spacing={1.25} sx={{ p: { xs: 1.5, md: 2 } }}>
         <Box>
           <Typography variant="subtitle1" fontWeight={900}>退场信号</Typography>
